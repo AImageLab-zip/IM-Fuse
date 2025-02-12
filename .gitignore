@@ -1,0 +1,78 @@
+# Virtual environment directories
+/ShaSpec_venv/
+/m3ae_venv/
+/mamba_venv/
+/nnunet_venv/
+/uhved_python/
+
+# Data
+
+
+
+# Bash files
+bash.sh
+bash_pycharm.sh
+/slurm_templates/
+
+# Log files and directories
+/runs/
+/slurm_out/
+/wandb/
+
+# Python bytecode files
+/__pycache__/
+
+# Asymmetry-BTS
+
+
+# M3AE
+/m3ae/runs/
+/m3ae/wandb/
+/m3ae/*.txt
+
+# MambaFusion
+/MambaFusion/
+/causal-conv1d/
+install_mamba.sh
+
+# mmFormer
+/mmFormer/output_finetuning_dbg/
+/mmFormer/output_m5former/
+/mmFormer/output_qos/
+/mmFormer/*.txt
+/mmFormer/.gitignore
+/mmFormer/wandb/
+/mmFormer/.git
+
+# Missing as Masking
+/nnUNet/.github
+/nnUNet/*.egg-info/
+
+# RFNet
+/RFNet/logs/
+
+# RobustSeg
+
+
+# SFusion
+
+
+#ShaSpec
+/ShaSpec/__pycache__/
+/ShaSpec/datalist/BraTS18/
+/ShaSpec/outputs/
+/ShaSpec/snapshots/
+/ShaSpec/wandb/
+/ShaSpec/.git
+
+# UHVED
+/UHVED/.gitignore
+/UHVED/data/
+/UHVED/data_preprocessed/
+
+# Other files
+crop_indices.csv
+note.txt
+reorder_mask.py
+smu2.csv
+split_set.py
