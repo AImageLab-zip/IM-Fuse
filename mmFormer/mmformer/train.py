@@ -1,0 +1,478 @@
+#coding=utf-8
+import argparse
+import os
+import time
+import logging
+import numpy as np
+import wandb
+import torch
+import torch.optim
+import sys
+from tensorboardX import SummaryWriter
+from utils.random_seed import setup_seed
+import mmformer
+from data.transforms import *
+from data.datasets_nii import Brats_loadall_nii, Brats_loadall_test_nii, Brats_loadall_val_nii
+from data.data_utils import init_fn
+from utils import Parser,criterions
+from utils.parser import setup 
+from utils.lr_scheduler import LR_Scheduler, record_loss, MultiEpochsDataLoader 
+from predict import AverageMeter, test_softmax
+"""
+def validate(model, val_loader):
+    # start to validate
+    val_ET = 0.0
+    val_NCR = 0.0
+    val_ED = 0.0
+    val_ET_postpro = 0.0
+    fuse_loss_epoch = 0.0
+
+    patch_size = 128
+    H, W, T = 240, 240, 155
+    one_tensor = torch.ones(1, patch_size, patch_size, patch_size).float().cuda()
+    num_cls=4
+    model.eval()
+    model.module.is_training=False 
+
+    for index, batch in enumerate(val_loader):
+        x, target, yo, mask, names = batch
+        _, _, H, W, Z = x.size()
+        x = x.cuda()
+        target = target.cuda()
+        mask = mask.cuda()
+        yo = yo.cuda()
+
+        #########get h_ind, w_ind, z_ind for sliding windows with overlap 50%
+        h_cnt = np.int(np.ceil((H - patch_size) / (patch_size * (1 - 0.5))))          # total number of strides required
+        h_idx_list = range(0, h_cnt)                                                  # start indices for each stride
+        h_idx_list = [h_idx * np.int(patch_size * (1 - 0.5)) for h_idx in h_idx_list] # list containing all start indices for axis h 
+        h_idx_list.append(H - patch_size)                                             # appends the last valid start index to ensure the final tile always aligns with the volume's boundary
+
+        w_cnt = np.int(np.ceil((W - patch_size) / (patch_size * (1 - 0.5))))
+        w_idx_list = range(0, w_cnt)
+        w_idx_list = [w_idx * np.int(patch_size * (1 - 0.5)) for w_idx in w_idx_list]
+        w_idx_list.append(W - patch_size)
+
+        z_cnt = np.int(np.ceil((Z - patch_size) / (patch_size * (1 - 0.5))))
+        z_idx_list = range(0, z_cnt)
+        z_idx_list = [z_idx * np.int(patch_size * (1 - 0.5)) for z_idx in z_idx_list]
+        z_idx_list.append(Z - patch_size)
+
+        #####compute calculation times for each pixel in sliding windows
+        weight1 = torch.zeros(1, 1, H, W, Z).float().cuda()
+        for h in h_idx_list:
+            for w in w_idx_list:
+                for z in z_idx_list:
+                    weight1[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] += one_tensor
+        weight = weight1.repeat(len(names), num_cls, 1, 1, 1)
+
+        #####evaluation
+        pred = torch.zeros(len(names), num_cls, H, W, Z).float().cuda()
+
+        with torch.no_grad():
+            for h in h_idx_list:
+                for w in w_idx_list:
+                    for z in z_idx_list:
+                        x_input = x[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] #(B, 4, 128, 128, 128)
+                        pred_part = model(x_input, mask) #fuse_pred
+                        pred[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] += pred_part
+            pred = pred / weight  
+            pred = pred[:, :, :H, :W, :T]   
+
+            fuse_cross_loss = criterions.softmax_weighted_loss(pred, yo, num_cls=num_cls)
+            fuse_dice_loss = criterions.dice_loss(pred, yo, num_cls=num_cls)
+            fuse_loss = fuse_cross_loss + fuse_dice_loss
+  
+            pred = torch.argmax(pred, dim=1)  # class prediction for each voxel/pixel in the input volume
+            
+            #compute dice scores
+            eps = 1e-8
+            #######label1########
+            o1 = (pred == 1).float()
+            t1 = (target == 1).float()
+            intersect1 = torch.sum(2 * (o1 * t1), dim=(1,2,3)) + eps
+            denominator1 = torch.sum(o1, dim=(1,2,3)) + torch.sum(t1, dim=(1,2,3)) + eps
+            dice_NCR = intersect1 / denominator1
+
+            #######label2########
+            o2 = (pred == 2).float()
+            t2 = (target == 2).float()
+            intersect2 = torch.sum(2 * (o2 * t2), dim=(1,2,3)) + eps
+            denominator2 = torch.sum(o2, dim=(1,2,3)) + torch.sum(t2, dim=(1,2,3)) + eps
+            dice_ED = intersect2 / denominator2
+
+            #######label3########
+            o3 = (pred == 3).float()
+            t3 = (target == 3).float()
+            intersect3 = torch.sum(2 * (o3 * t3), dim=(1,2,3)) + eps
+            denominator3 = torch.sum(o3, dim=(1,2,3)) + torch.sum(t3, dim=(1,2,3)) + eps
+            dice_ET = intersect3 / denominator3
+
+            ####post processing:
+            if torch.sum(o3) < 500:
+                o4 = o3 * 0.0
+            else:
+                o4 = o3
+            t4 = t3
+            intersect4 = torch.sum(2 * (o4 * t4), dim=(1,2,3)) + eps
+            denominator4 = torch.sum(o4, dim=(1,2,3)) + torch.sum(t4, dim=(1,2,3)) + eps
+            dice_ET_postpro = intersect4 / denominator4
+
+            val_NCR += dice_NCR
+            val_ED += dice_ED
+            val_ET += dice_ET
+            val_ET_postpro += dice_ET_postpro
+            fuse_loss_epoch += fuse_loss
+
+    return val_NCR/(index+1), val_ED/(index+1), val_ET/(index+1), val_ET_postpro/(index+1), fuse_loss_epoch/(index+1)
+"""
+parser = argparse.ArgumentParser()
+parser.add_argument('-batch_size', '--batch_size', default=1, type=int, help='Batch size')
+parser.add_argument('--datapath', default=None, type=str)
+parser.add_argument('--dataname', default='BRATS2018', type=str)
+parser.add_argument('--savepath', default=None, type=str)
+parser.add_argument('--resume', default=None, type=str)
+parser.add_argument('--pretrain', default=None, type=str)
+parser.add_argument('--lr', default=2e-4, type=float)
+parser.add_argument('--weight_decay', default=1e-4, type=float)
+parser.add_argument('--num_epochs', default=1000, type=int)
+parser.add_argument('--iter_per_epoch', default=150, type=int)
+parser.add_argument('--region_fusion_start_epoch', default=0, type=int)
+parser.add_argument('--seed', default=999, type=int)
+parser.add_argument('--debug', action='store_true', default=False)
+path = os.path.dirname(__file__)
+
+## parse arguments
+args = parser.parse_args()
+setup(args, 'training')
+args.train_transforms = 'Compose([RandCrop3D((128,128,128)), RandomRotion(10), RandomIntensityChange((0.1,0.1)), RandomFlip(0), NumpyType((np.float32, np.int64)),])'
+args.test_transforms = 'Compose([NumpyType((np.float32, np.int64)),])'
+
+ckpts = args.savepath
+os.makedirs(ckpts, exist_ok=True)
+
+###tensorboard writer
+writer = SummaryWriter(os.path.join(args.savepath, 'summary'))
+
+###modality missing mask
+masks = [[False, False, False, True], [False, True, False, False], [False, False, True, False], [True, False, False, False],
+         [False, True, False, True], [False, True, True, False], [True, False, True, False], [False, False, True, True], [True, False, False, True], [True, True, False, False],
+         [True, True, True, False], [True, False, True, True], [True, True, False, True], [False, True, True, True],
+         [True, True, True, True]]
+masks_torch = torch.from_numpy(np.array(masks))
+mask_name = ['t2', 't1c', 't1', 'flair', 
+            't1cet2', 't1cet1', 'flairt1', 't1t2', 'flairt2', 'flairt1ce',
+            'flairt1cet1', 'flairt1t2', 'flairt1cet2', 't1cet1t2',
+            'flairt1cet1t2']
+print (masks_torch.int())
+
+val_check = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 850, 900, 910, 920, 930, 940, 950, 955, 960, 965, 970, 975, 980, 985, 990, 995, 1000] 
+print(f"Validation checks: {val_check}")
+
+def main():
+    ##########setting seed
+    setup_seed(args.seed)
+    
+    ##########print args
+    for k, v in args._get_kwargs():
+        pad = ' '.join(['' for _ in range(25-len(k))])
+        print(f"{k}:{pad} {v}", flush=True)
+
+    ##########init wandb
+    slurm_job_id = os.getenv("SLURM_JOB_ID")
+    wandb_name_and_id = f'BraTS23_mmFormer_epoch{args.num_epochs}_iter{args.iter_per_epoch}_jobid{slurm_job_id}'
+    wandb.init(
+        project="SegmentationMM",
+        name=wandb_name_and_id,
+        #entity="maxillo",
+        id=wandb_name_and_id,
+        resume="allow",
+        config={
+            "architecture": "mmFormer",
+            "learning_rate": args.lr,
+            "batch_size": args.batch_size,
+            "iter_per_epoch": args.iter_per_epoch,
+            "num_epochs": args.num_epochs,
+            "datapath": args.datapath,
+            "region_fusion_start_epoch": args.region_fusion_start_epoch,
+        }
+    )
+    
+    ##########setting models
+    if args.dataname in ['BRATS2023', 'BRATS2021', 'BRATS2020', 'BRATS2018']:
+        num_cls = 4
+    elif args.dataname == 'BRATS2015':
+        num_cls = 5
+    else:
+        print ('dataset is error')
+        exit(0)
+    model = mmformer.Model(num_cls=num_cls)
+    print (model)
+    model = torch.nn.DataParallel(model).cuda()
+
+    ########## Setting learning scheduler and optimizer
+    lr_schedule = LR_Scheduler(args.lr, args.num_epochs)
+    train_params = [{'params': model.parameters(), 'lr': args.lr, 'weight_decay':args.weight_decay}]
+    optimizer = torch.optim.Adam(train_params,  betas=(0.9, 0.999), eps=1e-08, amsgrad=True)
+
+    ########## Setting data
+    if args.dataname in ['BRATS2023', 'BRATS2020', 'BRATS2015']:
+        train_file = 'datalist/train.txt'
+        test_file = 'datalist/test15splits2.csv'
+        val_file = 'datalist/val15splits.csv'
+        #test_file = 'datalist/test.txt'
+        #val_file = 'datalist/val.txt'
+    elif args.dataname == 'BRATS2018':
+        #### BRATS2018 contains three splits (1,2,3)
+        train_file = 'datalist/train3.txt'
+        test_file = 'datalist/test3.txt'
+
+    logging.info(str(args))
+    train_set = Brats_loadall_nii(transforms=args.train_transforms, root=args.datapath, num_cls=num_cls, train_file=train_file)
+    test_set = Brats_loadall_test_nii(transforms=args.test_transforms, root=args.datapath, test_file=test_file)
+    val_set = Brats_loadall_val_nii(transforms=args.test_transforms, root=args.datapath, num_cls=num_cls, val_file=val_file)
+    train_loader = MultiEpochsDataLoader(
+        dataset=train_set,
+        batch_size=args.batch_size,
+        num_workers=8,
+        pin_memory=True,
+        shuffle=True,
+        worker_init_fn=init_fn)
+    test_loader = MultiEpochsDataLoader(
+        dataset=test_set,
+        batch_size=1,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True)
+    val_loader = MultiEpochsDataLoader(
+        dataset=val_set,
+        batch_size=1,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True)
+
+    ##########Training
+    start = time.time()
+    torch.set_grad_enabled(True)
+    logging.info('#############training############')
+    # iter_per_epoch = args.iter_per_epoch
+    iter_per_epoch = len(train_loader) #number of batches
+    train_iter = iter(train_loader)
+    val_Dice_best = -999999
+    start_epoch = 0
+
+    ##########Resume Training
+    if args.resume is not None:
+        checkpoint = torch.load(args.resume)
+        logging.info('best epoch: {}'.format(checkpoint['epoch']))
+        model.load_state_dict(checkpoint['state_dict'])
+        val_Dice_best = checkpoint['val_Dice_best']
+        optimizer.load_state_dict(checkpoint['optim_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+
+    for epoch in range(start_epoch, args.num_epochs):
+        step_lr = lr_schedule(optimizer, epoch)
+        writer.add_scalar('lr', step_lr, global_step=(epoch+1))
+        b = time.time()
+        model.train()
+        model.module.is_training = True
+
+        prm_cross_loss_epoch = 0.0
+        prm_dice_loss_epoch = 0.0
+        fuse_cross_loss_epoch = 0.0
+        fuse_dice_loss_epoch = 0.0
+        sep_cross_loss_epoch = 0.0
+        sep_dice_loss_epoch = 0.0
+        loss_epoch = 0.0
+
+        ########## training epoch
+        for i in range(iter_per_epoch):
+            step = (i+1) + epoch*iter_per_epoch
+            ###Data load
+            try:
+                data = next(train_iter)
+            except:
+                train_iter = iter(train_loader)
+                data = next(train_iter)
+            x, target, mask = data[:3] #x=(B, M=4, 128, 128, 128), target = (B, C, 128, 128, 128), mask = (B, 4)
+            x = x.cuda(non_blocking=True)
+            target = target.cuda(non_blocking=True)
+            mask = mask.cuda(non_blocking=True)
+
+            fuse_pred, sep_preds, prm_preds = model(x, mask)
+
+            ###Loss compute
+            ### fuse modality segmentation loss
+            fuse_cross_loss = criterions.softmax_weighted_loss(fuse_pred, target, num_cls=num_cls)
+            fuse_dice_loss = criterions.dice_loss(fuse_pred, target, num_cls=num_cls)
+            fuse_loss = fuse_cross_loss + fuse_dice_loss
+
+            fuse_cross_loss_epoch += fuse_cross_loss
+            fuse_dice_loss_epoch += fuse_dice_loss
+
+            ### separated modality segmentation loss
+            sep_cross_loss = torch.zeros(1).cuda().float()
+            sep_dice_loss = torch.zeros(1).cuda().float()
+            for sep_pred in sep_preds:
+                sep_cross_loss += criterions.softmax_weighted_loss(sep_pred, target, num_cls=num_cls)
+                sep_dice_loss += criterions.dice_loss(sep_pred, target, num_cls=num_cls)
+            sep_loss = sep_cross_loss + sep_dice_loss
+
+            sep_cross_loss_epoch += sep_cross_loss
+            sep_dice_loss_epoch += sep_dice_loss
+
+            ### pyramid segmentation loss
+            prm_cross_loss = torch.zeros(1).cuda().float()
+            prm_dice_loss = torch.zeros(1).cuda().float()
+            for prm_pred in prm_preds:
+                prm_cross_loss += criterions.softmax_weighted_loss(prm_pred, target, num_cls=num_cls)
+                prm_dice_loss += criterions.dice_loss(prm_pred, target, num_cls=num_cls)
+            prm_loss = prm_cross_loss + prm_dice_loss
+
+            prm_cross_loss_epoch += prm_cross_loss
+            prm_dice_loss_epoch += prm_dice_loss
+
+            ### total segmentation loss
+            if epoch < args.region_fusion_start_epoch:
+                loss = fuse_loss * 0.0 + sep_loss + prm_loss
+            else:
+                loss = fuse_loss + sep_loss + prm_loss
+
+            loss_epoch += loss
+
+            ### backpropagation
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            ###log
+            writer.add_scalar('loss', loss.item(), global_step=step)
+            writer.add_scalar('fuse_cross_loss', fuse_cross_loss.item(), global_step=step)
+            writer.add_scalar('fuse_dice_loss', fuse_dice_loss.item(), global_step=step)
+            writer.add_scalar('sep_cross_loss', sep_cross_loss.item(), global_step=step)
+            writer.add_scalar('sep_dice_loss', sep_dice_loss.item(), global_step=step)
+            writer.add_scalar('prm_cross_loss', prm_cross_loss.item(), global_step=step)
+            writer.add_scalar('prm_dice_loss', prm_dice_loss.item(), global_step=step)
+
+            msg = 'Epoch {}/{}, Iter {}/{}, Loss {:.4f}, '.format((epoch+1), args.num_epochs, (i+1), iter_per_epoch, loss.item())
+            msg += 'fusecross:{:.4f}, fusedice:{:.4f},'.format(fuse_cross_loss.item(), fuse_dice_loss.item())
+            msg += 'sepcross:{:.4f}, sepdice:{:.4f},'.format(sep_cross_loss.item(), sep_dice_loss.item())
+            msg += 'prmcross:{:.4f}, prmdice:{:.4f},'.format(prm_cross_loss.item(), prm_dice_loss.item())
+            logging.info(msg)
+
+            """
+            if args.debug:
+                print('validate ...')
+                with torch.no_grad():
+                    dice_score, seg_loss = test_softmax(
+                        val_loader,
+                        model,
+                        dataname = args.dataname)
+            
+                val_WT, val_TC, val_ET, val_ETpp = dice_score 
+                logging.info('Validate epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ETpp = {:.2}, loss = {:.2}'.format(epoch, val_WT.item(), val_TC.item(), val_ET.item(), val_ETpp.item(), seg_loss.cpu().item()))
+                val_dice = (val_ET + val_WT + val_TC)/3
+            """
+
+        logging.info('train time per epoch: {}'.format(time.time() - b))
+
+        ########## log current epoch metrics and save current model 
+        wandb.log({
+            "train/epoch": epoch,
+            "train/loss": loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/fusecross": fuse_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/fusedice": fuse_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/sepcross": sep_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/sepdice": sep_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/prmcross": prm_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/prmdice": prm_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+            "train/learning_rate": step_lr,
+        })
+
+        file_name = os.path.join(ckpts, 'model_last.pth')
+        torch.save({
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'optim_dict': optimizer.state_dict(),
+            'val_Dice_best': val_Dice_best,
+            },
+            file_name)
+        
+        ########## validation and test
+        if epoch+1 in val_check:
+            print('validate ...')
+            with torch.no_grad():
+                dice_score, seg_loss = test_softmax(
+                    val_loader,
+                    model,
+                    dataname = args.dataname)
+        
+            val_WT, val_TC, val_ET, val_ETpp = dice_score #validate(model, val_loader)
+            logging.info('Validate epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ETpp = {:.2}, loss = {:.2}'.format(epoch, val_WT.item(), val_TC.item(), val_ET.item(), val_ETpp.item(), seg_loss.cpu().item()))
+            val_dice = (val_ET + val_WT + val_TC)/3
+            wandb.log({
+                "val/epoch":epoch,
+                "val/val_ET_Dice": val_ET.item(),
+                "val/val_ETpp_Dice": val_ETpp.item(),
+                "val/val_WT_Dice": val_WT.item(),
+                "val/val_TC_Dice": val_TC.item(),
+                "val/val_Dice": val_dice.item(), 
+                "val/seg_loss": seg_loss.cpu().item(),       
+            })
+            
+            if val_dice > val_Dice_best:
+                val_Dice_best = val_dice.item()
+                print('save best model ...')
+                file_name = os.path.join(ckpts, 'best.pth')
+                torch.save({
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optim_dict': optimizer.state_dict(),
+                    'val_Dice_best': val_Dice_best,
+                    },
+                    file_name)
+                
+            print('testing ...')
+            test_score = AverageMeter()
+            with torch.no_grad():
+                dice_score, seg_loss = test_softmax(
+                    test_loader,
+                    model,
+                    dataname = args.dataname)
+            test_WT, test_TC, test_ET, test_ETpp = dice_score   
+            logging.info('Testing epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ET_postpro = {:.2}'.format(epoch, test_WT.item(), test_TC.item(), test_ET.item(), test_ETpp.item()))
+            test_dice = (test_ET + test_WT + test_TC)/3
+            wandb.log({
+                "test/epoch":epoch,
+                "test/test_WT_Dice": test_WT.item(),
+                "test/test_TC_Dice": test_TC.item(),
+                "test/test_ET_Dice": test_ET.item(),
+                "test/test_ETpp": test_ETpp.item(),
+                "test/test_Dice": test_dice.item(),  
+                "test/seg_loss": seg_loss.cpu().item(),   
+            })
+
+            model.train()
+            model.module.is_training=True
+
+    msg = 'total time: {:.4f} hours'.format((time.time() - start)/3600)
+    logging.info(msg)
+
+    ##########Evaluate the last epoch model
+    """
+    test_score = AverageMeter()
+    with torch.no_grad():
+        logging.info('###########test set wi/wo postprocess###########')
+        for i, mask in enumerate(masks):
+            logging.info('{}'.format(mask_name[i]))
+            dice_score = test_softmax(
+                            test_loader,
+                            model,
+                            dataname = args.dataname,
+                            feature_mask = mask)
+            test_score.update(dice_score)
+        logging.info('Avg scores: {}'.format(test_score.avg))
+    """
+
+if __name__ == '__main__':
+    main()
