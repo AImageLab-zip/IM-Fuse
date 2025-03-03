@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=1,2 python3 -u pretrain.py --dataset brats18 --mdp 3 --mask_ratio 0.875 --batch-size 2 --lr 0.0003 --exp_name m3ae_pretrain
