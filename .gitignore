@@ -19,30 +19,48 @@ bash_pycharm.sh
 /slurm_out/
 /wandb/
 
-# Asymmetry-BTS
+# IMFuse
+/IMFuse/output*
+/IMFuse/mambaFusion_speranza_dev.py
+/IMFuse/*sh
+/IMFuse/*.csv
+/IMFuse/count_params.py
+/IMFuse/test_fusionCat.py
+/IMFuse/test_mam.py
+/IMFuse/wandb/
+/causal-conv1d/
+install_mamba.sh
+/IMFuse/datalist/name_list.txt
+/IMFuse/datalist/test.txt
+/IMFuse/datalist/test15splits2.csv
+/IMFuse/datalist/val.txt
 
 
 # M3AE
 /m3ae/runs/
 /m3ae/wandb/
-/m3ae/*.txt
 /m3ae/dataset/*.txt
 /m3ae/*.sh
+/m3ae/dataset/datalist/name_list.txt
+/m3ae/dataset/datalist/test.txt
+/m3ae/dataset/datalist/test15splits2.csv
+/m3ae/dataset/datalist/test15splits.csv
+/m3ae/dataset/datalist/val.txt
+/m3ae/dataset/datalist/val15splits.csv
 
-# MambaFusion
-/MambaFusion/
-/causal-conv1d/
-install_mamba.sh
 
 # mmFormer
-/mmFormer/output_finetuning_dbg/
-/mmFormer/output_m5former/
-/mmFormer/output_qos/
-/mmFormer/*.txt
+/mmFormer/output*
 /mmFormer/.gitignore
 /mmFormer/wandb/
-/mmFormer/BRATS2023_Training_npy/
 /mmFormer/output/
+/mmFormer/.git.backup/
+/mmFormer/*.sh
+/mmFormer/mmformer/*m5*
+/mmFormer/mmformer/job.sh
+/mmFormer/mmformer/save_crop_indices.py
+/mmFormer/mmformer/count_parameters.py
+
 
 # Missing as Masking
 /MaM/.github
@@ -50,28 +68,31 @@ install_mamba.sh
 /MaM/create_splits_json.py
 /MaM/*.sh
 
-
-# RFNet
-/RFNet/logs/
-
 # RobustSeg
-
+/RobustSeg/output_RobustSeg300.txt
+/RobustSeg/count_params.py
+/RobustSeg/outputs/
 
 # SFusion
-
+/SFusion/output*
 
 #ShaSpec
+/ShaSpec/.git.backup/
 /ShaSpec/datalist/BraTS18/
 /ShaSpec/outputs/
 /ShaSpec/snapshots/
 /ShaSpec/wandb/
+/ShaSpec/count_parameters.py
 
 # UHVED
 /UHVED/.gitignore
-/UHVED/data/
-/UHVED/data_preprocessed/
-/UHVED/models/
-/UHVED/extensions/u_hved/*output*
+/UHVED/hist.txt
+/UHVED/UHEMIS.py
+/UHVED/output*
+/UHVED/preprocess.py
+/UHVED/preprocess_norm.py
+/UHVED/train_uhemis.py
+
 
 
 # Other files/directories
