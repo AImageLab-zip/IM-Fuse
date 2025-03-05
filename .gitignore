@@ -53,13 +53,19 @@ install_mamba.sh
 /mmFormer/output*
 /mmFormer/.gitignore
 /mmFormer/wandb/
-/mmFormer/output/
+/mmFormer/outputs/
 /mmFormer/.git.backup/
 /mmFormer/*.sh
 /mmFormer/mmformer/*m5*
 /mmFormer/mmformer/job.sh
 /mmFormer/mmformer/save_crop_indices.py
 /mmFormer/mmformer/count_parameters.py
+/mmFormer/mmformer/datalist/test15splits2.csv
+/mmFormer/mmformer/datalist/test.txt
+/mmFormer/mmformer/datalist/val.txt
+/mmFormer/mmformer/test_m5former.py
+/mmFormer/mmformer/finetuning_m5former.py
+
 
 
 # Missing as Masking

@@ -157,7 +157,7 @@ def test_softmax_limage(
         x = x.cuda()
         yo = yo.cuda()
         limage_cropped = limage[:, :, z_min:z_max, y_min:y_max, x_min:x_max].permute(0, 1, 4, 3, 2).cuda()
-        print(f"x shape: {x.shape}, limage_cropped shape: {limage_cropped.shape}")
+        #print(f"x shape: {x.shape}, limage_cropped shape: {limage_cropped.shape}")
 
         if feature_mask is not None:
             mask = torch.from_numpy(np.array(feature_mask))

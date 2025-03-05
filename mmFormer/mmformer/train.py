@@ -18,114 +18,7 @@ from utils import Parser,criterions
 from utils.parser import setup 
 from utils.lr_scheduler import LR_Scheduler, record_loss, MultiEpochsDataLoader 
 from predict import AverageMeter, test_softmax
-"""
-def validate(model, val_loader):
-    # start to validate
-    val_ET = 0.0
-    val_NCR = 0.0
-    val_ED = 0.0
-    val_ET_postpro = 0.0
-    fuse_loss_epoch = 0.0
 
-    patch_size = 128
-    H, W, T = 240, 240, 155
-    one_tensor = torch.ones(1, patch_size, patch_size, patch_size).float().cuda()
-    num_cls=4
-    model.eval()
-    model.module.is_training=False 
-
-    for index, batch in enumerate(val_loader):
-        x, target, yo, mask, names = batch
-        _, _, H, W, Z = x.size()
-        x = x.cuda()
-        target = target.cuda()
-        mask = mask.cuda()
-        yo = yo.cuda()
-
-        #########get h_ind, w_ind, z_ind for sliding windows with overlap 50%
-        h_cnt = np.int(np.ceil((H - patch_size) / (patch_size * (1 - 0.5))))          # total number of strides required
-        h_idx_list = range(0, h_cnt)                                                  # start indices for each stride
-        h_idx_list = [h_idx * np.int(patch_size * (1 - 0.5)) for h_idx in h_idx_list] # list containing all start indices for axis h 
-        h_idx_list.append(H - patch_size)                                             # appends the last valid start index to ensure the final tile always aligns with the volume's boundary
-
-        w_cnt = np.int(np.ceil((W - patch_size) / (patch_size * (1 - 0.5))))
-        w_idx_list = range(0, w_cnt)
-        w_idx_list = [w_idx * np.int(patch_size * (1 - 0.5)) for w_idx in w_idx_list]
-        w_idx_list.append(W - patch_size)
-
-        z_cnt = np.int(np.ceil((Z - patch_size) / (patch_size * (1 - 0.5))))
-        z_idx_list = range(0, z_cnt)
-        z_idx_list = [z_idx * np.int(patch_size * (1 - 0.5)) for z_idx in z_idx_list]
-        z_idx_list.append(Z - patch_size)
-
-        #####compute calculation times for each pixel in sliding windows
-        weight1 = torch.zeros(1, 1, H, W, Z).float().cuda()
-        for h in h_idx_list:
-            for w in w_idx_list:
-                for z in z_idx_list:
-                    weight1[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] += one_tensor
-        weight = weight1.repeat(len(names), num_cls, 1, 1, 1)
-
-        #####evaluation
-        pred = torch.zeros(len(names), num_cls, H, W, Z).float().cuda()
-
-        with torch.no_grad():
-            for h in h_idx_list:
-                for w in w_idx_list:
-                    for z in z_idx_list:
-                        x_input = x[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] #(B, 4, 128, 128, 128)
-                        pred_part = model(x_input, mask) #fuse_pred
-                        pred[:, :, h:h+patch_size, w:w+patch_size, z:z+patch_size] += pred_part
-            pred = pred / weight  
-            pred = pred[:, :, :H, :W, :T]   
-
-            fuse_cross_loss = criterions.softmax_weighted_loss(pred, yo, num_cls=num_cls)
-            fuse_dice_loss = criterions.dice_loss(pred, yo, num_cls=num_cls)
-            fuse_loss = fuse_cross_loss + fuse_dice_loss
-  
-            pred = torch.argmax(pred, dim=1)  # class prediction for each voxel/pixel in the input volume
-            
-            #compute dice scores
-            eps = 1e-8
-            #######label1########
-            o1 = (pred == 1).float()
-            t1 = (target == 1).float()
-            intersect1 = torch.sum(2 * (o1 * t1), dim=(1,2,3)) + eps
-            denominator1 = torch.sum(o1, dim=(1,2,3)) + torch.sum(t1, dim=(1,2,3)) + eps
-            dice_NCR = intersect1 / denominator1
-
-            #######label2########
-            o2 = (pred == 2).float()
-            t2 = (target == 2).float()
-            intersect2 = torch.sum(2 * (o2 * t2), dim=(1,2,3)) + eps
-            denominator2 = torch.sum(o2, dim=(1,2,3)) + torch.sum(t2, dim=(1,2,3)) + eps
-            dice_ED = intersect2 / denominator2
-
-            #######label3########
-            o3 = (pred == 3).float()
-            t3 = (target == 3).float()
-            intersect3 = torch.sum(2 * (o3 * t3), dim=(1,2,3)) + eps
-            denominator3 = torch.sum(o3, dim=(1,2,3)) + torch.sum(t3, dim=(1,2,3)) + eps
-            dice_ET = intersect3 / denominator3
-
-            ####post processing:
-            if torch.sum(o3) < 500:
-                o4 = o3 * 0.0
-            else:
-                o4 = o3
-            t4 = t3
-            intersect4 = torch.sum(2 * (o4 * t4), dim=(1,2,3)) + eps
-            denominator4 = torch.sum(o4, dim=(1,2,3)) + torch.sum(t4, dim=(1,2,3)) + eps
-            dice_ET_postpro = intersect4 / denominator4
-
-            val_NCR += dice_NCR
-            val_ED += dice_ED
-            val_ET += dice_ET
-            val_ET_postpro += dice_ET_postpro
-            fuse_loss_epoch += fuse_loss
-
-    return val_NCR/(index+1), val_ED/(index+1), val_ET/(index+1), val_ET_postpro/(index+1), fuse_loss_epoch/(index+1)
-"""
 parser = argparse.ArgumentParser()
 parser.add_argument('-batch_size', '--batch_size', default=1, type=int, help='Batch size')
 parser.add_argument('--datapath', default=None, type=str)
@@ -164,7 +57,7 @@ mask_name = ['t2', 't1c', 't1', 'flair',
             't1cet2', 't1cet1', 'flairt1', 't1t2', 'flairt2', 'flairt1ce',
             'flairt1cet1', 'flairt1t2', 'flairt1cet2', 't1cet1t2',
             'flairt1cet1t2']
-print (masks_torch.int())
+print(masks_torch.int())
 
 val_check = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 850, 900, 910, 920, 930, 940, 950, 955, 960, 965, 970, 975, 980, 985, 990, 995, 1000] 
 print(f"Validation checks: {val_check}")
@@ -181,22 +74,23 @@ def main():
     ##########init wandb
     slurm_job_id = os.getenv("SLURM_JOB_ID")
     wandb_name_and_id = f'BraTS23_mmFormer_epoch{args.num_epochs}_iter{args.iter_per_epoch}_jobid{slurm_job_id}'
-    wandb.init(
-        project="SegmentationMM",
-        name=wandb_name_and_id,
-        #entity="maxillo",
-        id=wandb_name_and_id,
-        resume="allow",
-        config={
-            "architecture": "mmFormer",
-            "learning_rate": args.lr,
-            "batch_size": args.batch_size,
-            "iter_per_epoch": args.iter_per_epoch,
-            "num_epochs": args.num_epochs,
-            "datapath": args.datapath,
-            "region_fusion_start_epoch": args.region_fusion_start_epoch,
-        }
-    )
+    if not args.debug:
+        wandb.init(
+            project="SegmentationMM",
+            name=wandb_name_and_id,
+            #entity="maxillo",
+            id=wandb_name_and_id,
+            resume="allow",
+            config={
+                "architecture": "mmFormer",
+                "learning_rate": args.lr,
+                "batch_size": args.batch_size,
+                "iter_per_epoch": args.iter_per_epoch,
+                "num_epochs": args.num_epochs,
+                "datapath": args.datapath,
+                "region_fusion_start_epoch": args.region_fusion_start_epoch,
+            }
+        )
     
     ##########setting models
     if args.dataname in ['BRATS2023', 'BRATS2021', 'BRATS2020', 'BRATS2018']:
@@ -224,8 +118,9 @@ def main():
         #val_file = 'datalist/val.txt'
     elif args.dataname == 'BRATS2018':
         #### BRATS2018 contains three splits (1,2,3)
+        test_file = 'datalist/Brats18_test15splits.csv'
+        val_file = 'datalist/Brats18_val15splits.csv'
         train_file = 'datalist/train3.txt'
-        test_file = 'datalist/test3.txt'
 
     logging.info(str(args))
     train_set = Brats_loadall_nii(transforms=args.train_transforms, root=args.datapath, num_cls=num_cls, train_file=train_file)
@@ -360,34 +255,25 @@ def main():
             msg += 'prmcross:{:.4f}, prmdice:{:.4f},'.format(prm_cross_loss.item(), prm_dice_loss.item())
             logging.info(msg)
 
-            """
             if args.debug:
-                print('validate ...')
-                with torch.no_grad():
-                    dice_score, seg_loss = test_softmax(
-                        val_loader,
-                        model,
-                        dataname = args.dataname)
-            
-                val_WT, val_TC, val_ET, val_ETpp = dice_score 
-                logging.info('Validate epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ETpp = {:.2}, loss = {:.2}'.format(epoch, val_WT.item(), val_TC.item(), val_ET.item(), val_ETpp.item(), seg_loss.cpu().item()))
-                val_dice = (val_ET + val_WT + val_TC)/3
-            """
+                break
+
 
         logging.info('train time per epoch: {}'.format(time.time() - b))
 
         ########## log current epoch metrics and save current model 
-        wandb.log({
-            "train/epoch": epoch,
-            "train/loss": loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/fusecross": fuse_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/fusedice": fuse_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/sepcross": sep_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/sepdice": sep_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/prmcross": prm_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/prmdice": prm_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
-            "train/learning_rate": step_lr,
-        })
+        if not args.debug:
+            wandb.log({
+                "train/epoch": epoch,
+                "train/loss": loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/fusecross": fuse_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/fusedice": fuse_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/sepcross": sep_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/sepdice": sep_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/prmcross": prm_cross_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/prmdice": prm_dice_loss_epoch.cpu().detach().item() / iter_per_epoch,
+                "train/learning_rate": step_lr,
+            })
 
         file_name = os.path.join(ckpts, 'model_last.pth')
         torch.save({
@@ -410,15 +296,16 @@ def main():
             val_WT, val_TC, val_ET, val_ETpp = dice_score #validate(model, val_loader)
             logging.info('Validate epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ETpp = {:.2}, loss = {:.2}'.format(epoch, val_WT.item(), val_TC.item(), val_ET.item(), val_ETpp.item(), seg_loss.cpu().item()))
             val_dice = (val_ET + val_WT + val_TC)/3
-            wandb.log({
-                "val/epoch":epoch,
-                "val/val_ET_Dice": val_ET.item(),
-                "val/val_ETpp_Dice": val_ETpp.item(),
-                "val/val_WT_Dice": val_WT.item(),
-                "val/val_TC_Dice": val_TC.item(),
-                "val/val_Dice": val_dice.item(), 
-                "val/seg_loss": seg_loss.cpu().item(),       
-            })
+            if not args.debug:
+                wandb.log({
+                    "val/epoch":epoch,
+                    "val/val_ET_Dice": val_ET.item(),
+                    "val/val_ETpp_Dice": val_ETpp.item(),
+                    "val/val_WT_Dice": val_WT.item(),
+                    "val/val_TC_Dice": val_TC.item(),
+                    "val/val_Dice": val_dice.item(), 
+                    "val/seg_loss": seg_loss.cpu().item(),       
+                })
             
             if val_dice > val_Dice_best:
                 val_Dice_best = val_dice.item()
@@ -442,37 +329,22 @@ def main():
             test_WT, test_TC, test_ET, test_ETpp = dice_score   
             logging.info('Testing epoch = {}, WT = {:.2}, TC = {:.2}, ET = {:.2}, ET_postpro = {:.2}'.format(epoch, test_WT.item(), test_TC.item(), test_ET.item(), test_ETpp.item()))
             test_dice = (test_ET + test_WT + test_TC)/3
-            wandb.log({
-                "test/epoch":epoch,
-                "test/test_WT_Dice": test_WT.item(),
-                "test/test_TC_Dice": test_TC.item(),
-                "test/test_ET_Dice": test_ET.item(),
-                "test/test_ETpp": test_ETpp.item(),
-                "test/test_Dice": test_dice.item(),  
-                "test/seg_loss": seg_loss.cpu().item(),   
-            })
+            if not args.debug:
+                wandb.log({
+                    "test/epoch":epoch,
+                    "test/test_WT_Dice": test_WT.item(),
+                    "test/test_TC_Dice": test_TC.item(),
+                    "test/test_ET_Dice": test_ET.item(),
+                    "test/test_ETpp": test_ETpp.item(),
+                    "test/test_Dice": test_dice.item(),  
+                    "test/seg_loss": seg_loss.cpu().item(),   
+                })
 
             model.train()
             model.module.is_training=True
 
     msg = 'total time: {:.4f} hours'.format((time.time() - start)/3600)
     logging.info(msg)
-
-    ##########Evaluate the last epoch model
-    """
-    test_score = AverageMeter()
-    with torch.no_grad():
-        logging.info('###########test set wi/wo postprocess###########')
-        for i, mask in enumerate(masks):
-            logging.info('{}'.format(mask_name[i]))
-            dice_score = test_softmax(
-                            test_loader,
-                            model,
-                            dataname = args.dataname,
-                            feature_mask = mask)
-            test_score.update(dice_score)
-        logging.info('Avg scores: {}'.format(test_score.avg))
-    """
 
 if __name__ == '__main__':
     main()

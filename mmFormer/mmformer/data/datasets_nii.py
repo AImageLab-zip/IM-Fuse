@@ -78,7 +78,7 @@ def pad_or_crop_image(image, seg=None, target_size=(128, 128, 128), indices=None
 
 class Brats_loadall_nii(Dataset):
     def __init__(self, transforms='', root=None, modal='all', num_cls=4, train_file='train.txt'):
-        data_file_path = os.path.join(root, train_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', train_file)
         with open(data_file_path, 'r') as f:
             datalist = [i.strip() for i in f.readlines()] #875 elements
         # datalist.sort()
@@ -86,25 +86,6 @@ class Brats_loadall_nii(Dataset):
         volpaths = []
         for dataname in datalist:
             volpaths.append(os.path.join(root, 'vol', dataname+'_vol.npy'))
-
-
-        '''Yao'''
-        #patients_dir = glob.glob(join(root, 'vol', '*_vol.npy'))
-        #patients_dir.sort(key=lambda x: x.split('/')[-1][:-8])
-        #print('###############', len(patients_dir))
-        #n_patients = len(patients_dir)
-        #pid_idx = np.arange(n_patients)
-        #np.random.seed(0)
-        # np.random.shuffle(pid_idx)
-        #n_fold_list = np.split(pid_idx, 3)
-
-        #volpaths = []
-        #for i, fold in enumerate(n_fold_list):
-        #    if i != 0:
-        #        for idx in fold:
-                    # volpaths.append(patients_dir[idx])
-        #datalist = [x.split('/')[-1].split('_vol')[0] for x in volpaths]
-        '''Yao'''
 
         self.volpaths = volpaths
         self.transforms = eval(transforms or 'Identity()')
@@ -152,10 +133,9 @@ class Brats_loadall_nii(Dataset):
     def __len__(self):
         return len(self.volpaths)
 
-
 class Brats_loadall_nii_loc(Dataset):
     def __init__(self, transforms='', root=None, modal='all', num_cls=4, train_file='train.txt'):
-        data_file_path = os.path.join(root, train_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', train_file)
         with open(data_file_path, 'r') as f:
             datalist = [i.strip() for i in f.readlines()] #875 elements
         # datalist.sort()
@@ -240,7 +220,7 @@ class Brats_loadall_nii_loc(Dataset):
 
 class Brats_loadall_test_nii(Dataset):
     def __init__(self, transforms='', root=None, test_file='test.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join(root, test_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', test_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
         #with open(data_file_path, 'r') as f:
@@ -250,23 +230,6 @@ class Brats_loadall_test_nii(Dataset):
         for dataname in datalist:
             volpaths.append(os.path.join(root, 'vol', dataname+'_vol.npy'))
         
-        '''Yao'''
-        #patients_dir = glob.glob(join(root, 'vol', '*_vol.npy')) #list all files in the dir
-        #patients_dir.sort(key=lambda x: x.split('/')[-1][:-8])
-        #n_patients = len(patients_dir)
-        #pid_idx = np.arange(n_patients) #indices corresponding to the patients
-        #np.random.seed(0)
-        #np.random.shuffle(pid_idx) #randomly shuffles the indices to allow for randomized patient selection
-        #n_fold_list = np.split(pid_idx, 3) # split into 3 folds 
-
-        #volpaths = []
-        #for i, fold in enumerate(n_fold_list):
-        #    if i == 0:
-        #        for idx in fold:
-        #            volpaths.append(patients_dir[idx])
-        #datalist = [x.split('/')[-1].split('_vol')[0] for x in volpaths]
-        '''Yao'''
-
         self.volpaths = volpaths
         self.transforms = eval(transforms or 'Identity()')
         self.names = datalist
@@ -320,7 +283,7 @@ class Brats_loadall_test_nii(Dataset):
 
 class Brats_loadall_val_nii(Dataset):
     def __init__(self, transforms='', root=None, val_file='val.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join(root, val_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', val_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
         #with open(data_file_path, 'r') as f:
@@ -382,7 +345,7 @@ class Brats_loadall_val_nii(Dataset):
 
 class Brats_loadall_val_nii_loc(Dataset):
     def __init__(self, transforms='', root=None, val_file='val.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join(root, val_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', val_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
 
@@ -455,7 +418,7 @@ class Brats_loadall_val_nii_loc(Dataset):
 
 class Brats_loadall_test_nii_loc(Dataset):
     def __init__(self, transforms='', root=None, test_file='test.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join(root, test_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/mmFormer/mmformer', test_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
         
