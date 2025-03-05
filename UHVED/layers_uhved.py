@@ -8,8 +8,6 @@ def normalization(planes, norm='bn'):
         m = nn.GroupNorm(4, planes)
     elif norm == 'in':
         m = nn.InstanceNorm3d(planes, eps=1e-6)
-    elif norm == 'sync_bn':
-        m = nn.SynchronizedBatchNorm3d(planes)
     else:
         raise ValueError('normalization type {} is not supported'.format(norm))
     return m

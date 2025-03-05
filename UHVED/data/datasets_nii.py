@@ -34,7 +34,7 @@ def get_masking():
 
 class Brats_loadall_nii(Dataset):
     def __init__(self, transforms='', root=None, modal='all', num_cls=4, train_file='train.txt'):
-        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED/extensions/u_hved', train_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED', train_file)
         with open(data_file_path, 'r') as f:
             datalist = [i.strip() for i in f.readlines()] #875 elements
         
@@ -122,8 +122,10 @@ class Brats_loadall_nii(Dataset):
         x = torch.squeeze(torch.from_numpy(x), dim=0)
         #y = torch.squeeze(torch.from_numpy(y), dim=0)
         
-        mask = get_masking() #np.random.choice(15, 1)
-        mask = torch.tensor(mask)  #(4)
+        #mask = get_masking() #np.random.choice(15, 1)
+        #mask = torch.tensor(mask)  #(4)
+        mask_idx = np.random.choice(15, 1)
+        mask = torch.squeeze(torch.from_numpy(mask_array[mask_idx]), dim=0) #(4)
         return x, yo, mask, name #, y
 
     def __len__(self):
@@ -131,7 +133,7 @@ class Brats_loadall_nii(Dataset):
 
 class Brats_loadall_test_nii(Dataset):
     def __init__(self, transforms='', root=None, test_file='test.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED/extensions/u_hved', test_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED', test_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
 
@@ -207,7 +209,7 @@ class Brats_loadall_test_nii(Dataset):
 
 class Brats_loadall_val_nii(Dataset):
     def __init__(self, transforms='', root=None, val_file='val.txt', modal='all', num_cls=4):
-        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED/extensions/u_hved', val_file)
+        data_file_path = os.path.join('/work/grana_neuro/missing_modalities/UHVED', val_file)
         df = pd.read_csv(data_file_path)
         datalist = df['case']
 

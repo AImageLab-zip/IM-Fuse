@@ -18,6 +18,7 @@ def masker(x, mask):
     return y
 
 def kl_loss(mu, logvar) : #[B,128,1,1,1]
+    logvar = torch.clamp(logvar, min=-50, max=50)  
     loss = 0.5 * torch.sum(torch.square(mu) + torch.exp(logvar) - 1 - logvar, axis=-1)
     loss = torch.mean(loss)
     return loss
@@ -173,7 +174,7 @@ def softmax_weighted_loss(output, target, num_cls=5):
     for i in range(num_cls):
         outputi = output[:, i, :, :, :] #(B, 128, 128, 128)
         targeti = target[:, i, :, :, :]
-        weighted = 1.0 - (torch.sum(targeti, (1,2,3)) * 1.0 / torch.sum(target, (1,2,3,4)))
+        weighted = 1.0 - (torch.sum(targeti, (1,2,3)) / (torch.sum(target, (1,2,3,4)) + 1e-8))
         weighted = torch.reshape(weighted, (-1,1,1,1)).repeat(1,H,W,Z)
         if i == 0:
             cross_loss = -1.0 * weighted * targeti * torch.log(torch.clamp(outputi, min=0.005, max=1)).float()
