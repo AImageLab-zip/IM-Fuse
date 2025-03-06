@@ -47,6 +47,8 @@ install_mamba.sh
 /m3ae/dataset/datalist/test15splits.csv
 /m3ae/dataset/datalist/val.txt
 /m3ae/dataset/datalist/val15splits.csv
+/m3ae/.git.backup/
+/m3ae/count_parameters.py
 
 
 # mmFormer
@@ -67,7 +69,6 @@ install_mamba.sh
 /mmFormer/mmformer/finetuning_m5former.py
 
 
-
 # Missing as Masking
 /MaM/.github
 /MaM/*.egg-info/
@@ -81,6 +82,12 @@ install_mamba.sh
 
 # SFusion
 /SFusion/output*
+/SFusion/outputs
+/SFusion/datalist/Brats18_test3.txt
+/SFusion/datalist/Brats18_val15splits.csv
+/SFusion/datalist/Brats18_test15splits.csv
+/SFusion/datalist/train2.txt
+
 
 #ShaSpec
 /ShaSpec/.git.backup/
