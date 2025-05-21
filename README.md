@@ -1,17 +1,19 @@
 # IM-Fuse: A Mamba-based Fusion Block for Brain Tumor Segmentation with Incomplete Modalities
+[[Paper]]() 
+
 <figure>
  <img style="float: left" src="figs/IM-Fuse-overview.png" alt="Side view" width="100%">
  <figcaption><em>Overview of our framework IM-Fuse (Incomplete Modality Fusion), (b) represents our Mamba Fusion Block (MFB) where learnable tokens are concatenated, and (c) depicts its interleaved version (Interleaved-MFB or I-MFB) where modality tokens and learnable parameters are alternately arranged.</em></figcaption>
 </figure>
 
-[[Paper]]() 
-
-This repository contains the material from the paper "IM-Fuse: A Mamba-based Fusion Block for Brain tumor Segmentation with Incomplete Modalities". We include material to reproduce our framework and all the competitors trained on [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset on the glioma segmentation task.
+This repository contains the material from the paper "IM-Fuse: A Mamba-based Fusion Block for Brain tumor Segmentation with Incomplete Modalities".It includes all materials necessary to reproduce our framework, as well as the competitors evaluated on the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset for the glioma segmentation task.
 
 ## Introduction
-Brain tumor segmentation is a crucial task in medical imaging that involves the integrated modeling of four distinct imaging modalities to identify tumor regions accurately. Unfortunately, in real-life scenarios, the full availability of such four modalities is often violated due to scanning cost, time, and patient condition. Consequently, several deep learning models have been developed to address the challenge of brain tumor segmentation under conditions of missing imaging modalities. However, the majority of these models have been evaluated using the 2018 version of the BraTS dataset, which comprises only $285$ volumes. 
+Brain tumor segmentation is a crucial task in medical imaging that involves the integrated modeling of four distinct imaging modalities to accurately delineate tumor regions. Unfortunately, in real-life scenarios, the complete acquisition of all four modalities is frequently hindered by factors such as scanning costs, time constraints, and patient condition. To address this challenge, numerous deep learning models have been developed to perform brain tumor segmentation under conditions of missing imaging modalities. 
 
-In this study, we reproduce and extensively analyze the most relevant models using [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/), which includes $1,250$ volumes, thereby providing a more comprehensive and reliable comparison of their performance. Furthermore, we propose and evaluate the adoption of Mamba as an alternative fusion mechanism for brain tumor segmentation in the presence of missing modalities. Experimental results demonstrate that transformer-based architectures achieve leading performance on [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/), outperforming purely convolutional models that were instead superior in BraTS2018. Meanwhile, the proposed Mamba-based architecture exhibits promising performance in comparison to state-of-the-art models, competing and even outperforming transformers.
+Despite these advancements, the majority of existing models have been evaluated primarily on the 2018 edition of the BraTS dataset, which comprises only $285$ volumes. In this study, we reproduce and conduct an extensive analysis of the most relevant models using the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset, which includes $1,250$ volumes. This larger and more diverse dataset enables a more robust and comprehensive comparison of model performance.
+
+Moreover, we introduce and evaluate the use of Mamba as an alternative fusion mechanism for brain tumor segmentation in scenarios involving missing modalities. Experimental results indicate that transformer-based architectures achieve superior performance on the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset, outperforming purely convolutional models that previously demonstrated state-of-the-art results on BraTS2018. Notably, the proposed Mamba-based architecture exhibits promising performance compared to state-of-the-art models, competing and even outperforming transformers.
 
 ## Citing our work
 If you find this code and paper useful for your research, please kindly cite our paper.
@@ -34,7 +36,7 @@ If you find this code and paper useful for your research, please kindly cite our
 ```
 
 ## Dataset
-Before running this project, you need to download the data from BraTS 2023 Challenge, specifically the subset for [Glioma Segmentation](https://www.synapse.org/Synapse:syn51156910/wiki/622351).
+Before running this project, you need to download the data from BraTS 2023 Challenge, specifically the subset for [Glioma Segmentation](https://www.synapse.org/Synapse:syn51156910/wiki/622351) task.
 
 ## IM-Fuse
 ### How to run
