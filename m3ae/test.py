@@ -41,10 +41,9 @@ mask_name = ['t2', 't1c', 't1', 'flair',
             'flairt1cet1', 'flairt1t2', 'flairt1cet2', 't1cet1t2',
             'flairt1cet1t2']
 
-parser = argparse.ArgumentParser(description='VTUNET BRATS 2021 Training')
+parser = argparse.ArgumentParser(description='EVAL BRATS 2023 Training')
 # DO not use data_aug argument this argument!!
 parser.add_argument('--modal_list', nargs='+', help='<Required> Set flag')
-
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 2).')
 parser.add_argument('--mdp', default=0, type=int, metavar='N',
@@ -59,10 +58,7 @@ parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     dest='weight_decay')
 parser.add_argument('--devices', default='0', type=str, help='Set the CUDA_VISIBLE_DEVICES env var from this string')
 parser.add_argument('--checkpoint', default='/data5/lh/brats/runs/sd_new6/model_1model_best_449.pth.tar', type=str, help='Set the CUDA_VISIBLE_DEVICES env var from this string')
-
-
 parser.add_argument('--exp_name', default='baseline3_real', type=str, help='exp name')
-
 parser.add_argument('--val', default=20, type=int, help="how often to perform validation step")
 parser.add_argument('--fold', default=0, type=int, help="Split number (0 to 4)")
 parser.add_argument('--num_classes', type=int,
@@ -72,8 +68,6 @@ parser.add_argument('--seed', type=int,
 parser.add_argument('--cfg', type=str, default="configs/vt_unet_costum.yaml", metavar="FILE",
                     help='path to config file', )
 parser.add_argument('--zip', action='store_true', help='use zipped dataset instead of folder dataset')
-
-
 parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'full', 'part'],
                     help='no: no cache, '
                          'full: cache all data, '
@@ -81,7 +75,6 @@ parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'fu
 parser.add_argument('--resume', default=True, type=bool, help='resume from checkpoint')
 parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
 parser.add_argument('--mae_imp', default=True, type=bool, help='resume from checkpoint')
-
 parser.add_argument('--use-checkpoint', action='store_true',
                     help="whether to use gradient checkpointing to save memory")
 parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],

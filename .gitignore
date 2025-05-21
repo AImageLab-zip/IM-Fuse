@@ -4,22 +4,31 @@
 /mamba_venv/
 /nnunet_venv/
 /uhved_python/
+/mambaFusion_venv/
 
 # Data
-
-
+/BRATS2018_Training_none_npy/
+/BRATS2023_Training_npy
+/cineca/
+/visualization/
 
 # Bash files
 bash.sh
 bash_pycharm.sh
 /slurm_templates/
+sbatch_install_mamba_2.sh
+install_mamba_2.sh
+install_mamba.sh
 
 # Log files and directories
 /runs/
 /slurm_out/
 /wandb/
+/.vscode/
 
 # IMFuse
+/causal-conv1d/
+/mamba/
 /IMFuse/output*
 /IMFuse/mambaFusion_speranza_dev.py
 /IMFuse/*sh
@@ -28,12 +37,13 @@ bash_pycharm.sh
 /IMFuse/test_fusionCat.py
 /IMFuse/test_mam.py
 /IMFuse/wandb/
-/causal-conv1d/
-install_mamba.sh
+/IMFuse/eval/*.txt
 /IMFuse/datalist/name_list.txt
 /IMFuse/datalist/test.txt
 /IMFuse/datalist/test15splits2.csv
 /IMFuse/datalist/val.txt
+/IMFuse/eval/
+/IMFuse/crop_volumes.py
 
 
 # M3AE
@@ -65,8 +75,9 @@ install_mamba.sh
 /mmFormer/mmformer/datalist/test15splits2.csv
 /mmFormer/mmformer/datalist/test.txt
 /mmFormer/mmformer/datalist/val.txt
-/mmFormer/mmformer/test_m5former.py
-/mmFormer/mmformer/finetuning_m5former.py
+/mmFormer/eval/
+/mmFormer/mmformer/m5former.py
+
 
 
 # Missing as Masking
@@ -76,7 +87,7 @@ install_mamba.sh
 /MaM/*.sh
 
 # RobustSeg
-/RobustSeg/output_RobustSeg300.txt
+/RobustSeg/eval/
 /RobustSeg/count_params.py
 /RobustSeg/outputs/
 
@@ -87,6 +98,7 @@ install_mamba.sh
 /SFusion/datalist/Brats18_val15splits.csv
 /SFusion/datalist/Brats18_test15splits.csv
 /SFusion/datalist/train2.txt
+/SFusion/eval/
 
 
 #ShaSpec
@@ -96,6 +108,10 @@ install_mamba.sh
 /ShaSpec/snapshots/
 /ShaSpec/wandb/
 /ShaSpec/count_parameters.py
+/ShaSpec/environment.yml
+/ShaSpec/eval.sh
+/ShaSpec/GFLOPs.csv
+/ShaSpec/run.sh
 
 # UHVED
 /UHVED/.gitignore
@@ -105,6 +121,8 @@ install_mamba.sh
 /UHVED/preprocess.py
 /UHVED/preprocess_norm.py
 /UHVED/train_uhemis.py
+/UHVED/eval/
+/UHVED/datalist/train2.txt
 
 
 
@@ -116,6 +134,10 @@ smu2.csv
 split_set.py
 .git.backup/
 wandb/
+mamba_venv_requirements.txt
+GFLOP*
+split_set_2018.py
+test_mamba.py
 
 
 ############## From here files taken from https://github.com/github/gitignore/blob/main/Python.gitignore ##############

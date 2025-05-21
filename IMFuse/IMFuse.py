@@ -65,6 +65,7 @@ class MambaFusionLayer(nn.Module):
         x_mamba = self.mamba_layer(x_fused)
         x_mamba = x_mamba[:, -self.num_tokens_fused_representation:, :] # (B, 512, 512)    
         return x_mamba
+    
 class MambaFusionCatLayer(nn.Module):
     def __init__(self, dim, num_tokens_fused_representation=None):
         super().__init__()

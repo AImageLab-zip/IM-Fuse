@@ -33,6 +33,7 @@ if __name__ == '__main__':
     test_transforms = 'Compose([NumpyType((np.float32, np.int64)),])'
     datapath = args.datapath
     test_file = args.test_file
+    save_path = args.savepath
     num_cls = 4
     dataname = args.dataname
     index = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
@@ -62,7 +63,10 @@ if __name__ == '__main__':
                             model,
                             dataname = dataname,
                             feature_mask = mask,
-                            compute_loss=False)
+                            compute_loss=False,
+                            save_masks=True,
+                            save_dir=save_path,
+                            index = index)
             val_WT, val_TC, val_ET, val_ETpp = dice_score
             
             with open(output_path, 'a') as file:

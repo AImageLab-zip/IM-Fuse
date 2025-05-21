@@ -35,7 +35,7 @@ if __name__ == '__main__':
     checkpoint = torch.load(resume)
     model.load_state_dict(checkpoint['state_dict'])
     best_epoch = checkpoint['epoch'] + 1
-    output_path = f"output_SFusion{dataname}_{best_epoch}.txt"
+    output_path = f"eval/output_SFusion{dataname}_{best_epoch}.txt"
 
     test_score = AverageMeter()
     with torch.no_grad():

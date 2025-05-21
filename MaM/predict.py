@@ -131,10 +131,7 @@ def test_softmax(
         model,
         dataname = 'BRATS2020',
         feature_mask=None,
-        compute_loss=True,
-        save_masks=False,
-        save_dir=None,
-        index=0):
+        compute_loss=True):
 
     H, W, T = 240, 240, 155
     loss = 0.0
@@ -204,9 +201,8 @@ def test_softmax(
         pred = pred / weight
         b = time.time()
         pred = pred[:, :, :H, :W, :T]
-
         
-        # segmentation loss 
+        ##### segmentation loss 
         if compute_loss:
             seg_cross_loss = criterions.softmax_weighted_loss(pred, yo, num_cls=num_cls)
             seg_dice_loss = criterions.dice_loss(pred, yo, num_cls=num_cls)
@@ -228,38 +224,6 @@ def test_softmax(
             msg += ', '.join(['{}: {:.4f}'.format(k, v) for k, v in zip(class_evaluation, scores_evaluation[k])])
             #msg += ',' + ', '.join(['{}: {:.4f}'.format(k, v) for k, v in zip(class_separate, scores_separate[k])])
             logging.info(msg)
-
-            # save predicted mask
-            if save_masks and save_dir is not None: 
-                flags_bool = mask[k].bool().cpu().numpy().tolist()
-                flag_str = ''.join(['1' if f else '0' for f in flags_bool])  # -> "0001"
-
-                case_name = names[k]  
-                out_name = f"{case_name}_{flag_str}.nii.gz"
-                os.makedirs(save_dir, exist_ok=True)
-                out_path = os.path.join(save_dir, out_name)
-
-                # build affine with 1.0 mm isotropic spacing
-                affine = np.diag([1.0, 1.0, 1.0, 1.0])
-
-                # gather the current volume, cast to uint8 and drop the batch dimension
-                pred_np = pred[k].cpu().numpy().astype(np.uint8)  # shape (H, W, T)
-
-                nib.save(nib.Nifti1Image(pred_np, affine), out_path)
-
-            # write scores
-            case_scores = scores_evaluation[k][0:3]
-            avg_score = float(np.mean(case_scores))
-
-            txt_path = os.path.join(save_dir, f"scores_{index}.txt")
-            with open(txt_path, "a") as f:
-                f.write(
-                    f"{out_name} "                                        
-                    + " ".join([f"{s:.4f}" for s in case_scores]) + " "    
-                    + f"{avg_score:.4f}\n"                                 
-                )
-        
-
     
     msg = 'Average scores:'
     msg += ', '.join(['{}: {:.4f}'.format(k, v) for k, v in zip(class_evaluation, vals_evaluation.avg)])

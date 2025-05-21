@@ -2,7 +2,7 @@ accelerate==1.4.0
 annotated-types==0.7.0
 asttokens==3.0.0
 calflops==0.3.2
-causal-conv1d @ file:///work/H2020DeciderFicarra/vpipoli/geneexpression/causal-conv1d
+causal-conv1d 
 certifi==2025.1.31
 charset-normalizer==3.4.1
 click==8.1.8
@@ -32,7 +32,7 @@ Jinja2==3.1.4
 jupyter_client==8.6.3
 jupyter_core==5.7.2
 kiwisolver==1.4.7
-mamba-ssm @ file:///work/H2020DeciderFicarra/vpipoli/geneexpression/mamba
+mamba-ssm 
 MarkupSafe==2.1.5
 matplotlib==3.9.4
 matplotlib-inline==0.1.7

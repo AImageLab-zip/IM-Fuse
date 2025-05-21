@@ -16,7 +16,7 @@ from utils import AverageMeter, ProgressMeter, save_checkpoint, count_parameters
 from model.Unet import Unet_missing
 from torch.cuda.amp import autocast as autocast
 
-parser = argparse.ArgumentParser(description='')
+parser = argparse.ArgumentParser(description='BRATS 2023 Pre-Training')
 # DO not use data_aug argument this argument!!
 parser.add_argument('-j', '--workers', default=12, type=int, metavar='N',
                     help='number of data loading workers (default: 2).')
@@ -33,10 +33,8 @@ parser.add_argument('--wd', '--weight-decay', default=0, type=float,
 parser.add_argument('--mask_ratio', default=0.875, type=float, help='mask ratio of pretrain')
 parser.add_argument('--model_type', type=str, default='vtnet', choices=['vtnet', 'cnnnet'])
 parser.add_argument('--dataset', type=str, default='brats23', choices=['brats18', 'brats20', 'brats23'])
-
 parser.add_argument('--devices', default='0', type=str, help='Set the CUDA_VISIBLE_DEVICES env var from this string')
 parser.add_argument('--exp_name', default='patch16mask875_mdp3_inversion_reg2_005', type=str, help='exp name')
-
 parser.add_argument('--val', default=50, type=int, help="how often to perform validation step")
 parser.add_argument('--fold', default=0, type=int, help="Split number (0 to 4)")
 parser.add_argument('--batch_size', default=1, type=int, help="Split number (0 to 4)")

@@ -24,7 +24,7 @@ from predict import AverageMeter, test_softmax
 DEBUG_ITER = 1
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-batch_size', '--batch_size', default=1, type=int, help='Batch size')
+parser.add_argument('--batch_size', default=1, type=int, help='Batch size')
 parser.add_argument('--datapath', default=None, type=str)
 parser.add_argument('--dataname', default='BRATS2018', type=str)
 parser.add_argument('--savepath', default=None, type=str)

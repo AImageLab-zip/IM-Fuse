@@ -1,0 +1,360 @@
+{
+    "dataset_name": "Dataset520_BraTS2020",
+    "plans_name": "nnUNetPlans",
+    "original_median_spacing_after_transp": [
+        1.0,
+        1.0,
+        1.0
+    ],
+    "original_median_shape_after_transp": [
+        139,
+        170,
+        138
+    ],
+    "image_reader_writer": "SimpleITKIO",
+    "transpose_forward": [
+        0,
+        1,
+        2
+    ],
+    "transpose_backward": [
+        0,
+        1,
+        2
+    ],
+    "configurations": {
+        "2d": {
+            "data_identifier": "nnUNetPlans_2d",
+            "preprocessor_name": "DefaultPreprocessor",
+            "batch_size": 105,
+            "patch_size": [
+                192,
+                160
+            ],
+            "median_image_size_in_voxels": [
+                170.0,
+                138.0
+            ],
+            "spacing": [
+                1.0,
+                1.0
+            ],
+            "normalization_schemes": [
+                "ZScoreNormalization",
+                "ZScoreNormalization",
+                "ZScoreNormalization",
+                "ZScoreNormalization"
+            ],
+            "use_mask_for_norm": [
+                true,
+                true,
+                true,
+                true
+            ],
+            "UNet_class_name": "PlainConvUNet",
+            "UNet_base_num_features": 32,
+            "n_conv_per_stage_encoder": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+            ],
+            "n_conv_per_stage_decoder": [
+                2,
+                2,
+                2,
+                2,
+                2
+            ],
+            "num_pool_per_axis": [
+                5,
+                5
+            ],
+            "pool_op_kernel_sizes": [
+                [
+                    1,
+                    1
+                ],
+                [
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2
+                ]
+            ],
+            "conv_kernel_sizes": [
+                [
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3
+                ]
+            ],
+            "unet_max_num_features": 512,
+            "resampling_fn_data": "resample_data_or_seg_to_shape",
+            "resampling_fn_seg": "resample_data_or_seg_to_shape",
+            "resampling_fn_data_kwargs": {
+                "is_seg": false,
+                "order": 3,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "resampling_fn_seg_kwargs": {
+                "is_seg": true,
+                "order": 1,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "resampling_fn_probabilities": "resample_data_or_seg_to_shape",
+            "resampling_fn_probabilities_kwargs": {
+                "is_seg": false,
+                "order": 1,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "batch_dice": true
+        },
+        "3d_fullres": {
+            "data_identifier": "nnUNetPlans_3d_fullres",
+            "preprocessor_name": "DefaultPreprocessor",
+            "batch_size": 2,
+            "patch_size": [
+                128,
+                128,
+                128
+            ],
+            "median_image_size_in_voxels": [
+                139.0,
+                170.0,
+                138.0
+            ],
+            "spacing": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "normalization_schemes": [
+                "ZScoreNormalization",
+                "ZScoreNormalization",
+                "ZScoreNormalization",
+                "ZScoreNormalization"
+            ],
+            "use_mask_for_norm": [
+                true,
+                true,
+                true,
+                true
+            ],
+            "UNet_class_name": "PlainConvUNet",
+            "UNet_base_num_features": 32,
+            "n_conv_per_stage_encoder": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+            ],
+            "n_conv_per_stage_decoder": [
+                2,
+                2,
+                2,
+                2,
+                2
+            ],
+            "num_pool_per_axis": [
+                5,
+                5,
+                5
+            ],
+            "pool_op_kernel_sizes": [
+                [
+                    1,
+                    1,
+                    1
+                ],
+                [
+                    2,
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2,
+                    2
+                ],
+                [
+                    2,
+                    2,
+                    2
+                ]
+            ],
+            "conv_kernel_sizes": [
+                [
+                    3,
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3,
+                    3
+                ],
+                [
+                    3,
+                    3,
+                    3
+                ]
+            ],
+            "unet_max_num_features": 320,
+            "resampling_fn_data": "resample_data_or_seg_to_shape",
+            "resampling_fn_seg": "resample_data_or_seg_to_shape",
+            "resampling_fn_data_kwargs": {
+                "is_seg": false,
+                "order": 3,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "resampling_fn_seg_kwargs": {
+                "is_seg": true,
+                "order": 1,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "resampling_fn_probabilities": "resample_data_or_seg_to_shape",
+            "resampling_fn_probabilities_kwargs": {
+                "is_seg": false,
+                "order": 1,
+                "order_z": 0,
+                "force_separate_z": null
+            },
+            "batch_dice": false
+        },
+        "3d_fullres_missing":{
+            "inherits_from": "3d_fullres",
+            "batch_size": 1,
+            "UNet_class_name": "PlainConvUNetMissing"
+        },
+
+        "3d_fullres_multiencoder_recon":{
+            "inherits_from": "3d_fullres",
+            "batch_size": 2,
+            "unet_max_num_features": 512,
+            "UNet_class_name": "MultimodalRecon"
+        },
+
+        "3d_fullres_multiencoder_recon_base":{
+            "inherits_from": "3d_fullres",
+            "batch_size": 1,
+            "unet_max_num_features": 512,
+            "UNet_class_name": "MultimodalReconBase"
+        },
+
+
+        "3d_fullres_multiencoderTransformer_missing":{
+            "inherits_from": "3d_fullres",
+            "batch_size": 1,
+            "UNet_class_name": "MultimodalTransformerConvUNet"
+        }
+
+    },
+    "experiment_planner_used": "ExperimentPlanner",
+    "label_manager": "LabelManager",
+    "foreground_intensity_properties_per_channel": {
+        "0": {
+            "max": 21113.0,
+            "mean": 645.3305053710938,
+            "median": 356.0,
+            "min": 0.0,
+            "percentile_00_5": 37.0,
+            "percentile_99_5": 8499.0,
+            "std": 1025.0531005859375
+        },
+        "1": {
+            "max": 18011.0,
+            "mean": 798.6541748046875,
+            "median": 416.0,
+            "min": 0.0,
+            "percentile_00_5": 36.0,
+            "percentile_99_5": 8109.0,
+            "std": 1163.367431640625
+        },
+        "2": {
+            "max": 31404.0,
+            "mean": 1075.79052734375,
+            "median": 667.0,
+            "min": 0.0,
+            "percentile_00_5": 97.0,
+            "percentile_99_5": 16375.0,
+            "std": 1993.40234375
+        },
+        "3": {
+            "max": 29422.0,
+            "mean": 724.4313354492188,
+            "median": 428.0,
+            "min": 0.0,
+            "percentile_00_5": 73.0,
+            "percentile_99_5": 16627.0,
+            "std": 1902.5982666015625
+        }
+    }
+}
