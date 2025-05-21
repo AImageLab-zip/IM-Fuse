@@ -1,5 +1,5 @@
 # IM-Fuse: A Mamba-based Fusion Block for Brain Tumor Segmentation with Incomplete Modalities
-[[Paper]]() 
+[[Paper]](https://federicobolelli.it/pub_files/2025miccai_imfuse.pdf) [[Bib]](https://federicobolelli.it/pub_files/2025miccai_imfuse.html)
 
 <figure>
  <img style="float: left" src="figs/IM-Fuse-overview.png" alt="Side view" width="100%">
@@ -19,16 +19,11 @@ Moreover, we introduce and evaluate the use of Mamba as an alternative fusion me
 If you find this code and paper useful for your research, please kindly cite our paper.
 ```
 @inproceedings{2025MICCAI_imfuse,
-	link={},
-	isbn={},
-	source_code={https://github.com/AImageLab-zip/IM-Fuse},
-	doi={},
-	note={},
 	publisher={Springer},
 	venue={Daejeon, South Korea},
 	month={May},
 	year={2025},
-	pages={1--9},
+	pages={1--11},
 	booktitle={28th International Conference on Medical Image Computing and Computer Assisted Intervention},
 	title={{IM-Fuse: A Mamba-based Fusion Block for Brain Tumor Segmentation with Incomplete Modalities}},
 	author={Pipoli, Vittorio and Saporita, Alessia and Marchesini, Kevin and Grana, Costantino and Ficarra, Elisa and Bolelli, Federico},
