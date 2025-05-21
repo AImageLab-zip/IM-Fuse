@@ -84,7 +84,7 @@ install_mamba.sh
 /MaM/*.egg-info/
 /MaM/create_splits_json.py
 /MaM/*.sh
-/nnUnet/
+/nnUNet/
 
 # RobustSeg
 /RobustSeg/eval/
