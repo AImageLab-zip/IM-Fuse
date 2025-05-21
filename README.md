@@ -76,8 +76,8 @@ python test.py \
   --interleaved_tokenization                   # Enable interleaved tokenization
 ```
 
-## How to run competitors?
-Read these:
+## How to Run Competitor Models
+We provide implementations for evaluating the primary competitor models on the BraTS 2023 dataset. Please consult the respective README files for detailed instructions on installation, usage, and reproduction of results.
 - [Missing as Masking](MaM/README.md)
 - [M3AE](m3ae/README.md)
 - [ShaSpec](ShaSpec/README.md)
@@ -86,7 +86,7 @@ Read these:
 - [Robust-MSeg](RobustSeg/README.md)
 - [U-HVED](UHVED/README.md)
 
-## Reference
+## References
 * [Missing as Masking: Arbitrary Cross-modal Feature Reconstruction for Incomplete Multimodal Brain Tumor Segmentation](https://papers.miccai.org/miccai-2024/paper/0067_paper.pdf)
 * [M3AE: Multimodal Representation Learning for Brain Tumor Segmentation with Missing Modalities](https://github.com/ccarliu/m3ae)
 * [Multi-modal Learning with Missing Modality via Shared-Specific Feature Modelling](https://github.com/billhhh/ShaSpec)
