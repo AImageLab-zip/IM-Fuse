@@ -1,4 +1,7 @@
-# Missing as Masking: Arbitrary Cross-modal Feature Reconstruction for Incomplete Multimodal Brain Tumor Segmentation
+# M3AE: Multimodal Representation Learning for Brain Tumor Segmentation with Missing Modalities
+[[Paper]](https://papers.miccai.org/miccai-2024/paper/0067_paper.pdf) MICCAI 2024
+![m3ae overview](fig/image.png)
+
 ## How to run
 Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip
 ```

@@ -79,12 +79,12 @@ install_mamba.sh
 /mmFormer/mmformer/m5former.py
 
 
-
 # Missing as Masking
 /MaM/.github
 /MaM/*.egg-info/
 /MaM/create_splits_json.py
 /MaM/*.sh
+/nnUnet/
 
 # RobustSeg
 /RobustSeg/eval/

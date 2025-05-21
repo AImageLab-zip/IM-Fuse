@@ -1,17 +1,50 @@
 # M3AE: Multimodal Representation Learning for Brain Tumor Segmentation with Missing Modalities
+[[Paper]](https://arxiv.org/abs/2303.05302) [[Code]](https://github.com/ccarliu/m3ae)  AAAI 2023
+![m3ae overview](/m3ae/fig/M3AE.png)
 
-## The code is preparing in few days.
+## How to run
+Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip
+```
+cd m3ae
+python -m venv m3ae_venv
+source m3ae_venv/bin/activate
+pip install -r requirements.txt
+```
 
-## Dataset: [Brats 2018](https://www.kaggle.com/datasets/sanglequang/brats2018) and [Brats 2020](https://www.kaggle.com/datasets/awsaf49/brats2020-training-data?resource=download) or from [RFnet](https://drive.google.com/drive/folders/1AwLwGgEBQwesIDTlWpubbwqxxd8brt5A?usp=sharing) for dataset and split files.
+## Pre-training
+Perform a warm up with all modalities `pretrain.py` with the following arguments:
+```
+python pretrain.py \
+--exp_name m3ae_pretrain \
+--batch_size 2 \
+--mdp 3 \
+--dataset brats23 \
+--mask_ratio 0.875 \
+--lr 0.0003 
+```
 
-## Training process:
+## Training
+Run the training script `train.py` with the following arguments:
+```
+python train.py \
+--batch_size 2 \
+--lr 0.0003 \
+--model_type cnnnet \
+--seed 999 \
+--weight_kl 0.1 \
+--feature_level 2 \
+--epochs 300 \
+--mdp 3 \
+--wd 0.0001 \
+--deep_supervised \
+--patch_shape 128 \
+--exp_name m3ae_train 
+```
 
-1. change the path in ./dataset/brats.py to your dataset path.
-2. run pretrain.py via pre.sh.
-3. change the pretrained chackpoint path in train_18.py and run it via run.py
-
-## pretrained model:
-link：https://pan.baidu.com/s/15gEXbc4CSbRHgdgtihS_dQ?pwd=o9mb
-key：o9mb
-
-## If you have any questions, please do not hesitate to contact liuhong@stu.xmu.edu.cn
+## Test
+Run the test script `test.py` with the following arguments:
+```
+python test.py \
+----checkpoint runs/m3ae_train/best.pth.tar \
+--exp_name m3ae_train
+```
