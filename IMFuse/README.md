@@ -2,7 +2,12 @@
 [[Our Paper]]() MICCAI 2025
 
 ![IMFuse overview](/figs/IM-Fuse-overview.png)
-
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 ## How to run
 Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip.
 ```
@@ -13,7 +18,13 @@ source imfuse_venv/bin/activate
 pip install -r requirements.txt
 ```
 ## Preprocess data
-Set the data paths in `preprocess.py` and then run `python preprocess.py`.
+First, run the preprocessing script ```preprocess.py``` with the following arguments:
+```
+python preprocess.py \
+  --input-path <INPUT_PATH> \                  # Directory containing the unprocessed BRATS2023 dataset
+  --output-path <OUTPUT_PATH>                  # Output directory
+```
+
 
 ### Training
 Run the training script `train_poly.py` with the following arguments:

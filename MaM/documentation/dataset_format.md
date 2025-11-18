@@ -110,7 +110,7 @@ be a convenient location for you to store these images. Remnant of the Medical S
 - **dataset.json** contains metadata of the dataset.
 
 The scheme introduced [above](#what-do-training-cases-look-like) results in the following folder structure. Given 
-is an example for the first Dataset of the MSD: BrainTumour. This dataset hat four input channels: FLAIR (0000), 
+is an example for the first Dataset of the MSD: BrainTumour. This dataset had four input channels: FLAIR (0000), 
 T1w (0001), T1gd (0002) and T2w (0003). Note that the imagesTs folder is optional and does not have to be present.
 
     nnUNet_raw/Dataset001_BrainTumour/
