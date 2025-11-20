@@ -66,6 +66,9 @@ python nnunetv2/run/run_training.py -tr nnUNetTrainerMissingReconBaseline 138 3d
 ## Test
 To run the tests, simply run this bash file:
 ```
-bash test_mam.sh
+bash test_mam.sh \
+  --input-path                  # Input directory containing the preprocessed test images
+  --output-path                 # Directory for saving the results file
+  --checkpoint-path             # Path to the checkpoint
 
 ```
