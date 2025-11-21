@@ -1,45 +1,74 @@
 # Missing as Masking: Arbitrary Cross-modal Feature Reconstruction for Incomplete Multimodal Brain Tumor Segmentation
 [[Paper]](https://papers.miccai.org/miccai-2024/paper/0067_paper.pdf)  MICCAI 2024
-![Missing as Masking overview](/MaM/MaM.png)
+![Missing as Masking overview](/MaM/fig/MaM.png)
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 ## How to run
-Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip
+Clone this repository, create a python env for the project and activate it. 
 ```
 cd MaM
 python -m venv mam_venv
 source mam_venv/bin/activate
+```
+Install nnUNet into the project folder.
+```
+git clone https://github.com/MIC-DKFZ/nnUNet.git
+cd nnUNet
+pip install -e .
+cd ..
+```
+Now, install the requirements
+```
 pip install -r requirements.txt
 ```
+## nnUNet setup
+nnU-Net requires a strict directory structure. Before proceeding to the next step, set up the dataset directory running this script:
+```
+python prepare_dataset.py \
+  --input-dir <INPUT_DIR> \     # Input directory, containing the uncompressed and unprocessed BraTS2023 glioma dataset
+  --output-dir <OUTPUT_DIR> \   # Output directory for the reworked dataset structure
+```
+This script will create a new directory at OUTPUT_DIR and copy-rename all the files.
+Use the BRATS2023 glioma training directory, since it's the only one with tumor annotation. If you want to use your own dataset, skip this phase and reproduce the correct directory structure yourself.
 
+```nnUNet_raw/
+└── Dataset138_MaM/
+    ├── dataset.json
+    ├── imagesTr/
+    ├── labelsTr/
+    ├── imagesTs/
+    └── labelsTs/   
+```    
+After that, export these fundamental environment variables:
+```
+export nnUNet_raw=<RESTRUCTURED_DATASET_DIR>
+export nnUNet_preprocessed=<PREPROCESSED_DATASET_DIR>
+export nnUNet_results=<RESULTS_DIR>
+```
+You will have to do that every time you open a new shell. To do that automatically for every new shell, add the commands to your .bashrc file.
 ## Preprocess data
+First, run the preprocessing pipeline with the following command:
 ```
 nnUNetv2_plan_and_preprocess -d 138 --verify_dataset_integrity
 ```
 
 ## Training
+To train the model, run this command:
 ```
-python /work/grana_neuro/missing_modalities/nnUNet/nnunetv2/run/run_training.py -tr nnUNetTrainerMissingReconBaseline 138 3d_fullres_multiencoder_recon 0 --c
+python nnunetv2/run/run_training.py -tr nnUNetTrainerMissingReconBaseline 138 3d_fullres_multiencoder_recon 0 --c
 
 ```
 
 ## Test
+To run the tests, simply run this bash file:
 ```
-mask_values=(0 1)
-mask3=(1)
-mask4=(1)
-
-for m1 in ${mask_values[@]}; do
-    for m2 in ${mask_values[@]}; do
-        for m3 in ${mask3[@]}; do
-            for m4 in ${mask4[@]}; do
-                if [ "$m1$m2$m3$m4" == "0000" ]; then
-                    continue
-                fi
-                mask="$m1,$m2,$m3,$m4"
-                echo "Running nnUNetv2_predict with mask $mask"
-                nnUNetv2_predict -i /work/grana_neuro/nnUNet_raw/Dataset138_BraTS2023/imagesTs -o /work/grana_neuro/nnUNet_raw/Dataset138_BraTS2023/prediction_"$m1$m2$m3$m4" -d 138 -tr nnUNetTrainerMissingReconBaseline -c 3d_fullres_multiencoder_recon -f 0 -chk checkpoint_best.pth -mask $mask
-            done
-        done
-    done
-done
+bash test_mam.sh \
+  --input-path                  # Input directory containing the preprocessed test images
+  --output-path                 # Directory for saving the results file
+  --checkpoint-path             # Path to the checkpoint
 
 ```

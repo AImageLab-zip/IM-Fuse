@@ -25,4 +25,10 @@ python train_uhved.py \
 ```
 
 ## Test
-Run the test script `test_uhved.py` setting the data path and the path to the checkpoint in the script.
+Run the test script `test_uhved.py` with the following arguments:
+```
+python test_uhved.py
+  --datapath <DATASET_DIRECTORY> \
+  --resume <CHECKPOINT_PATH> \
+  --savepath <RESULTS_FILE_PATH>
+```

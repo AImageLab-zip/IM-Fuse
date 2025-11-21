@@ -1,13 +1,8 @@
 import os
 import numpy as np
 import medpy.io as medio
+from argparse import ArgumentParser
 join=os.path.join
-
-src_path = '/work/grana_neuro/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData'
-tar_path = '/work/grana_neuro/missing_modalities/BRATS2023_Training_mmFormer_npy'
-
-name_list = os.listdir(src_path)
-
 
 def sup_128(xmin, xmax):
     if xmax - xmin < 128:
@@ -47,32 +42,43 @@ def normalize(vol):
         vol[k, ...] = x
 
     return vol
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('--input-path',type=str,required=True)
+    parser.add_argument('--output-path',type=str,required=True)
+    args = parser.parse_args()
 
-if not os.path.exists(os.path.join(tar_path, 'vol')):
-    os.makedirs(os.path.join(tar_path, 'vol'))
+    src_path = args.input_path
+    tar_path = args.output_path
+    #src_path = '/work/grana_neuro/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData'
+    #tar_path = '/work/grana_neuro/missing_modalities/BRATS2023_Training_mmFormer_npy'
 
-if not os.path.exists(os.path.join(tar_path, 'seg')):
-    os.makedirs(os.path.join(tar_path, 'seg'))
+    name_list = os.listdir(src_path)
+    if not os.path.exists(os.path.join(tar_path, 'vol')):
+        os.makedirs(os.path.join(tar_path, 'vol'))
 
-for file_name in name_list:
-    print (file_name)
+    if not os.path.exists(os.path.join(tar_path, 'seg')):
+        os.makedirs(os.path.join(tar_path, 'seg'))
 
-    case_id = file_name.split('/')[-1]
-    flair, flair_header = medio.load(os.path.join(src_path, file_name, case_id+'-t2f.nii.gz'))
-    t1ce, t1ce_header = medio.load(os.path.join(src_path, file_name, case_id+'-t1c.nii.gz'))
-    t1, t1_header = medio.load(os.path.join(src_path, file_name, case_id+'-t1n.nii.gz'))
-    t2, t2_header = medio.load(os.path.join(src_path, file_name, case_id+'-t2w.nii.gz'))
+    for file_name in name_list:
+        print (file_name)
 
-    vol = np.stack((flair, t1ce, t1, t2), axis=0).astype(np.float32) #(4, 240, 240, 155)
-    x_min, x_max, y_min, y_max, z_min, z_max = crop(vol)
-    vol1 = normalize(vol[:, x_min:x_max, y_min:y_max, z_min:z_max]) 
-    vol1 = vol1.transpose(1,2,3,0)
-    print(vol1.shape)
+        case_id = file_name.split('/')[-1]
+        flair, flair_header = medio.load(os.path.join(src_path, file_name, case_id+'-t2f.nii.gz'))
+        t1ce, t1ce_header = medio.load(os.path.join(src_path, file_name, case_id+'-t1c.nii.gz'))
+        t1, t1_header = medio.load(os.path.join(src_path, file_name, case_id+'-t1n.nii.gz'))
+        t2, t2_header = medio.load(os.path.join(src_path, file_name, case_id+'-t2w.nii.gz'))
 
-    seg, seg_header = medio.load(os.path.join(src_path, file_name, case_id+'-seg.nii.gz')) #(240, 240, 155)
-    seg = seg.astype(np.uint8)
-    seg1 = seg[x_min:x_max, y_min:y_max, z_min:z_max]
-    seg1[seg1==4]=3
+        vol = np.stack((flair, t1ce, t1, t2), axis=0).astype(np.float32) #(4, 240, 240, 155)
+        x_min, x_max, y_min, y_max, z_min, z_max = crop(vol)
+        vol1 = normalize(vol[:, x_min:x_max, y_min:y_max, z_min:z_max]) 
+        vol1 = vol1.transpose(1,2,3,0)
+        print(vol1.shape)
 
-    np.save(os.path.join(tar_path, 'vol', case_id+'_vol.npy'), vol1)
-    np.save(os.path.join(tar_path, 'seg', case_id+'_seg.npy'), seg1)
+        seg, seg_header = medio.load(os.path.join(src_path, file_name, case_id+'-seg.nii.gz')) #(240, 240, 155)
+        seg = seg.astype(np.uint8)
+        seg1 = seg[x_min:x_max, y_min:y_max, z_min:z_max]
+        seg1[seg1==4]=3
+
+        np.save(os.path.join(tar_path, 'vol', case_id+'_vol.npy'), vol1)
+        np.save(os.path.join(tar_path, 'seg', case_id+'_seg.npy'), seg1)

@@ -4,11 +4,17 @@
   <img src="fig/framework.png">
 </p>
 
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 ## How to run
-Run Robust-Mseg using the same python environment and data preprocessing of IM-Fuse.
+Run mmFormer using the same Python environment and data preprocessing setup as [IM-Fuse](/IMFuse/README.md). Please refer to that guide for detailed instructions on how it is done.
 ```
 cd RobustSeg
-source imfuse_venv/bin/activate
+source ../IMFuse/imfuse_venv/bin/activate
 ```
 
 ## Training
@@ -23,4 +29,10 @@ python train_robustseg.py \
 ```
 
 ## Test
-Run the test script `test_robustseg.py` setting the data path and the path to the checkpoint in the script.
+Run the test script `test_robustseg.py` with the following arguments:
+```
+python test_robustseg.py
+  --datapath <DATASET_DIRECTORY> \
+  --resume <CHECKPOINT_PATH> \
+  --savepath <RESULTS_FILE_PATH>
+```
