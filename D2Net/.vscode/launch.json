@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "cwd": "/homes/ocarpentiero/IM-FUSE/D2Net",
+    "configurations": [
+        
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--datapath", "/work/grana_neuro/missing_modalities/BRATS2023_Training_D2Net",
+                "--num-epochs", "229",
+                "--checkpoint-path", "/work/grana_neuro/missing_modalities/d2net/",
+                "--wandb-project-name", "D2Net",
+                "--num-workers", "8",
+                "--batch-size", "4"
+            ]
+        }
+    ]
+}

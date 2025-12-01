@@ -1,0 +1,6 @@
+# gitignore for the D2Net specific stuff
+d2net_venv/
+test_format.py
+sbatch_files/
+txt_to_csv.py
+array_checker.py
