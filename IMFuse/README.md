@@ -2,6 +2,8 @@
 [[Our Paper]]() MICCAI 2025
 
 ![IMFuse overview](/figs/IM-Fuse-overview.png)
+✅ Tested at commit: 
+8359e49
 ## Requirements
 Code was tested using:
 ```

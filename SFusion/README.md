@@ -4,6 +4,8 @@
   <img src="fig/image.png">
 </p>
 
+✅ Tested at commit: 
+8359e49
 
 ## Requirements
 Code was tested using:
