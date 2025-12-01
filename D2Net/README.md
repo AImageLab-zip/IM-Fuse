@@ -3,7 +3,7 @@
 [[Paper]](https://ieeexplore.ieee.org/document/9775681) [[Code]](https://github.com/CityU-AIM-Group/D2Net) IEEE TMI 2022
 ![D2Net overview](/D2Net/fig/D2Net.png)
 
-✅ Tested at commit: 1a2b3c4 (tag: experim-tag)
+✅ Tested at commit: 8359e49
 
 ## Requirements
 This code was tested using:
