@@ -8,7 +8,8 @@ import wandb
 import torch
 import torch.optim
 import sys
-from tensorboardX import SummaryWriter
+#from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from utils.random_seed import setup_seed
 import mmformer
 from data.transforms import *
@@ -33,6 +34,7 @@ parser.add_argument('--iter_per_epoch', default=150, type=int)
 parser.add_argument('--region_fusion_start_epoch', default=0, type=int)
 parser.add_argument('--seed', default=999, type=int)
 parser.add_argument('--debug', action='store_true', default=False)
+parser.add_argument('--stop_epoch', type=int, default=None)
 path = os.path.dirname(__file__)
 
 ## parse arguments
@@ -59,7 +61,8 @@ mask_name = ['t2', 't1c', 't1', 'flair',
             'flairt1cet1t2']
 print(masks_torch.int())
 
-val_check = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 850, 900, 910, 920, 930, 940, 950, 955, 960, 965, 970, 975, 980, 985, 990, 995, 1000] 
+#val_check = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 850, 900, 910, 920, 930, 940, 950, 955, 960, 965, 970, 975, 980, 985, 990, 995, 1000] 
+val_check = []
 print(f"Validation checks: {val_check}")
 
 def main():
@@ -100,6 +103,7 @@ def main():
     else:
         print ('dataset is error')
         exit(0)
+        
     model = mmformer.Model(num_cls=num_cls)
     print (model)
     model = torch.nn.DataParallel(model).cuda()
@@ -275,6 +279,7 @@ def main():
                 "train/learning_rate": step_lr,
             })
 
+        ########## model save
         file_name = os.path.join(ckpts, 'model_last.pth')
         torch.save({
             'epoch': epoch,
@@ -342,6 +347,10 @@ def main():
 
             model.train()
             model.module.is_training=True
+
+        if args.stop_epoch is not None and epoch + 1 >= args.stop_epoch:
+            print(f"Stopping training at epoch {epoch + 1} as per --stop_epoch argument.")
+            break
 
     msg = 'total time: {:.4f} hours'.format((time.time() - start)/3600)
     logging.info(msg)

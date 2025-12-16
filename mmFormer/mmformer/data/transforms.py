@@ -1,6 +1,7 @@
 # import math
 import random
-import collections
+#import collections
+import collections.abc as collections
 import numpy as np
 import torch
 from scipy import ndimage
