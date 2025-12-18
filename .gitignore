@@ -1,10 +1,12 @@
 # Virtual environment directories
-/ShaSpec_venv/
-/m3ae_venv/
+/ShaSpec/ShaSpec_venv/
+/m3ae/m3ae_venv/
 /mamba_venv/
 /nnunet_venv/
 /uhved_python/
 /mambaFusion_venv/
+/MaM/mam_venv
+/ProtoKD
 
 # Data
 /BRATS2018_Training_none_npy/
