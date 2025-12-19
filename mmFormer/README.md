@@ -5,15 +5,25 @@
 <p align="center">
   <img src="figs/image.png">
 </p>
+✅ Tested at commit: 
+8359e49
 
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 ## How to run
-Run mmFormer using the same python environment and data preprocessing of IM-Fuse.
-```
-cd mmFormer
-source imfuse_venv/bin/activate
-```
+Run mmFormer using the same Python environment and data preprocessing setup as [IM-Fuse](/IMFuse/README.md). Please refer to that guide for detailed instructions on how it is done.
+
 
 ## Training
+Remember to activate the right virtual environment:
+```
+cd mmFormer
+source ../IMFuse/imfuse_venv/bin/activate
+```
 Run the training script `train.py` with the following arguments:
 ```
 python train.py \
@@ -25,4 +35,10 @@ python train.py \
 ```
 
 ## Test
-Run the test script `test.py` setting the data path and the path to the checkpoint in the script.
+Run the test script `test.py` with the following arguments:
+```
+python test.py
+  --datapath <DATASET_DIRECTORY> \
+  --resume <CHECKPOINT_PATH> \
+  --savepath <RESULTS_FILE_PATH>
+```

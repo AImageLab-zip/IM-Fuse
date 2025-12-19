@@ -5,10 +5,17 @@
 <p align="center">
   <img src="fig/image.png">
 </p>
+✅ Tested at commit: 
+8359e49
 
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 
-## ShaSpec
-### How to run
+## How to run
 Clone this repository, create a python environment for the project and activate it. Then install all the dependencies with pip.
 ```
 cd ShaSpec
@@ -17,7 +24,7 @@ source shaspec_venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Warm up
+## Warm up
 Perform a warm up with all modalities `train_SS.py` with the following arguments:
 ```
 python train_SS.py \
@@ -38,7 +45,7 @@ python train_SS.py \
 --warm_up 
 ```
 
-### Training
+## Training
 Run the training script `train_SS.py` with the following arguments:
 ```
 python train_SS.py \
@@ -61,7 +68,7 @@ python train_SS.py \
   --reload_from_checkpoint
 ```
 
-### Test
+## Test
 Run the test script `eval.py` with the following arguments:
 ```
 python eval.py \

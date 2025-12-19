@@ -4,6 +4,9 @@
   <img src="fig/image.png">
 </p>
 
+✅ Tested at commit: 
+8359e49
+
 ## How to run
 Run U-HVED using the same data preprocessing of IM-Fuse and creating the following python environment:
 ```
@@ -25,4 +28,10 @@ python train_uhved.py \
 ```
 
 ## Test
-Run the test script `test_uhved.py` setting the data path and the path to the checkpoint in the script.
+Run the test script `test_uhved.py` with the following arguments:
+```
+python test_uhved.py
+  --datapath <DATASET_DIRECTORY> \
+  --resume <CHECKPOINT_PATH> \
+  --savepath <RESULTS_FILE_PATH>
+```

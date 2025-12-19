@@ -1,9 +1,17 @@
 # M3AE: Multimodal Representation Learning for Brain Tumor Segmentation with Missing Modalities
 [[Paper]](https://arxiv.org/abs/2303.05302) [[Code]](https://github.com/ccarliu/m3ae)  AAAI 2023
 ![m3ae overview](/m3ae/fig/M3AE.png)
+✅ Tested at commit: 
+8359e49
+## Requirements
+Code was tested using:
+```
+python==3.10.12
+torch==2.7.1
+```
 
 ## How to run
-Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip
+Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip.
 ```
 cd m3ae
 python -m venv m3ae_venv
