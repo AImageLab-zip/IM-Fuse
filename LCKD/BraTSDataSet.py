@@ -631,7 +631,12 @@ class BraTSValDataSet(data.Dataset):
         image_res[:, 0, :, :] = 0
         image_res = np.abs(image_res)
 
-        return image.copy(), image_res.copy(), label.copy(), np.array(size), name, affine
+        return {'image':image.copy(), 
+                'image_res':image_res.copy(), 
+                'label':label.copy(), 
+                'size':np.array(size), 
+                'name':name, 
+                'affine':affine}
 
 
 class BraTSEvalDataSet(data.Dataset):

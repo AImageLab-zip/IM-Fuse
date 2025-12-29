@@ -322,18 +322,21 @@ class CompositionalLayer(nn.Module):
 
 
 class DualNet(nn.Module):
-    def __init__(self, args, norm_cfg='BN', activation_cfg='LeakyReLU', num_classes=None,
+    def __init__(self, args=None, norm_cfg='BN', activation_cfg='LeakyReLU', num_classes=None,
                  weight_std=False, self_att=False, cross_att=False):
         super().__init__()
         self.do_ds = False
         self.shared_enc = U_Res3D_enc(norm_cfg, activation_cfg, num_classes, weight_std)
         self.shared_dec = U_Res3D_dec(norm_cfg, activation_cfg, num_classes, weight_std)
-
+        if args is not None:
+            input_size = args.input_size
+        else:
+            input_size = '80,160,160'
         # MHA
         self.self_att = self_att
         self.cross_att = cross_att
         if self_att or cross_att:
-            d, h, w = map(int, args.input_size.split(','))
+            d, h, w = map(int, input_size.split(','))
             embed_dim = 125
             self.multihead_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=5).cuda()
 
@@ -351,7 +354,7 @@ class DualNet(nn.Module):
         if org_mode == 'random':
             mode = '0,1,2,3'
             mode_num = random.randint(1, 3)
-        mode_split = mode.split(',')
+        mode_split = mode.split(',') 
         mode_split = list(map(int, mode_split))
         if org_mode == 'random':
             mode_split = random.sample(mode_split, mode_num)
