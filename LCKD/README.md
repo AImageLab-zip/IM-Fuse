@@ -10,7 +10,7 @@
 This code was tested using:
 ```
 python==3.11.5
-torch==2.7.1+cu128
+torch==2.7.1+cu126
 torchvision==
 ```
 Detailed versioning of every package can be found in the requirements.txt file
