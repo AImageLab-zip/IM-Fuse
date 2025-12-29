@@ -87,6 +87,6 @@ After training, to test the model run:
 ```
 python test.py \
   --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
-  --savepath <OUTPUT_PATH> \                   # Directory for saving results
+  --savepath <OUTPUT_PATH> \                   # File path for saving results
   --resume <RESUME_PATH> \                     # Path to the checkpoints 
 ```
