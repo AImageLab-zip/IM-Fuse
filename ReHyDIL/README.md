@@ -32,6 +32,7 @@ First, run the preprocessing pipeline:
 python preprocess.py\
   --datapath <INPUT_PATH> \                    # Directory with the original dataset
   --outputpath <OUTPUT_path>                   # Directory for the new, preprocessed, dataset
+  --num-workers <NUM_WORKERS>                  # Optional, Number of workers for parallel preprocessing
 ```
 #TODO CONTINUA DA QUA
 ## Training
@@ -41,7 +42,7 @@ python train.py\
   --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
   --num-epochs 130 \                           # Number of epoch
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
-  --wandb-project-name PROJECT NAME \                 # Optional, allows for wandb tracking
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
   --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
   --batch-size <BATCH SIZE> \                  # Batch size. Start with 4
 ```

@@ -196,7 +196,7 @@ for p in [outputFlair_path, outputT1_path, outputT2_path, outputT1ce_path,
 case_ids = sorted(p for p in root_dir.iterdir() if p.is_dir())
 
 with ThreadPoolExecutor(max_workers=num_workers) as ex:
-    results = list(tqdm(ex.map(process_single_subject, case_ids)))
+    results = list(tqdm(ex.map(process_single_subject, case_ids),total=len(case_ids)))
 
 
 
