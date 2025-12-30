@@ -32,9 +32,9 @@ To train the model run:
 ```
 python train.py\
   --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
-  --num-epochs 130 \                           # Number of epoch
+  --num-epochs <NUM_EPOCHS> \                  # Number of epochS
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
-  --wandb-project-name PROJECT NAME \                 # Optional, allows for wandb tracking
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
   --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
   --batch-size <BATCH SIZE> \                  # Batch size. Start with 4
 ```
