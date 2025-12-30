@@ -1,7 +1,0 @@
-python
-torch
-numpy
-medpy
-simpleitk
-tensorboard
-tqdm
