@@ -21,7 +21,7 @@ Before running any code, ensure you have correctly downloaded the BraTS 2023 Cha
 Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip.
 ```
 cd FOLDER_NAME
-python -m venv FOLDER_NAME_venv
+python3.11 -m venv FOLDER_NAME_venv
 source FOLDER_NAME_venv/bin/activate
 pip install -r requirements.txt
 ```
