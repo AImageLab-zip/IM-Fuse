@@ -1,7 +1,7 @@
 # Name of the paper
 
 [[Paper]](PAPER_LINK) [[Code]](REPO_LINK) CONFERENCE_NAME YYYY
-![LCKD overview](/templates/TEMPLATE_IMAGE.png)
+![MODEL_NAME overview](/templates/TEMPLATE_IMAGE.png)
 
 ✅ Tested at commit: 
 ??????? 
