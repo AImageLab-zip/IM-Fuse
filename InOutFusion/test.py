@@ -47,7 +47,8 @@ model.load_state_dict(checkpoint['model'])
 
 output_path = f"{args.savepath}" # TODO change your naming convention if you want to include the epoch number as well
 assert not os.path.isdir(output_path), f'{output_path} must be a file, not a directory'
-os.remove(output_path)
+if os.path.exists(output_path):
+    os.remove(output_path)
 total_score = AverageMeter()
 with torch.no_grad():
     for i, mask in tqdm(enumerate(masks),desc='Evaluating all the masks'):
@@ -58,9 +59,11 @@ with torch.no_grad():
             ]),
                 labels_transform=T.Compose([
                 tsfm_tfusion.ToLongTensor()
-            ]), t_join_transform=None, join_transform=T.Compose([
-                tsfm_tfusion.ToLongTensor()
-            ]),
+            ]), t_join_transform=None, 
+            join_transform=tsfm_tfusion.Compose([
+        tsfm_tfusion.ThrowFirstZ(),
+        tsfm_tfusion.RandomCrop(128)
+    ]),
             phase='test',test_modals=test_modals_list[i])
 
         test_loader = DataLoader(dataset=test_set,batch_size=1,shuffle=False,num_workers=args.num_workers) 
