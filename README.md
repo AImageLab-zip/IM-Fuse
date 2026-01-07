@@ -16,19 +16,8 @@ Despite these advancements, the majority of existing models have been evaluated 
 Moreover, we introduce and evaluate the use of Mamba as an alternative fusion mechanism for brain tumor segmentation in scenarios involving missing modalities. Experimental results indicate that transformer-based architectures achieve superior performance on the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset, outperforming purely convolutional models that previously demonstrated state-of-the-art results on BraTS2018. Notably, the proposed Mamba-based architecture exhibits promising performance compared to state-of-the-art models, competing and even outperforming transformers.
 
 ## Citing our work
-If you find this code and paper useful for your research, please kindly cite our paper.
-```
-@inproceedings{2025MICCAI_imfuse,
-	publisher={Springer},
-	venue={Daejeon, South Korea},
-	month={May},
-	year={2025},
-	pages={1--11},
-	booktitle={28th International Conference on Medical Image Computing and Computer Assisted Intervention},
-	title={{IM-Fuse: A Mamba-based Fusion Block for Brain Tumor Segmentation with Incomplete Modalities}},
-	author={Pipoli, Vittorio and Saporita, Alessia and Marchesini, Kevin and Grana, Costantino and Ficarra, Elisa and Bolelli, Federico},
-}
-```
+If you use this code or paper in your research, you must cite:
+[[Bib]](https://federicobolelli.it/pub_files/2025miccai_imfuse.html)
 
 ## Dataset
 Before running this project, you need to download the data from BraTS 2023 Challenge, specifically the subset for [Glioma Segmentation](https://www.synapse.org/Synapse:syn51156910/wiki/622351) task.
@@ -44,7 +33,12 @@ source imfuse_venv/bin/activate
 pip install -r requirements.txt
 ```
 ### Preprocess data
-Set the data paths in `preprocess.py` and then run `python preprocess.py`.
+Run `python preprocess.py` with the following arguments:
+```
+python preprocess.py \
+  --input-path <INPUT_PATH>				       # Directory containing the unprocessed BRATS2023 files
+  --output-path	<OUTPUT_PATH>				   # Destination directory for the preprocessed dataset								
+```
 
 ### Training
 Run the training script `train_poly.py` with the following arguments:
