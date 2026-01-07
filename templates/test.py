@@ -47,7 +47,8 @@ model.eval()
 
 output_path = f"{args.savepath}" # TODO change your naming convention if you want to include the epoch number as well
 assert not os.path.isdir(output_path), f'{output_path} must be a file, not a directory'
-os.remove(output_path)
+if os.path.exists(output_path):
+    os.remove(output_path)
 total_score = AverageMeter()
 with torch.no_grad():
     for i, mask in tqdm(enumerate(masks),desc='Evaluating all the masks'):
