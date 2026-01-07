@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description="Training arguments", add_help=True
 from affnet import modeling_arguments
 parser = modeling_arguments(parser=parser)
 from options.utils import load_config_file
-opts = parser.parse_args()
+opts, _ = parser.parse_known_args()
 # print(opts)
 
 from affnet.modules.aff_block import AFNO3D_channelfirst

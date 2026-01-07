@@ -123,7 +123,7 @@ class FFTransformerEncoderLayer(nn.Module):
         import argparse
         parser = argparse.ArgumentParser(description="Training arguments", add_help=True)
         parser = modeling_arguments(parser=parser)
-        opts = parser.parse_args()
+        opts, _ = parser.parse_known_args()
         self.self_attn = AFNO1D_channelfirst(opts, d_model)
 
     def forward(self, src, *args, **kwargs):
