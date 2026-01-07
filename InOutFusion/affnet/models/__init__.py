@@ -61,9 +61,9 @@ def common_model_argumnets(parser: argparse.ArgumentParser) -> argparse.Argument
         " The mapping is represented as a List[List[str]], e.g. [['before', 'after'], ['this', 'that']]."
         " Note: only loading from Yaml file is supported for this argument.",
     )
-    parser.add_argument('--datapath', type=str, required=True)
-    parser.add_argument('--checkpoint-path', type=str, required=True)
-    parser.add_argument('--num-epochs', type=int, required=True)
+    parser.add_argument('--datapath', type=str, required=False)
+    parser.add_argument('--checkpoint-path', type=str, required=False)
+    parser.add_argument('--num-epochs', type=int, required=False)
     parser.add_argument('--wandb-project-name',type=str,default=None)
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument('--resume',action='store_true')
