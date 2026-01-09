@@ -60,6 +60,7 @@ class Brain(data.Dataset):
 
         label_path = sub_path / (sub_path.name + '-seg.nii.gz') 
         volume_label = sitk.GetArrayFromImage(sitk.ReadImage(label_path)).astype(np.float32)
+        unprocessed_volume_label = volume_label.copy()
 
         volumes = []
         crop_size = None
@@ -82,7 +83,7 @@ class Brain(data.Dataset):
             volume_label = self.labels_transform(volume_label)
 
         return volumes[0], volumes[1], volumes[2], volumes[3], \
-               volume_label, pid, m_d, crop_size
+               volume_label, pid, m_d, crop_size, unprocessed_volume_label
 
     def __len__(self):
         return len(self.dataset['data'])
