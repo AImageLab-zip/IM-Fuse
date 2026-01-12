@@ -66,6 +66,8 @@ with torch.no_grad():
             output = F.softmax(output,dim=1) # TODO: apply softmax if necessary
             output = torch.argmax(output, dim=1) # TODO: if necessary, convert probabilities into labels
             
+            # output and target must have shape (1,240,240,155)
+            
             _ , brats_dice = softmax_output_dice_class4(output=output,target=target)
             # val_WT, val_TC, val_ET, val_ETpp = brats_dice
             mask_specific_score.update(brats_dice)
