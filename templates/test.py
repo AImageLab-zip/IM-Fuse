@@ -26,10 +26,8 @@ masks = [[False, False, False, True], [False, True, False, False], [False, False
         [True, True, True, False], [True, False, True, True], [True, True, False, True], [False, True, True, True],
         [True, True, True, True]]
 
-mask_names = ['t2', 't1c', 't1', 'flair', 
-             't1ce_t2', 't1ce_t1', 'flair_t1', 't1_t2', 'flair_t2', 'flair_t1ce',
-             'flair_t1ce_t1', 'flair_t1_t2', 'flair_t1ce_t2', 't1ce_t1_t2',
-             'flair_t1ce_t1_t2']
+ordered_names = ['t1c', 't1n','t2w','t2f']
+mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask in masks]
 
 datapath = args.datapath
 test_file = Path(__file__).parent / 'datalist' / 'test15splits.csv'
