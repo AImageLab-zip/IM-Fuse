@@ -13,16 +13,27 @@ import numpy as np
 from metrics import dice_coef
 import time
 from pathlib import Path
+import pandas as pd
+import ast
 
 class BraTSDataset(Dataset):
     def __init__(self, list_file,root:Path, for_train=True,mode = 'train',code = None,transforms=''):
         paths, names = [], []
-        with open(list_file) as f:
-            for line in f:
-                line = line.strip()
-                names.append(line)
-                path = root/(line + '.npz')
-                paths.append(path)
+        if mode == 'val' and str(list_file).endswith('.csv'):
+            df = pd.read_csv(list_file) 
+            cases = df["case"].tolist()
+            masks = df["mask"].apply(ast.literal_eval).tolist()
+
+            paths = [root/(line + '.npz') for line in cases]
+            names = cases
+            self.masks_int = [np.array(mask).astype(np.int32)for mask in masks]
+        else:
+            with open(list_file) as f:
+                for line in f:
+                    line = line.strip()
+                    names.append(line)
+                    path = root/(line + '.npz')
+                    paths.append(path)
 
         self.names = names
         self.paths = paths
@@ -87,7 +98,7 @@ class BraTSDataset(Dataset):
             while sum(mask_code)==0:
                 mask_code = np.random.randint(2, size=4)
         elif self.mode == 'val':
-            mask_code = np.array([1,1,1,1])
+            mask_code = self.masks_int[index]
         else:
             mask_code = np.array(self.code) # Use this during testing
 
