@@ -1,0 +1,7 @@
+sbatchfiles/ 
+OLD_README.md
+wandb/
+unetmfi_venv/
+OLD_*
+check_negative.py
+!.gitignore
