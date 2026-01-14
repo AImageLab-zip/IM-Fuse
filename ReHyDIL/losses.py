@@ -58,8 +58,8 @@ def tversky(y_pred, y_true, alpha=0.7, smooth=1.0):
     if y_pred.size(0) != y_true.size(0):
         return torch.tensor(1e-8, device=y_pred.device, dtype=y_pred.dtype)
 
-    y_pred_f = y_pred.view(y_pred.size(0), -1)
-    y_true_f = y_true.view(y_true.size(0), -1)
+    y_pred_f = y_pred.reshape(y_pred.size(0), -1)
+    y_true_f = y_true.reshape(y_true.size(0), -1)
     true_pos = (y_pred_f * y_true_f).sum(dim=1)
     false_neg = (y_true_f * (1 - y_pred_f)).sum(dim=1)
     false_pos = (y_pred_f * (1 - y_true_f)).sum(dim=1)

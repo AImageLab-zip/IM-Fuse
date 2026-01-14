@@ -7,10 +7,11 @@ from glob import glob
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 
-import random
 from PIL import Image
 import torchvision.transforms.functional as F
+from pathlib import Path
 
+from torch.utils.data import Sampler
 
 def random_augmentation(slice_path):
 
@@ -30,64 +31,62 @@ def random_augmentation(slice_path):
 
 
 class BaseDataSets(Dataset):
-    def __init__(self, data_dir=None, mode='train',img_mode='t2',mask_name='masks', list_name='slice_nidus_all.list',images_rate=1, transform=None):
-        self._data_dir = data_dir
-        self.sample_list = []
+    def __init__(self, root_dir:Path, mode,modality, split_file,images_rate:float=1.0, transform=None):
         self.mode = mode
-        self.img_mode = img_mode
-        self.mask_name = mask_name
-        self.list_name = list_name
+        self.modality = modality
+        #self.mask_name = 'masks_all'
+        #self.list_name = split_file
         self.transform = transform
 
-        list_path = os.path.join(self._data_dir,self.list_name)
-
-        with open(list_path, "r") as f:
+        assert images_rate ==1, 'images_rate < 1 was never fully implemented by the original paper'
+        
+        sub_list = []
+        with open(split_file, "r") as f:
             for line in f.readlines():
                 line = line.strip('\n')
-                self.sample_list.append(line)
-        logging.info(f'Creating total {self.img_mode} {self.mode} dataset with {len(self.sample_list)} examples')
+                sub_list.append(line)
 
+        self.images = [root_dir / f'imgs_{modality}/{sub}_{str(num).zfill(3)}.npz' for sub in sub_list for num in range(1,156)]
+        self.masks = [root_dir / f'masks_all/{sub}_{str(num).zfill(3)}.npz' for sub in sub_list for num in range(1,156)]
+        logging.info(f'Creating a {self.modality} {self.mode} dataset with {len(self.images)} examples')
+        
         if images_rate !=1 and self.mode == "train":
-            images_num = int(len(self.sample_list) * images_rate)
-            self.sample_list = self.sample_list[:images_num]
-        logging.info(f"Creating factual {self.img_mode} {self.mode} dataset with {len(self.sample_list)} examples")
+            images_num = int(len(self.images) * images_rate) #TODO CAMBIARE SELF.SAMPLE_LIST IN IMAGES E ROBA
+            self.images = self.images[:images_num]
+            self.masks = self.masks[:images_num]
+        logging.info(f"Creating factual {self.modality} {self.mode} dataset with {len(self.images)} examples")
 
     def __len__(self):
-        return len(self.sample_list)
-    def __sampleList__(self):
-        return self.sample_list
+        return len(self.images)
         
     def __getitem__(self, idx):
         if self.mode=='val_3d':
-            case = idx
-        else:
-            case = self.sample_list[idx]
+            raise RuntimeError('val_3d option not supported')
 
-        img_np_path = os.path.join(self._data_dir,'imgs_{}/{}.npy'.format(self.img_mode,case))
-        mask_np_path = os.path.join(self._data_dir,'{}/{}.npy'.format(self.mask_name,case))
-
-        img_np = np.load(img_np_path)
-        mask_np = np.load(mask_np_path)
+        img_np = np.load(self.images[idx])['data']
+        mask_np = np.load(self.masks[idx])['data']
 
         if len(img_np.shape) == 2:
             img_np = np.expand_dims(img_np, axis=0)
         if len(mask_np.shape) == 2:
             mask_np = np.expand_dims(mask_np, axis=0)
-        sample = {'image': img_np.copy(), 'mask': mask_np.copy(),'idx':case}
+        sample = {'image': img_np.copy(), 'mask': mask_np.copy(),'idx':(self.images[idx].name)}
         return sample
-
-import random
-from torch.utils.data import Sampler
-
 
 
 class PatientBatchSampler(Sampler):
-    def __init__(self, slices_list, batch_size):
-        self.slices_list = slices_list
+    def __init__(self, split_file, batch_size):
+        sub_list = []
+        with open(split_file, "r") as f:
+            for line in f.readlines():
+                line = line.strip('\n')
+                sub_list.append(line)
+
+        self.slices_list = [f'{sub}_{num}.npz' for sub in sub_list for num in range(1,156)]
         self.batch_size = batch_size
 
         self.patient_to_indices = {}
-        for idx, sample_name in enumerate(slices_list):
+        for idx, sample_name in enumerate(self.slices_list):
             arr = sample_name.rsplit('_', 1)
             patient_id = arr[0] + "_"
             if patient_id not in self.patient_to_indices:
@@ -126,58 +125,5 @@ class PatientBatchSampler(Sampler):
             yield batch
 
     def __len__(self):
-        return 0
+        return len(self.slices_list)
 
-
-
-
-class PrevBaseDataSets(Dataset):
-    def __init__(self, data_dir=None, mode='train', prev_img_mode='ct', mask_name='masks', list_name='slice_nidus_all.list',
-                 images_rate=1, transform=None):
-        self._data_dir = data_dir
-        self.sample_list = []
-        self.mode = mode
-        self.prev_img_mode = prev_img_mode
-        self.mask_name = mask_name
-        self.list_name = list_name
-        self.transform = transform
-
-        list_path = os.path.join(self._data_dir, self.list_name)
-
-        with open(list_path, "r") as f:
-            for line in f.readlines():
-                line = line.strip('\n')
-                self.sample_list.append(line)
-
-        logging.info(f'Creating total {self.prev_img_mode} {self.mode} dataset with {len(self.sample_list)} examples')
-
-        if images_rate != 1 and self.mode == "train":
-            images_num = int(len(self.sample_list) * images_rate)
-            self.sample_list = self.sample_list[:images_num]
-        logging.info(f"Creating factual {self.prev_img_mode} {self.mode} dataset with {len(self.sample_list)} examples")
-
-    def __len__(self):
-        return len(self.sample_list)
-
-    def __sampleList__(self):
-        return self.sample_list
-
-    def __getitem__(self, idx):
-        if self.mode == 'val_3d':
-            case = idx
-        else:
-            case = self.sample_list[idx]
-
-        img_np_path = os.path.join(self._data_dir, 'imgs_{}/{}.npy'.format(self.prev_img_mode, case))
-        mask_np_path = os.path.join(self._data_dir, '{}/{}.npy'.format(self.mask_name, case))
-
-        img_np = np.load(img_np_path)
-        mask_np = np.load(mask_np_path)
-
-        if len(img_np.shape) == 2:
-            img_np = np.expand_dims(img_np, axis=0)
-        if len(mask_np.shape) == 2:
-            mask_np = np.expand_dims(mask_np, axis=0)
-        sample = {'image': img_np.copy(), 'mask': mask_np.copy(), 'idx': case}
-        return sample
-        

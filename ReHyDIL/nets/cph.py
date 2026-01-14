@@ -193,8 +193,11 @@ class G_HGNN_layer(nn.Module):
         self.node = node
         self.kernel_size = kernel_size
         self.stride = stride
-        self.single_local_H = self.local_kernel(node, kernel_size=kernel_size, stride=stride)
-
+        self.register_buffer(
+            "single_local_H",
+            self.local_kernel(node, kernel_size=kernel_size, stride=stride)
+        )
+        
 
     def forward(self, x):
 
@@ -249,8 +252,8 @@ class G_HGNN_layer(nn.Module):
         # N = self.node * self.node
         N = self.node * self.node
         E = single_local_H.size(1)
-        H_local = single_local_H.to(device)
-
+        #H_local = single_local_H.to(device)
+        H_local = single_local_H
 
         block_diag = torch.zeros(B * N, B * E, device=device)
         for i in range(B):

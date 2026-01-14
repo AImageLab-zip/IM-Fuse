@@ -125,7 +125,7 @@ def process_single_subject(case_id: Path):
             if SKIP_EMPTY_SLICES and mask_np.max() == 0:
                 continue
 
-            WT_Label, all_label3 = build_labels_3ch(mask_np)
+            _ , all_label3 = build_labels_3ch(mask_np)
 
             slice_id = to_slice_id(z + 1)
             name = f"{case_id.name}_{slice_id}.npz"
@@ -134,7 +134,7 @@ def process_single_subject(case_id: Path):
             np.savez_compressed(outputT1_path      / name, data=t1_c[z].astype(np.float32))
             np.savez_compressed(outputT2_path      / name, data=t2_c[z].astype(np.float32))
             np.savez_compressed(outputT1ce_path    / name, data=t1ce_c[z].astype(np.float32))
-            np.savez_compressed(outputMaskWT_path  / name, data=WT_Label.astype(np.uint8))
+            #np.savez_compressed(outputMaskWT_path  / name, data=WT_Label.astype(np.uint8))
             np.savez_compressed(outputMaskAll_path / name, data=all_label3.astype(np.uint8))
 
             saved += 1
@@ -146,17 +146,17 @@ def process_single_subject(case_id: Path):
 parser = ArgumentParser()
 parser.add_argument('--datapath',required=True,type=str)
 parser.add_argument('--outputpath',required=True, type=str)
-parser.add_argument('-y',action='store_true',help='“Add this option to automatically confirm and delete the destination folder.')
+parser.add_argument('-interactive',action='store_true',help='“Add this option to make the preprocessing interactive')
 parser.add_argument('--num-workers', default=8,type=int)
 args = parser.parse_args()
 
-root_dir = Path(args.datapath)
+root_dir = Path(args.datapath) / 'dataset'
 out_root = Path(args.outputpath)
-skip_confirm = args.y
+interactive = args.interactive
 num_workers = args.num_workers
 
 if os.path.exists(out_root):
-    if skip_confirm:
+    if not interactive:
         shutil.rmtree(out_root)
         os.makedirs(out_root,exist_ok=False)  
     else: 
@@ -176,22 +176,25 @@ t2_name    = "-t2w.nii.gz"
 mask_name  = "-seg.nii.gz"
 
 
-outputFlair_path   = out_root / "imgs_flair"
-outputT1_path      = out_root / "imgs_t1"
-outputT2_path      = out_root / "imgs_t2"
-outputT1ce_path    = out_root / "imgs_t1ce"
-outputMaskWT_path  = out_root / "masks"
+outputFlair_path   = out_root / "imgs_t2f"
+outputT1_path      = out_root / "imgs_t1n"
+outputT2_path      = out_root / "imgs_t2w"
+outputT1ce_path    = out_root / "imgs_t1c"
+#outputMaskWT_path  = out_root / "masks"
 outputMaskAll_path = out_root / "masks_all"
 
 
 SKIP_EMPTY_SLICES = False
 
 CROP_SIZE = 224
-
+'''
 for p in [outputFlair_path, outputT1_path, outputT2_path, outputT1ce_path, 
           outputMaskWT_path, outputMaskAll_path]:
     os.makedirs(p, exist_ok=True)
-
+'''
+for p in [outputFlair_path, outputT1_path, outputT2_path, outputT1ce_path, 
+           outputMaskAll_path]:
+    os.makedirs(p, exist_ok=True)
 
 case_ids = sorted(p for p in root_dir.iterdir() if p.is_dir())
 

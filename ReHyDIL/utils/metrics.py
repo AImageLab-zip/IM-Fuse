@@ -17,7 +17,7 @@ def dice(y_pred, y_true):
     # PPV
     ppv_value = (a_unin_b * 1.0 + eps) / (np.sum(y_pred)+eps)
     # sensitivity
-    sen_val = (a_unin_b * 1.0 + eps) / np.sum(y_true)
+    sen_val = (a_unin_b * 1.0 + eps) / (np.sum(y_true) + eps)
 
     return dice_value, ppv_value, sen_val
 

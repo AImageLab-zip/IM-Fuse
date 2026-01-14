@@ -1,6 +1,6 @@
 # Hypergraph Tversky-Aware Domain Incremental Learning for Brain Tumor Segmentation with Missing Modalities
 
-[[Paper]](https://papers.miccai.org/miccai-2025/paper/2774_paper.pdf) [[Code]](REPO_LINK) MICCAI 2025
+[[Paper]](https://papers.miccai.org/miccai-2025/paper/2774_paper.pdf) [[Code]](https://github.com/reeive/ReHyDIL) MICCAI 2025
 ![ReHyDIL overview](/ReHyDIL/pic/miccai25-rehydil.png)
 
 ✅ Tested at commit: 
@@ -10,7 +10,7 @@
 This code was tested using:
 ```
 python==3.11.5
-torch==2.7.1+cu128
+torch==2.9.1
 ```
 Detailed versioning of every package can be found in the requirements.txt file
 
@@ -21,7 +21,7 @@ Before running any code, ensure you have correctly downloaded the BraTS 2023 Cha
 Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip.
 ```
 cd ReHyDIL
-python -m venv rehydil_venv
+python3.11 -m venv rehydil_venv
 source rehydil_venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -32,19 +32,20 @@ First, run the preprocessing pipeline:
 python preprocess.py\
   --datapath <INPUT_PATH> \                    # Directory with the original dataset
   --outputpath <OUTPUT_path>                   # Directory for the new, preprocessed, dataset
-  --num-workers <NUM_WORKERS>                  # Optional, Number of workers for parallel preprocessing
+  --num-workers <NUM_WORKERS>                  # Optional, number of workers for parallel preprocessing
+  --interactive                                # Optional, allows for interactive directory deletion
 ```
 #TODO CONTINUA DA QUA
 ## Training
 To train the model run:
 ```
 python train.py\
-  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
-  --num-epochs 130 \                           # Number of epoch
+  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
+  --num-epochs-per-stage <NUM_EPOCHS> \        # Number of epoch per stage
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
   --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
   --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
-  --batch-size <BATCH SIZE> \                  # Batch size. Start with 4
+  --batch-size <BATCH SIZE> \                  # Batch size. Start with 16
 ```
 ## Testing
 After training, to test the model run:
