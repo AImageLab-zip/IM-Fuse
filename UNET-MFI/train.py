@@ -68,7 +68,7 @@ def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=
     num_steps = (dt_size - 1) // dataload.batch_size + 1
     for epoch in range(start_epoch,num_epochs):
         model.train()
-        adjust_lr(init_lr=lr,optimizer=optimizer,epoch=epoch,total_epo=num_epochs)
+        adjust_lr(init_lr=5e-5,optimizer=optimizer,epoch=epoch,total_epo=num_epochs)
         
         dt_size = len(dataload.dataset)
         epoch_loss = 0
@@ -126,7 +126,7 @@ def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=
             )
 
         ###evaluate model every 5 epoch
-        if epoch % 5 ==0:
+        if epoch % 50 ==0:
             H, W, T = 240, 240, 155
             WT_dice, TC_dice, ET_dice = [], [], []
 
