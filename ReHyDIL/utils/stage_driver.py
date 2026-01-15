@@ -115,10 +115,10 @@ def _build_scheduler(optimizer, cfg: StageConfig):
     else:
         raise ValueError(f"Unknown lr_scheduler: {cfg.lr_scheduler}")
 
-def _load_prev_model(prev_base_dir: Path, device: str) -> Optional[torch.nn.Module]:
+def _load_prev_model(prev_base_dir: Path, device: str,prev_modals) -> Optional[torch.nn.Module]:
     if not prev_base_dir:
         return None
-    model_path = prev_base_dir/ 'model_CPH_best.pth'
+    model_path = prev_base_dir/ f'model_CPH_best_{prev_modals[-1]}.pth'
     if not os.path.exists(model_path):
         return None
     model = CPH(n_classes=3).to(device)
@@ -130,10 +130,10 @@ def _load_prev_model(prev_base_dir: Path, device: str) -> Optional[torch.nn.Modu
         p.requires_grad_(False)
     return model
 
-def _init_from_prev_weights(net: torch.nn.Module, prev_base_dir: Path, device: str):
+def _init_from_prev_weights(net: torch.nn.Module, prev_base_dir: Path, device: str,prev_modals):
     if not prev_base_dir:
         return
-    model_path = prev_base_dir/ 'model_CPH_best.pth'
+    model_path = prev_base_dir/ f'model_CPH_best_{prev_modals[-1]}.pth'
     if not os.path.exists(model_path):
         return
     state = torch.load(model_path, map_location=device)
@@ -142,8 +142,8 @@ def _init_from_prev_weights(net: torch.nn.Module, prev_base_dir: Path, device: s
     except:
         pass
 
-def _discover_prev_modalities(current_mode: str) -> List[str]:
-    rb_dir = Path('replay_buffer')
+def _discover_prev_modalities(base_dir:Path, current_mode: str) -> List[str]:
+    rb_dir = base_dir.parent / 'replay_buffer'
     if not rb_dir.exists():
         return []
     modes = []
@@ -157,7 +157,7 @@ def _discover_prev_modalities(current_mode: str) -> List[str]:
     return sorted(list(dict.fromkeys(modes)))
 
 def _load_replay(base_dir: Path, modality: str, device: str = 'cpu') -> Optional[dict]:
-    path = base_dir.parent / 'replay_buffer', f'replay_buffer_{modality}.pth'
+    path = base_dir.parent / 'replay_buffer' / f'replay_buffer_{modality}.pth'
     if not os.path.exists(path):
         return None
     ckpt = torch.load(path, map_location=device)
@@ -166,7 +166,7 @@ def _load_replay(base_dir: Path, modality: str, device: str = 'cpu') -> Optional
     return ckpt
 
 def _save_replay(base_dir:Path, modality: str, images: torch.Tensor, masks: torch.Tensor, losses: torch.Tensor, patients: List[str], modalities: List[str]):
-    os.makedirs('replay_buffer', exist_ok=True)
+    os.makedirs(base_dir.parent / 'replay_buffer', exist_ok=True)
     path = base_dir.parent / 'replay_buffer' / f'replay_buffer_{modality}.pth'
     torch.save({'images': images.cpu(), 'masks': masks.cpu(), 'losses': losses.cpu(), 'patients': patients, 'modalities': modalities}, path)
     logging.info(f"[Replay] Saved {images.shape[0]} samples to {path}")
@@ -216,7 +216,7 @@ def run_stage(cfg: StageConfig):
                 return self.conv(x)
         net = torch.nn.Sequential(InputAdapter(cfg.in_channels), CPH(n_classes=3)).to(device)
         net = net.to(memory_format=torch.channels_last)
-    _init_from_prev_weights(net, cfg.prev_base_dir, str(device))
+    _init_from_prev_weights(net, cfg.prev_base_dir, str(device),cfg.prev_img_modes)
     net = torch.compile(net, mode="reduce-overhead")
 
 
@@ -226,9 +226,9 @@ def run_stage(cfg: StageConfig):
     tversky = TverskyLoss(alpha=cfg.alpha, beta=cfg.beta)
     tac_loss = TACWithQueues(alpha=cfg.alpha, beta=cfg.beta, tau=1.0)
 
-    prev_model = _load_prev_model(cfg.prev_base_dir, str(device))
+    prev_model = _load_prev_model(cfg.prev_base_dir, str(device),cfg.prev_img_modes)
 
-    modes_to_load = cfg.prev_img_modes if (cfg.prev_img_modes and len(cfg.prev_img_modes) > 0) else _discover_prev_modalities(cfg.img_mode)
+    modes_to_load = cfg.prev_img_modes if (cfg.prev_img_modes and len(cfg.prev_img_modes) > 0) else _discover_prev_modalities(cfg.base_dir, cfg.img_mode)
 
     teacher_queue: Optional[BalanceQueue] = None
     if prev_model is not None and modes_to_load:
@@ -273,7 +273,7 @@ def run_stage(cfg: StageConfig):
         display_epoch = epoch + 1
 
         net.train()
-        train_loss_sum = 0.0
+        train_loss_sum = torch.zeros((), device=device)
         train_batches = 0
 
         train_dice_sum = 0.0
@@ -300,47 +300,44 @@ def run_stage(cfg: StageConfig):
 
             optimizer.zero_grad(set_to_none=True)
 
-            with torch.amp.autocast_mode.autocast(device_type='cuda'):
-                probs = torch.sigmoid(net(imgs))
+            
+            probs = torch.sigmoid(net(imgs))
 
-                if current_queue is None:
-                    _, C, H, W = probs.shape
-                    current_queue = BalanceQueue(
-                        max_size=cfg.mem_size,
-                        channels=C,
-                        height=H,
-                        width=W,
-                        dtype=torch.float16,
-                        device='cpu'
-                    )
-
-                loss_tv = tversky(probs, masks)
-                loss_ft = focal_tversky(
-                    probs, masks,
-                    alpha=cfg.alpha,
-                    gamma=cfg.gamma,
-                    smooth=1.0
+            if current_queue is None:
+                _, C, H, W = probs.shape
+                current_queue = BalanceQueue(
+                    max_size=cfg.mem_size,
+                    channels=C,
+                    height=H,
+                    width=W,
+                    dtype=torch.float16,
+                    device='cpu'
                 )
 
-                loss_tac = probs.new_tensor(0.0)
-                if omega > 0.0 and teacher_queue is not None and teacher_queue.size > 0:
-                    loss_tac = tac_loss(
-                        probs, patients, modalities,
-                        teacher_queue, current_queue
-                    )
+            loss_tv = tversky(probs, masks)
+            loss_ft = focal_tversky(
+                probs, masks,
+                alpha=cfg.alpha,
+                gamma=cfg.gamma,
+                smooth=1.0
+            )
 
-                loss = (
-                    cfg.tversky_w * loss_tv
-                    + cfg.imb_w * loss_ft
-                    + cfg.nce_weight * omega * loss_tac
+            loss_tac = probs.new_tensor(0.0)
+            if omega > 0.0 and teacher_queue is not None and teacher_queue.size > 0:
+                loss_tac = tac_loss(
+                    probs, patients, modalities,
+                    teacher_queue, current_queue
                 )
+
+            loss = (
+                cfg.tversky_w * loss_tv
+                + cfg.imb_w * loss_ft
+                + cfg.nce_weight * omega * loss_tac
+            )
 
             # AMP-safe backward + clip
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
 
             current_queue.enqueue(
                 probs.detach().to('cpu', dtype=torch.float16),
@@ -365,7 +362,7 @@ def run_stage(cfg: StageConfig):
             train_ET_sum += float(d2)
             train_class_batches += 1
 
-            train_loss_sum += float(loss.item())
+            train_loss_sum = train_loss_sum + loss.detach()
             train_batches  += 1
 
             with torch.no_grad():
@@ -472,7 +469,7 @@ def run_stage(cfg: StageConfig):
 
         if avg3 > best_avg3:
             best_avg3 = avg3
-            torch.save(net.state_dict(), cfg.base_dir/'model_CPH_best.pth')
+            torch.save(net.state_dict(), cfg.base_dir/f'model_CPH_best_{cfg.img_mode}.pth')
             torch.save(net.state_dict(), cfg.checkpoint_path/f'model_CPH_best_{cfg.img_mode}.pth')
             logging.info(f"[Best] epoch={display_epoch} val_dice_avg={best_avg3:.4f} val_dice_micro={val_dice_micro:.4f}")
 
@@ -514,7 +511,7 @@ def run_stage(cfg: StageConfig):
         pats = [str(n).split('_')[0] for n in sel_names]
         mods = [cfg.img_mode] * len(sel_names)
 
-        _save_replay(cfg.img_mode, Xs, Ys, Ls, pats, mods)
+        _save_replay(cfg.base_dir, cfg.img_mode, Xs, Ys, Ls, pats, mods)
         logging.info(f"[Replay] unique={len(names)} keep%={cfg.p_keep:.2f} -> saved={len(sel_names)}")
 
         stage_names.append(cfg.img_mode)
@@ -524,6 +521,7 @@ def run_stage(cfg: StageConfig):
 
 
     torch.save(net.state_dict(), cfg.base_dir/f'model_CPH_{cfg.img_mode}_last.pth')
+    torch.save(net.state_dict(), cfg.checkpoint_path/f'model_CPH_{cfg.img_mode}_last.pth')
     logging.info("[Stage] Done.")
     logger.removeHandler(fh)
     fh.close()

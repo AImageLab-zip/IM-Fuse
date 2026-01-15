@@ -35,13 +35,48 @@ python preprocess.py\
   --num-workers <NUM_WORKERS>                  # Optional, number of workers for parallel preprocessing
   --interactive                                # Optional, allows for interactive directory deletion
 ```
-#TODO CONTINUA DA QUA
+
 ## Training
-To train the model run:
+The model works by training the model in four consecutive stages.
+### Stage 1
 ```
 python train.py\
   --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
-  --num-epochs-per-stage <NUM_EPOCHS> \        # Number of epoch per stage
+  --current-stage t1n                          # Fist stage
+  --num-epochs 50 \                            # Number of epoch per stage
+  --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
+  --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
+  --batch-size <BATCH SIZE> \                  # Batch size. Start with 16
+```
+### Stage 2
+```
+python train.py \
+  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
+  --current-stage t2w                          # Second stage
+  --num-epochs 50 \                            # Number of epoch per stage
+  --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
+  --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
+  --batch-size <BATCH SIZE> \                  # Batch size. Start with 16
+```
+### Stage 3
+```
+python train.py \
+  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
+  --current-stage t2f                          # Third stage
+  --num-epochs 80 \                            # Number of epoch per stage
+  --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
+  --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
+  --batch-size <BATCH SIZE> \                  # Batch size. Start with 16
+```
+### Stage 4
+```
+python train.py \
+  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
+  --current-stage t1c                          # Fourth stage
+  --num-epochs 80 \                            # Number of epoch per stage
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
   --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
   --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders

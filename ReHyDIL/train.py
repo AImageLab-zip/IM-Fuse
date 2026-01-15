@@ -10,6 +10,8 @@ from pathlib import Path
 import wandb
 import numpy as np
 
+torch.set_float32_matmul_precision('high')
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s, %(levelname)s %(message)s",
@@ -22,8 +24,8 @@ def parse_args():
 
     # Data and outputs
     p.add_argument("--stages", type=str, default="t1n,t2w,t2f,t1c",
-                   help="Training order (comma-separated), e.g., t1,t2,flair,t1ce")
-
+                   help="Training order (comma-separated), e.g., t1n,t2w,t2f,t1c")
+    p.add_argument("--current-stage",type=str,required=True)
     p.add_argument("--train_lists", type=str, default="",
                    help="Comma-separated train lists for each stage; "
                         "if a SINGLE path is given, it will be reused for all stages. "
@@ -71,7 +73,7 @@ def parse_args():
     p.add_argument("--checkpoint-path", type=Path, required=True)
     p.add_argument("--num-workers", type=int, default=8)
     p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--num-epochs-per-stage", type=int, default=80)
+    p.add_argument("--num-epochs", type=int, default=80)
     p.add_argument("--wandb-project-name",type=str,default=None)
     return p.parse_args()
 
@@ -79,7 +81,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", args.gpus)
+    #os.environ.setdefault("CUDA_VISIBLE_DEVICES", args.gpus)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logging.info(f"[Device] {device}, GPUs={os.environ.get('CUDA_VISIBLE_DEVICES','-')}")
 
@@ -97,12 +99,12 @@ def main():
     if args.wandb_project_name is not None:
         wandb.init(
             project=args.wandb_project_name,
-            name = 'training'
+            name = f'training: {args.current_stage}'
         )
     for i, mod in enumerate(stages):
         base_dir = args.datapath / 'out'/ f"res-{mod}"
         prev_img_modes = seen.copy() if seen else None
-
+        print(f'Training stage: {mod}')
         cfg = StageConfig(
             base_dir=base_dir,
             data_path=args.datapath,
@@ -117,7 +119,7 @@ def main():
             mem_size=args.mem_size,
             p_keep=args.p_keep,
 
-            max_epoch=args.num_epochs_per_stage,
+            max_epoch=args.num_epochs,
             batch_size=args.batch_size,
             images_rate=args.images_rate,
 
@@ -150,7 +152,9 @@ def main():
         if prev_base_dir:
             logging.info(f"  prev_base_dir: {prev_base_dir}")
 
-        run_stage(cfg)
+        if args.current_stage == mod:
+            run_stage(cfg)
+            break
 
         # Chain for next stage
         seen.append(mod)
