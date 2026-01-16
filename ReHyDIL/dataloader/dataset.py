@@ -38,7 +38,7 @@ class BaseDataSets(Dataset):
         #self.list_name = split_file
         self.transform = transform
 
-        assert images_rate ==1, 'images_rate < 1 was never fully implemented by the original paper'
+        assert images_rate ==1, 'images_rate < 1 was never fully implemented by the original repo'
         
         sub_list = []
         with open(split_file, "r") as f:

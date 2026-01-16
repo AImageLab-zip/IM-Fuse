@@ -57,6 +57,7 @@ class StageConfig:
     device: str = "cuda"
     seed: int = 1111
     wandb_project_name:str|None = None
+    resume: bool = False
 
 
 class TverskyLoss(torch.nn.Module):
@@ -73,7 +74,7 @@ class TverskyLoss(torch.nn.Module):
 
 def _set_seed(seed: int):
     cudnn.benchmark = False
-    cudnn.deterministic = True
+    #cudnn.deterministic = True
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -222,7 +223,24 @@ def run_stage(cfg: StageConfig):
 
     optimizer = _build_optimizer(net, cfg)
     scheduler = _build_scheduler(optimizer, cfg)
-
+    start_epoch = 0
+    if cfg.resume:
+        '''
+                if (epoch + 1) % 5 == 0:
+            checkpoint = {
+                'model': net.state_dict(),
+                'optimizer':optimizer.state_dict(),
+                'scheduler':optimizer.state_dict(),
+                'epoch':epoch
+            }
+            torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_{epoch + 1}_{cfg.img_mode}.pth')
+            torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth')
+        '''
+        checkpoint = torch.load(cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth')
+        net.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        start_epoch = checkpoint['epoch']
     tversky = TverskyLoss(alpha=cfg.alpha, beta=cfg.beta)
     tac_loss = TACWithQueues(alpha=cfg.alpha, beta=cfg.beta, tau=1.0)
 
@@ -269,7 +287,7 @@ def run_stage(cfg: StageConfig):
 
     scaler = torch.amp.grad_scaler.GradScaler(device='cuda')
 
-    for epoch in range(cfg.max_epoch):
+    for epoch in range(start_epoch, cfg.max_epoch):
         display_epoch = epoch + 1
 
         net.train()
@@ -470,8 +488,17 @@ def run_stage(cfg: StageConfig):
         if avg3 > best_avg3:
             best_avg3 = avg3
             torch.save(net.state_dict(), cfg.base_dir/f'model_CPH_best_{cfg.img_mode}.pth')
-            torch.save(net.state_dict(), cfg.checkpoint_path/f'model_CPH_best_{cfg.img_mode}.pth')
             logging.info(f"[Best] epoch={display_epoch} val_dice_avg={best_avg3:.4f} val_dice_micro={val_dice_micro:.4f}")
+        if (epoch + 1) % 5 == 0:
+            checkpoint = {
+                'model': net.state_dict(),
+                'optimizer':optimizer.state_dict(),
+                'scheduler':optimizer.state_dict(),
+                'epoch':epoch
+            }
+            torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_{epoch + 1}_{cfg.img_mode}.pth')
+            torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth')
+
 
     if len(best_loss_by_name) > 0:
 

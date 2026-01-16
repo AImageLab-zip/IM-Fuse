@@ -101,7 +101,7 @@ def process_single_subject(case_id: Path):
         t1ce  = read_nii(paths["t1ce"],  sitk.sitkInt16)
         t2    = read_nii(paths["t2"],    sitk.sitkInt16)
         seg   = read_nii(paths["seg"],   sitk.sitkUInt8)
-
+chann
         shapes = {flair.shape, t1.shape, t1ce.shape, t2.shape, seg.shape}
         if len(shapes) != 1:
             print(f"[WARN] Shape mismatch in {case_id.name}: {shapes}. Skipped.")

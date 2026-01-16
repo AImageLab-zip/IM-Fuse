@@ -75,6 +75,7 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--num-epochs", type=int, default=80)
     p.add_argument("--wandb-project-name",type=str,default=None)
+    p.add_argument("--resume",action='store_true')
     return p.parse_args()
 
 
@@ -143,7 +144,8 @@ def main():
             num_workers_val=args.num_workers,
             device=device,
             seed=args.seed,
-            wandb_project_name = args.wandb_project_name
+            wandb_project_name = args.wandb_project_name,
+            resume = args.resume
         )
 
         logging.info(f"[Stage {i+1}/{len(stages)}] modality={mod}")
