@@ -22,9 +22,35 @@ from DualNet import conv3x3x3
 import wandb
 import traceback
 from tqdm import tqdm
+from matplotlib import pyplot as plt
 start = timeit.default_timer()
 kd_wt = 0.1
 
+def log_wandb_slice(images, masks):
+    """
+    images: torch.Size([B, 4, 80, 160, 160])
+    masks:  torch.Size([B, 3, 80, 160, 160])
+    """
+
+    # image slice: [0, 0, 40]
+    img_slice = images[0, 0, 40].detach().cpu().numpy()
+
+    # segmentation: reduce channel dim -> binary mask
+    # mask != 0 over channel dimension
+    seg_binary = (masks[0] != 0).any(dim=0)  # (80, 160, 160)
+    print(masks.sum())
+    seg_slice = seg_binary[40].detach().cpu().numpy()
+
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    ax.imshow(img_slice, cmap="gray")
+    ax.imshow(seg_slice, cmap="Reds", alpha=0.4)
+    ax.axis("off")
+
+    wandb.log(
+        {"train/axial_slice": wandb.Image(fig)}
+    )
+
+    plt.close(fig)
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -42,36 +68,37 @@ def get_arguments():
     parser = argparse.ArgumentParser(description="Shared-Specific model for 3D Medical Image Segmentation.")
 
     parser.add_argument("--datapath", type=str, required=True)
-    parser.add_argument("--train_list", type=str, default=Path(__file__).parent / 'datalist' / 'train.csv',required=False)
-    parser.add_argument("--val_list", type=str, default=Path(__file__).parent / 'datalist' / 'val.csv',required=False)
+    parser.add_argument("--train-list", type=str, default=Path(__file__).parent / 'datalist' / 'train.csv',required=False)
+    parser.add_argument("--val-list", type=str, default=Path(__file__).parent / 'datalist' / 'val.csv',required=False)
     parser.add_argument("--checkpoint-path", type=str, default='snapshots/example/')
-    parser.add_argument("--reload_path", type=str, default='snapshots/example/last.pth')
-    parser.add_argument("--reload_from_checkpoint", type=str2bool, default=False)
-    parser.add_argument("--input_size", type=str, default='80,160,160',required=False)
-    parser.add_argument("--batch_size", type=int, default=2,required=False)
-    parser.add_argument("--num_gpus", type=int, default=1,required=False)
-    parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument("--num_steps", type=int, default=int(80000*3.837719298),required=False)
-    parser.add_argument("--start_iters", type=int, default=0)
-    parser.add_argument("--val_pred_every", type=int, default=10000)
-    parser.add_argument("--learning_rate", type=float, default=1e-2)
-    parser.add_argument("--num_classes", type=int, default=3)
-    parser.add_argument("--num_workers", type=int, default=1)
-    parser.add_argument("--weight_std", type=str2bool, default=True,required=False)
+    parser.add_argument("--reload-path", type=str, default='snapshots/example/last.pth')
+    parser.add_argument("--reload-from-checkpoint", type=str2bool, default=False)
+    parser.add_argument("--input-size", type=str, default='80,160,160',required=False)
+    parser.add_argument("--batch-size", type=int, default=2,required=False)
+    parser.add_argument("--num-gpus", type=int, default=1,required=False)
+    parser.add_argument('--local-rank', type=int, default=0)
+    parser.add_argument("--num-steps", type=int, default=int(80000*3.837719298),required=False)
+    parser.add_argument("--start-iters", type=int, default=0)
+    parser.add_argument("--val-pred-every", type=int, default=10000)
+    parser.add_argument("--learning-rate", type=float, default=1e-2)
+    parser.add_argument("--num-classes", type=int, default=3)
+    parser.add_argument("--num-workers", type=int, default=1)
+    parser.add_argument("--weight-std", type=str2bool, default=True,required=False)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--power", type=float, default=0.9)
-    parser.add_argument("--weight_decay", type=float, default=0.0005)
-    parser.add_argument("--ignore_label", type=int, default=255)
-    parser.add_argument("--is_training", action="store_true")
-    parser.add_argument("--random_mirror", type=str2bool, default=True,required=False)
-    parser.add_argument("--random_scale", type=str2bool, default=True,required=False)
-    parser.add_argument("--random_seed", type=int, default=999)
+    parser.add_argument("--weight-decay", type=float, default=0.0005)
+    parser.add_argument("--ignore-label", type=int, default=255)
+    parser.add_argument("--is-training", action="store_true")
+    parser.add_argument("--random-mirror", type=str2bool, default=True,required=False)
+    parser.add_argument("--random-scale", type=str2bool, default=True,required=False)
+    parser.add_argument("--random-seed", type=int, default=999)
     parser.add_argument("--wandb-project-name",type=str,default=None)
-    parser.add_argument("--norm_cfg", type=str, default='IN')  # normalization
-    parser.add_argument("--activation_cfg", type=str, default='LeakyReLU')  # activation
-    parser.add_argument("--train_only", action="store_true")
+    parser.add_argument("--norm-cfg", type=str, default='IN')  # normalization
+    parser.add_argument("--activation-cfg", type=str, default='LeakyReLU')  # activation
+    parser.add_argument("--train-only", action="store_true")
     parser.add_argument("--mode", type=str, default='0,1,2,3')
     parser.add_argument("--teachers", type=str, default='0')
+    parser.add_argument("--restart",action='store_true')
 
     return parser
 
@@ -197,14 +224,6 @@ def main():
         # os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
         with Engine(custom_parser=parser) as engine:
-            amp_available = torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 5
-            use_amp = amp_available
-            print("AMP enabled:", use_amp)
-
-            if use_amp:
-                scaler = torch.amp.GradScaler("cuda",enabled=use_amp)
-                print('Using AMP')
-
             args = parser.parse_args()
             args.learning_rate = args.learning_rate * np.sqrt(args.batch_size/2)
             if args.wandb_project_name is not None:
@@ -239,13 +258,13 @@ def main():
             if args.reload_from_checkpoint:
                 print('loading from checkpoint: {}'.format(args.reload_path))
                 if os.path.exists(args.reload_path):
-                    # model.load_state_dict(torch.load(args.reload_path, map_location=torch.device('cpu')))
-                    checkpoint = torch.load(args.reload_path)
-                    model = checkpoint['model']
-                    optimizer = checkpoint['optimizer']
-                    args.start_iters = checkpoint['iter']
+                    checkpoint = torch.load(args.reload_path,weights_only=False)
+                    model.load_state_dict(checkpoint['model'])
+                    if not args.restart: # Load optimizer and start_iters only if required
+                        optimizer = checkpoint['optimizer'] 
+                        args.start_iters = checkpoint['iter']
                     print("Loaded model trained for", args.start_iters, "iters")
-                else:
+                else:   
                     print('File not exists in the reload path: {}'.format(args.reload_path))
                     exit(0)
 
@@ -256,7 +275,7 @@ def main():
 
             if not os.path.exists(args.checkpoint_path):
                 os.makedirs(args.checkpoint_path)
-            train_dataset = BraTSDataSet(args.datapath, args.train_list, max_iters=args.num_steps * 2, crop_size=input_size,
+            train_dataset = BraTSDataSet(args.datapath, Path(args.train_list), max_iters=args.num_steps * 2/args.batch_size, crop_size=input_size,
                             scale=args.random_scale, mirror=args.random_mirror)
             val_dataset = BraTSValDataSet(args.datapath, args.val_list)
             trainloader, train_sampler = engine.get_train_loader(train_dataset)
@@ -268,39 +287,33 @@ def main():
                 i_iter += args.start_iters
                 images = batch['image'].squeeze(1).cuda()
                 labels = batch['label'].squeeze(1).cuda()
-                
                 optimizer.zero_grad()
-                lr = adjust_learning_rate(optimizer, i_iter, args.learning_rate, args.num_steps, args.power)
-                with torch.amp.autocast("cuda",enabled=use_amp):
-                    preds, mode_split, totKDLoss = model(images, mode=args.mode, teachers=teachers)
-                    preds_seg = preds
+                lr = adjust_learning_rate(optimizer, i_iter, args.learning_rate, len(trainloader), args.power)
+                preds, mode_split, totKDLoss = model(images, mode=args.mode, teachers=teachers)
+                preds_seg = preds
+                
+                term_seg_Dice = loss_D.forward(preds_seg, labels)
+                term_seg_BCE = loss_BCE.forward(preds_seg, labels)
 
-                    term_seg_Dice = loss_D.forward(preds_seg, labels)
-                    term_seg_BCE = loss_BCE.forward(preds_seg, labels)
+                term_all = term_seg_Dice + term_seg_BCE + kd_wt * totKDLoss
 
-                    term_all = term_seg_Dice + term_seg_BCE + kd_wt * totKDLoss
-                if use_amp:
-                    scaler.scale(term_all).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    term_all.backward()
-                    optimizer.step()
-                if i_iter % 100 == 0 and (args.local_rank == 0) and args.wandb_project_name is not None:
+                term_all.backward()
+                optimizer.step()
+                if i_iter % 5 == 0 and (args.local_rank == 0) and args.wandb_project_name is not None:
                     wandb.log({
                         'train/loss':term_all.detach().cpu().item(),
                         'train/lr':lr,
                         'train/iter':i_iter
                     })
-
-
+                    #preds_for_logging = torch.round(F.sigmoid(preds))
+                    #log_wandb_slice(images,preds_for_logging)
                 '''print('iter = {} of {} completed, lr = {:.4}, seg_loss = {:.4}, kd_loss = {:.4}'
                     .format(i_iter, args.num_steps, lr, (term_seg_Dice+term_seg_BCE).cpu().data.numpy(), totKDLoss.cpu().data.numpy()))
     '''
-                if i_iter >= args.num_steps - 1 and (args.local_rank == 0):
+                if i_iter >= len(trainloader) - 1 and (args.local_rank == 0):
                     print('save last model ...')
                     checkpoint = {
-                        'model': model,
+                        'model': model.state_dict(),
                         'optimizer': optimizer,
                         'iter': i_iter
                     }
@@ -310,7 +323,7 @@ def main():
                 if i_iter % args.val_pred_every == args.val_pred_every - 1 and i_iter != 0 and (args.local_rank == 0):
                     print('save model ...')
                     checkpoint = {
-                        'model': model,
+                        'model': model.state_dict(),
                         'optimizer': optimizer,
                         'iter': i_iter
                     }
@@ -318,13 +331,13 @@ def main():
                     torch.save(checkpoint, osp.join(args.checkpoint_path, 'last.pth'))
 
                 # val and identify the best modality for each tumor
-                if not args.train_only and (i_iter +1)% args.val_pred_every == 0:
+                '''if not args.train_only and (i_iter +1)% args.val_pred_every == 0:
                     print('validate ...')
-                    teacher_modes = validate(args, input_size, model, valloader, args.num_classes)
+                    #teacher_modes = validate(args, input_size, model, valloader, args.num_classes)
                     # teachers = [max(teacher_modes, key=teacher_modes.count)]  # single teacher
                     teachers = list(set(teacher_modes))  # multi-teacher
                     teachers = ",".join(map(str, teachers))
-                    print('teachers:', teachers)
+                    print('teachers:', teachers)'''
 
         end = timeit.default_timer()
         print(end - start, 'seconds')
