@@ -1,0 +1,3 @@
+sbatch_files/
+model_to_statedict.py
+lckd_venv
