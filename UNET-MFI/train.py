@@ -20,7 +20,12 @@ from pathlib import Path
 import wandb
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
-
+import numpy as np
+def set_seed(seed:int=0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
 
@@ -275,6 +280,7 @@ def train():
 
 
 if __name__ == '__main__':
+    set_seed(0)
     train()
 
 
