@@ -124,7 +124,7 @@ def _load_prev_model(prev_base_dir: Path, device: str,prev_modals) -> Optional[t
         return None
     model = CPH(n_classes=3).to(device)
     model = model.to(memory_format=torch.channels_last)
-    state = torch.load(model_path, map_location=device)
+    state = torch.load(model_path, map_location=device,weights_only=False)
     model.load_state_dict(state)
     model.eval()
     for p in model.parameters():
@@ -137,7 +137,7 @@ def _init_from_prev_weights(net: torch.nn.Module, prev_base_dir: Path, device: s
     model_path = prev_base_dir/ f'model_CPH_best_{prev_modals[-1]}.pth'
     if not os.path.exists(model_path):
         return
-    state = torch.load(model_path, map_location=device)
+    state = torch.load(model_path, map_location=device,weights_only=False)
     try:
         net.load_state_dict(state, strict=False)
     except:
@@ -161,7 +161,7 @@ def _load_replay(base_dir: Path, modality: str, device: str = 'cpu') -> Optional
     path = base_dir.parent / 'replay_buffer' / f'replay_buffer_{modality}.pth'
     if not os.path.exists(path):
         return None
-    ckpt = torch.load(path, map_location=device)
+    ckpt = torch.load(path, map_location=device,weights_only=False)
     ckpt.setdefault('patients', ["unk"] * ckpt['images'].shape[0])
     ckpt.setdefault('modalities', [modality] * ckpt['images'].shape[0])
     return ckpt
@@ -236,11 +236,11 @@ def run_stage(cfg: StageConfig):
             torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_{epoch + 1}_{cfg.img_mode}.pth')
             torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth')
         '''
-        checkpoint = torch.load(cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth')
+        checkpoint = torch.load(cfg.checkpoint_path/f'model_CPH_last_{cfg.img_mode}.pth',weights_only=False)
         net.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
-        start_epoch = checkpoint['epoch']
+        start_epoch = checkpoint['epoch'] + 1
     tversky = TverskyLoss(alpha=cfg.alpha, beta=cfg.beta)
     tac_loss = TACWithQueues(alpha=cfg.alpha, beta=cfg.beta, tau=1.0)
 
@@ -493,7 +493,7 @@ def run_stage(cfg: StageConfig):
             checkpoint = {
                 'model': net.state_dict(),
                 'optimizer':optimizer.state_dict(),
-                'scheduler':optimizer.state_dict(),
+                'scheduler':scheduler.state_dict(),
                 'epoch':epoch
             }
             torch.save(checkpoint, cfg.checkpoint_path/f'model_CPH_{epoch + 1}_{cfg.img_mode}.pth')

@@ -110,10 +110,169 @@ class Cache:
                 shm.close(); shm.unlink()
             except FileNotFoundError:
                 pass
-
-
-
 class BraTSDataSet(data.Dataset):
+    def __init__(
+        self,
+        datapath: Path,
+        list_path,
+        max_iters,
+        crop_size=(128, 160, 200),
+        scale=True,
+        mirror=True,
+        ignore_label=255
+    ):
+        self.list_path = list_path
+        self.crop_d, self.crop_h, self.crop_w = crop_size
+        self.scale = scale
+        self.ignore_label = ignore_label
+        self.is_mirror = mirror
+
+        self.img_ids = [i_id.strip() for i_id in open(self.list_path)]
+        self.img_ids = [[datapath / img] for img in self.img_ids]
+
+        self.files = []
+        for item in self.img_ids:
+            filepath = item[0] / osp.splitext(osp.basename(item[0]))[0]
+
+            self.files.append({
+                "flair": str(filepath) + "-t2f.nii.gz",
+                "t1":    str(filepath) + "-t1n.nii.gz",
+                "t1ce":  str(filepath) + "-t1c.nii.gz",
+                "t2":    str(filepath) + "-t2w.nii.gz",
+                "label": str(filepath) + "-seg.nii.gz",
+                "name":  osp.splitext(osp.basename(str(filepath)))[0]
+            })
+
+        # repeat dataset to reach max_iters
+        rep = int(np.ceil(float(max_iters) / len(self.files)))
+        self.files = self.files * rep
+
+        self.transforms = get_train_transform(patch_size=(80, 160, 160))
+
+    def __len__(self):
+        return len(self.files)
+
+    def truncate(self, MRI):
+        Hist, _ = np.histogram(MRI, bins=int(MRI.max()))
+        idexs = np.argwhere(Hist >= 50)
+        idex_max = np.float32(idexs[-1, 0])
+        MRI[MRI >= idex_max] = idex_max
+
+        sig = MRI[0, 0, 0]
+        MRI = np.where(MRI != sig, MRI - np.mean(MRI[MRI != sig]), 0)
+        MRI = np.where(MRI != sig, MRI / (np.std(MRI[MRI != sig]) + 1e-7), 0)
+        return MRI
+
+    def id2trainId(self, label):
+        shape = label.shape
+        results_map = np.zeros((3, *shape), dtype=np.float32)
+
+        NCR_NET = (label == 1)
+        ET = (label == 3)
+        WT = (label >= 1)
+        TC = np.logical_or(NCR_NET, ET)
+
+        results_map[0] = ET
+        results_map[1] = WT
+        results_map[2] = TC
+        return results_map
+
+    def locate_bbx_wScale(self, label):
+        scale_flag = False
+        if self.scale and np.random.rand() < 0.5:
+            scaler = np.random.uniform(0.9, 1.1)
+            scale_flag = True
+        else:
+            scaler = 1.0
+
+        sd = int(self.crop_d * scaler)
+        sh = int(self.crop_h * scaler)
+        sw = int(self.crop_w * scaler)
+
+        class_num, D, H, W = label.shape
+
+        if random.random() < 0.5:
+            cls = np.random.choice(class_num + 1)
+            locs = []
+
+            if cls < class_num:
+                locs = np.argwhere(label[cls] > 0)
+
+            if cls == class_num or len(locs) == 0:
+                d0 = random.randint(0, D - sd)
+                h0 = random.randint(15, H - 15 - sh)
+                w0 = random.randint(10, W - 10 - sw)
+            else:
+                cd, ch, cw = locs[np.random.choice(len(locs))]
+                d0 = cd - sd // 2
+                h0 = ch - sh // 2
+                w0 = cw - sw // 2
+        else:
+            d0 = random.randint(0, D - sd)
+            h0 = random.randint(15, H - 15 - sh)
+            w0 = random.randint(10, W - 10 - sw)
+
+        d0 = np.clip(d0, 0, D - sd)
+        h0 = np.clip(h0, 0, H - sh)
+        w0 = np.clip(w0, 0, W - sw)
+
+        return [d0, d0 + sd, h0, h0 + sh, w0, w0 + sw], scale_flag
+
+    def __getitem__(self, index):
+        datafiles = self.files[index]
+
+        flair = self.truncate(nib.load(datafiles["flair"]).get_fdata())
+        t1    = self.truncate(nib.load(datafiles["t1"]).get_fdata())
+        t1ce  = self.truncate(nib.load(datafiles["t1ce"]).get_fdata())
+        t2    = self.truncate(nib.load(datafiles["t2"]).get_fdata())
+
+        image = np.stack([flair, t1, t1ce, t2], axis=0).astype(np.float32)
+
+        label = nib.load(datafiles["label"]).get_fdata()
+        label = self.id2trainId(label)
+
+        # C x D x H x W
+        image = image.transpose(0, 3, 1, 2)
+        label = label.transpose(0, 3, 1, 2)
+
+        (d0, d1, h0, h1, w0, w1), scale_flag = self.locate_bbx_wScale(label)
+
+        image = image[:, d0:d1, h0:h1, w0:w1]
+        label = label[:, d0:d1, h0:h1, w0:w1]
+
+        if self.is_mirror:
+            if np.random.rand() < 0.5:
+                axis = np.random.choice([1, 2, 3])
+                image = np.flip(image, axis=axis)
+                label = np.flip(label, axis=axis)
+
+        if scale_flag:
+            image = resize(
+                image,
+                (4, self.crop_d, self.crop_h, self.crop_w),
+                order=1,
+                preserve_range=True,
+                anti_aliasing=False
+            )
+            label = resize(
+                label,
+                (3, self.crop_d, self.crop_h, self.crop_w),
+                order=0,
+                preserve_range=True,
+                anti_aliasing=False
+            )
+
+        image = image.astype(np.float32)
+        label = label.astype(np.float32)
+
+        return self.transforms(
+            image=image[None, ...],
+            label=label[None, ...]
+        )
+
+
+
+class BraTSDataSetCache(data.Dataset):
     def __init__(self,datapath:Path, list_path, max_iters, crop_size=(128, 160, 200), scale=True, mirror=True, ignore_label=255):
         self.list_path = list_path
         self.crop_d, self.crop_h, self.crop_w = crop_size

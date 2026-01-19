@@ -67,18 +67,6 @@ with torch.no_grad():
             #output = F.softmax(output,dim=0)
             output = fix_segmentation(output) 
             target = fix_segmentation(target.squeeze(0))
-            import nibabel as nib
-            import numpy as np
-            affine = np.array([
-                    [1, 0, 0, 0],   # voxel size 1 mm in x
-                    [0, 1, 0, 0],   # voxel size 1 mm in y
-                    [0, 0, 1, 0],   # voxel size 1 mm in z
-                    [0, 0, 0, 1]
-                ], dtype=float)
-
-            nib.save(nib.Nifti1Image(image[0,0].detach().cpu().numpy(),affine),'/homes/ocarpentiero/IM-Fuse/LCKD/test_outputs/image.nii.gz')
-            nib.save(nib.Nifti1Image(output.detach().cpu().numpy(),affine),'/homes/ocarpentiero/IM-Fuse/LCKD/test_outputs/label.nii.gz')
-            nib.save(nib.Nifti1Image(target.detach().cpu().numpy(),affine),'/homes/ocarpentiero/IM-Fuse/LCKD/test_outputs/target.nii.gz')
             _ , brats_dice = softmax_output_dice_class4(output=output,target=target)
             # val_WT, val_TC, val_ET, val_ETpp = brats_dice
             mask_specific_score.update(brats_dice)

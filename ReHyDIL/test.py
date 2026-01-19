@@ -54,8 +54,8 @@ with torch.no_grad():
         mask_specific_score = AverageMeter()
 
         for element in tqdm(test_loader,total=len(test_loader),desc=f'Testing: {mask_names[i]}'):
-            image = element['image'].to(DEVICE) # TODO: modify this to match your dataset class
-            target = element['target'].to(DEVICE) # TODO: modify this to match your dataset class
+            image = element['image'].to(DEVICE) 
+            target = element['target'].to(DEVICE) 
 
             for idx, value in enumerate(mask):
                 if not value:

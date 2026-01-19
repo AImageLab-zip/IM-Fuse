@@ -130,8 +130,7 @@ def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=
                 f"Loss: {avg_epoch_loss:.6f}"
             )
 
-        ###evaluate model every 5 epoch
-        if epoch % 50 ==0:
+        if epoch % 25 ==0:
             H, W, T = 240, 240, 155
             WT_dice, TC_dice, ET_dice = [], [], []
 

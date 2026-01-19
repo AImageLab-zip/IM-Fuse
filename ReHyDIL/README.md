@@ -37,12 +37,13 @@ python preprocess.py\
 ```
 
 ## Training
-The model works by training the model in four consecutive stages.
+The model is trained in four consecutive stages.
+Each stage must be started only after the completion of the preceding one.
 ### Stage 1
 ```
 python train.py\
   --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
-  --current-stage t1n                          # Fist stage
+  --current-stage t1n                          # First stage
   --num-epochs 50 \                            # Number of epoch per stage
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
   --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
@@ -82,11 +83,22 @@ python train.py \
   --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
   --batch-size <BATCH SIZE> \                  # Batch size. Start with 16
 ```
+### Resuming
+To resume the training of a stage, run:
+python train.py\
+  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset. USE THE SAME AS BEFORE
+  --current-stage <STAGE_NAME>                 # t1c, t1n, t2f or t2w
+  --num-epochs 50 \                            # Number of epoch per stage
+  --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
+  --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
+  --num-workers <NUM_WORKERS> \                # Number of workers of the dataloaders
+  --batch-size <BATCH SIZE> \   
+  --resume
 ## Testing
 After training, to test the model run:
 ```
 python test.py \
-  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
+  --datapath <INPUT_PATH_UNPROCESSED> \        # Directory with the ORIGINAL, UNPROCESSED dataset
   --savepath <OUTPUT_PATH> \                   # Directory for saving results
   --resume <RESUME_PATH> \                     # Path to the checkpoints 
 ```

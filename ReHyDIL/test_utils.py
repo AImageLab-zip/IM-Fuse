@@ -198,7 +198,9 @@ class BaseDataSets_3D(Dataset):
 
         mask = torch.from_numpy(mask.transpose(1,2,0))
         img = torch.stack([t1c,t1n,t2f,t2w],dim=0)
-        sample = {'image': img, 'mask': mask}
+        # Center crop
+        img = img[:,8:232,8:232]
+        sample = {'image': img, 'target': mask}
         return sample
     
 class CPH_3d(nn.Module):
@@ -220,8 +222,8 @@ class CPH_3d(nn.Module):
         
 
     def forward(self, input):
-        if len(input.shape) == 5 and input.shape[0] == 1:
-            input = input.squeeze(0)
+        assert tuple(input.shape) == (1,4,240,240,155), f'Wrong shape for the input: {tuple(input.shape)} instead of (1,4,240,240,155)'
+        input = input.squeeze(0)
         predictions = []
         for slice_idx in range(0,155,self.batch_size):
             start = slice_idx
@@ -232,7 +234,7 @@ class CPH_3d(nn.Module):
             prediction = self.net(sliced_input)
             predictions.append(prediction)
         predictions = torch.cat(predictions,dim=0)
-        predictions = rearrange(predictions,'D,C,H,W -> C,H,W,D').unsqueeze(0)
+        predictions = rearrange(predictions,'D,C,H,W -> C,H,W,D').unsqueeze(0).contiguous()
 
         return predictions
             

@@ -68,10 +68,10 @@ def get_arguments():
     parser = argparse.ArgumentParser(description="Shared-Specific model for 3D Medical Image Segmentation.")
 
     parser.add_argument("--datapath", type=str, required=True)
-    parser.add_argument("--train-list", type=str, default=Path(__file__).parent / 'datalist' / 'train.csv',required=False)
-    parser.add_argument("--val-list", type=str, default=Path(__file__).parent / 'datalist' / 'val.csv',required=False)
-    parser.add_argument("--checkpoint-path", type=str, default='snapshots/example/')
-    parser.add_argument("--reload-path", type=str, default='snapshots/example/last.pth')
+    parser.add_argument("--train-list", type=Path, default=Path(__file__).parent / 'datalist' / 'train.csv',required=False)
+    parser.add_argument("--val-list", type=Path, default=Path(__file__).parent / 'datalist' / 'val.csv',required=False)
+    parser.add_argument("--checkpoint-path", type=str, required=True)
+    parser.add_argument("--reload-path", type=str, required=True)
     parser.add_argument("--reload-from-checkpoint", type=str2bool, default=False)
     parser.add_argument("--input-size", type=str, default='80,160,160',required=False)
     parser.add_argument("--batch-size", type=int, default=2,required=False)
@@ -79,7 +79,7 @@ def get_arguments():
     parser.add_argument('--local-rank', type=int, default=0)
     parser.add_argument("--num-steps", type=int, default=int(80000*3.837719298),required=False)
     parser.add_argument("--start-iters", type=int, default=0)
-    parser.add_argument("--val-pred-every", type=int, default=10000)
+    parser.add_argument("--val-pred-every", type=int, default=5000) 
     parser.add_argument("--learning-rate", type=float, default=1e-2)
     parser.add_argument("--num-classes", type=int, default=3)
     parser.add_argument("--num-workers", type=int, default=1)
@@ -183,6 +183,7 @@ def predict_sliding(args, net, imagelist, tile_size, classes, mode):
 
 
 def validate(args, input_size, model, ValLoader, num_classes):
+    model.eval()
     # start to validate
     val_ET = [0, 0, 0, 0]
     val_WT = [0, 0, 0, 0]
@@ -190,9 +191,15 @@ def validate(args, input_size, model, ValLoader, num_classes):
 
     # return 2, 0, 2
 
-    for index, batch in enumerate(ValLoader):
+    for index, batch in tqdm(enumerate(ValLoader),total= len(ValLoader)):
         # print('validation %d processd'%(index))
-        image, image_res, label, size, name, affine = batch
+        image = batch['image']
+        image_res = batch['image_res']
+        label = batch['label']
+        size = batch['size']
+        name = batch['name']
+        affine = batch['affine']
+
         image = image.cuda()
         image_res = image_res.cuda()
         label = label.cuda()
@@ -209,10 +216,11 @@ def validate(args, input_size, model, ValLoader, num_classes):
     print('Val_TC_Dice:', val_TC)
     if args.wandb_project_name is not None:
         wandb.log({
-            'val/et_dice':val_ET,
-            'val/wt_dice':val_WT,
-            'val/tc_dice':val_TC
+            'val/et_dice':sum(val_ET)/(len(ValLoader)*4),
+            'val/wt_dice':sum(val_WT)/(len(ValLoader)*4),
+            'val/tc_dice':sum(val_TC)/(len(ValLoader)*4)
         })
+    model.train()
     return val_ET.index(max(val_ET)), val_WT.index(max(val_WT)), val_TC.index(max(val_TC))
 
 
@@ -261,7 +269,7 @@ def main():
                     checkpoint = torch.load(args.reload_path,weights_only=False)
                     model.load_state_dict(checkpoint['model'])
                     if not args.restart: # Load optimizer and start_iters only if required
-                        optimizer = checkpoint['optimizer'] 
+                        optimizer.load_state_dict(checkpoint['optimizer'])
                         args.start_iters = checkpoint['iter']
                     print("Loaded model trained for", args.start_iters, "iters")
                 else:   
@@ -275,7 +283,7 @@ def main():
 
             if not os.path.exists(args.checkpoint_path):
                 os.makedirs(args.checkpoint_path)
-            train_dataset = BraTSDataSet(args.datapath, Path(args.train_list), max_iters=args.num_steps * 2/args.batch_size, crop_size=input_size,
+            train_dataset = BraTSDataSet(args.datapath, Path(args.train_list), max_iters=int(args.num_steps * 2/args.batch_size), crop_size=input_size,
                             scale=args.random_scale, mirror=args.random_mirror)
             val_dataset = BraTSValDataSet(args.datapath, args.val_list)
             trainloader, train_sampler = engine.get_train_loader(train_dataset)
@@ -314,35 +322,37 @@ def main():
                     print('save last model ...')
                     checkpoint = {
                         'model': model.state_dict(),
-                        'optimizer': optimizer,
+                        'optimizer': optimizer.state_dict(),
                         'iter': i_iter
                     }
                     torch.save(checkpoint, osp.join(args.checkpoint_path, 'final.pth'))
+                    if args.mode == '0,1,2,3':
+                        torch.save(checkpoint, osp.join(args.checkpoint_path, 'final_pretrain.pth'))
+                    else:
+                        torch.save(checkpoint, osp.join(args.checkpoint_path, 'final_with_missing_modals.pth'))
                     break
 
                 if i_iter % args.val_pred_every == args.val_pred_every - 1 and i_iter != 0 and (args.local_rank == 0):
                     print('save model ...')
                     checkpoint = {
                         'model': model.state_dict(),
-                        'optimizer': optimizer,
+                        'optimizer': optimizer.state_dict(),
                         'iter': i_iter
                     }
                     # torch.save(checkpoint, osp.join(args.checkpoint_path, 'iter_' + str(i_iter) + '.pth'))
                     torch.save(checkpoint, osp.join(args.checkpoint_path, 'last.pth'))
 
                 # val and identify the best modality for each tumor
-                '''if not args.train_only and (i_iter +1)% args.val_pred_every == 0:
+                if not args.train_only and (i_iter +1)% args.val_pred_every == 0:
                     print('validate ...')
-                    #teacher_modes = validate(args, input_size, model, valloader, args.num_classes)
-                    # teachers = [max(teacher_modes, key=teacher_modes.count)]  # single teacher
+                    teacher_modes = validate(args, input_size, model, valloader, args.num_classes)
                     teachers = list(set(teacher_modes))  # multi-teacher
                     teachers = ",".join(map(str, teachers))
-                    print('teachers:', teachers)'''
+                    print('teachers:', teachers)
 
         end = timeit.default_timer()
         print(end - start, 'seconds')
     except:
-        train_dataset.close()
         tb = traceback.format_exc()
         print(tb)       
 
