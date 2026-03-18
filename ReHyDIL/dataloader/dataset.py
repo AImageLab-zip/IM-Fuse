@@ -51,7 +51,7 @@ class BaseDataSets(Dataset):
         logging.info(f'Creating a {self.modality} {self.mode} dataset with {len(self.images)} examples')
         
         if images_rate !=1 and self.mode == "train":
-            images_num = int(len(self.images) * images_rate) #TODO CAMBIARE SELF.SAMPLE_LIST IN IMAGES E ROBA
+            images_num = int(len(self.images) * images_rate) 
             self.images = self.images[:images_num]
             self.masks = self.masks[:images_num]
         logging.info(f"Creating factual {self.modality} {self.mode} dataset with {len(self.images)} examples")

@@ -2,8 +2,8 @@ import torch
 import os
 import argparse
 from pathlib import Path
-from templates.dummies.dummy import DummyDataset,DummyModel
-from test_utils import AverageMeter, softmax_output_dice_class4,set_seed, BaseDataSets_3D, CPH_3d
+
+from test_utils import AverageMeter, softmax_output_dice_class4, set_seed, BaseDataSets_3D, CPH_3d
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -13,21 +13,22 @@ set_seed(42)
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--datapath', required=True, type=str)
-parser.add_argument('--savepath', required=True, type=str)
-parser.add_argument('--resume', required=True, type=str)
+parser.add_argument('--datapath', required=True, type=Path)
+parser.add_argument('--savepath', required=True, type=Path)
+parser.add_argument('--resume', required=True, type=Path)
 parser.add_argument('--num-workers', default=8, type=int)
-parser.add_argument('--batch-size', default=31, type=int)
+parser.add_argument('--slice-batch-size', default=31, type=int)
 path = os.path.dirname(__file__)
 
-
 args = parser.parse_args()
-masks = [[False, False, False, True], [False, True, False, False], [False, False, True, False], [True, False, False, False],
-        [False, True, False, True], [False, True, True, False], [True, False, True, False], [False, False, True, True], [True, False, False, True], [True, True, False, False],
-        [True, True, True, False], [True, False, True, True], [True, True, False, True], [False, True, True, True],
-        [True, True, True, True]]
-
-ordered_names = ['t1c', 't1n','t2w','t2f']
+masks = [[False, False, False, True], [False, True, False, False], [False, False, True, False],
+         [True, False, False, False],
+         [False, True, False, True], [False, True, True, False], [True, False, True, False], [False, False, True, True],
+         [True, False, False, True], [True, True, False, False],
+         [True, True, True, False], [True, False, True, True], [True, True, False, True], [False, True, True, True],
+         [True, True, True, True]]
+masks = [[True,False,False,False]]
+ordered_names = ['t1c', 't1n', 't2f', 't2w']
 mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask in masks]
 
 datapath = args.datapath
@@ -36,47 +37,60 @@ save_path = args.savepath
 
 test_set = BaseDataSets_3D(root_dir=datapath, split_file=test_file)
 # batch_size MUST be == 1
-test_loader = DataLoader(dataset=test_set,batch_size=1,shuffle=False,num_workers=args.num_workers) 
+test_loader = DataLoader(dataset=test_set, batch_size=1, shuffle=False, num_workers=args.num_workers)
 assert test_loader.batch_size == 1, 'keep batch size 1'
 
-model = CPH_3d(batch_size=31).to(DEVICE) 
+model = CPH_3d(args.slice_batch_size).to(DEVICE)
 model.eval()
-checkpoint = torch.load(args.resume)  
-model.load_state_dict(checkpoint['model'])   
+checkpoint = torch.load(args.resume, weights_only=False)['model']
+if any(k.startswith("_orig_mod.") for k in checkpoint.keys()):
+    checkpoint = {k.replace("_orig_mod.", "", 1): v for k, v in checkpoint.items()}
+model.load_checkpoint(checkpoint)
 
-output_path = f"{args.savepath}" 
+output_path = f"{args.savepath}"
 assert not os.path.isdir(output_path), f'{output_path} must be a file, not a directory'
 if os.path.exists(output_path):
     os.remove(output_path)
 total_score = AverageMeter()
 with torch.no_grad():
-    for i, mask in tqdm(enumerate(masks),desc='Evaluating all the masks'):
+    for i, mask in tqdm(enumerate(masks), desc='Evaluating all the masks'):
         mask_specific_score = AverageMeter()
 
-        for element in tqdm(test_loader,total=len(test_loader),desc=f'Testing: {mask_names[i]}'):
-            image = element['image'].to(DEVICE) 
-            target = element['target'].to(DEVICE) 
+        for element in tqdm(test_loader, total=len(test_loader), desc=f'Testing: {mask_names[i]}'):
+
+            image = element['image'].to(DEVICE).float()
+
+            image[:,1] = image[:,0]
+            image[:,2] = image[:,0]
+            image[:,3] = image[:,0]
+            target = element['target'].to(DEVICE)
 
             for idx, value in enumerate(mask):
                 if not value:
-                    image[:,idx] = 0 
+                    image[:, idx] = 0
 
-            output = model(image) 
-            output = F.sigmoid(output) 
-            output = (output > 0.5)
+            output = model(image)
+            output = F.sigmoid(output)
             
+            output = F.pad(output, (0, 0,  # D (no padding)
+                                  8, 8,  # W
+                                  8, 8))  # H
+            output = (output > 0.5)
+
             # output and target must have shape (1,240,240,155)
-            #TODO REMEMBER THAT THIS MODEL PREDICTS THE 3 CLASSES DIRECTLY
-            _ , brats_dice = softmax_output_dice_class4(output=output,target=target)
+
+            _, brats_dice = softmax_output_dice_class4(output=output, target=target)
             # val_WT, val_TC, val_ET, val_ETpp = brats_dice
             mask_specific_score.update(brats_dice)
         mask_score_avg = mask_specific_score.avg
         total_score.update(mask_score_avg)
         mask_score_avg = mask_score_avg[0]
         with open(output_path, 'a') as file:
-            file.write(f'Available modals = {mask_names[i]:<21}--> WT = {mask_score_avg[0].item():.4f}, TC = {mask_score_avg[1].item():.4f}, ET = {mask_score_avg[2].item():.4f}, ETpp = {mask_score_avg[3].item():.4f}\n')
-        
+            file.write(
+                f'Available modals = {mask_names[i]:<21}--> WT = {mask_score_avg[0].item():.4f}, TC = {mask_score_avg[1].item():.4f}, ET = {mask_score_avg[2].item():.4f}, ETpp = {mask_score_avg[3].item():.4f}\n')
+
     avg_totalscore = total_score.avg[0]
     with open(output_path, 'a') as file:
-            file.write(f'Avg scores {"":<29}--> WT = {mask_score_avg[0].item():.4f}, TC = {mask_score_avg[1].item():.4f}, ET = {mask_score_avg[2].item():.4f}, ETpp = {mask_score_avg[3].item():.4f}\n')
-        
+        file.write(
+            f'Avg scores {"":<29}--> WT = {mask_score_avg[0].item():.4f}, TC = {mask_score_avg[1].item():.4f}, ET = {mask_score_avg[2].item():.4f}, ETpp = {mask_score_avg[3].item():.4f}\n')
+

@@ -25,6 +25,15 @@ from tqdm import tqdm
 #torch.backends.cudnn.allow_tf32 = True
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+class InputAdapter(torch.nn.Module):
+    def __init__(self, k: int):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(k, 1, kernel_size=1, bias=False)
+        with torch.no_grad():
+            self.conv.weight[:] = 1.0 / k
+    def forward(self, x):
+        return self.conv(x)
+    
 @dataclass
 class StageConfig:
     base_dir: Path
@@ -116,15 +125,21 @@ def _build_scheduler(optimizer, cfg: StageConfig):
     else:
         raise ValueError(f"Unknown lr_scheduler: {cfg.lr_scheduler}")
 
-def _load_prev_model(prev_base_dir: Path, device: str,prev_modals) -> Optional[torch.nn.Module]:
+def _load_prev_model(prev_base_dir: Path, device: str,prev_modals,in_channels:int=4) -> Optional[torch.nn.Module]:
+    
     if not prev_base_dir:
         return None
     model_path = prev_base_dir/ f'model_CPH_best_{prev_modals[-1]}.pth'
     if not os.path.exists(model_path):
         return None
-    model = CPH(n_classes=3).to(device)
-    model = model.to(memory_format=torch.channels_last)
+    if in_channels == 1:
+        model = CPH(n_classes=3).to(device)
+        model = model.to(memory_format=torch.channels_last)
+    else:
+        model = torch.nn.Sequential(InputAdapter(in_channels), CPH(n_classes=3)).to(device)
+        model = model.to(memory_format=torch.channels_last)
     state = torch.load(model_path, map_location=device,weights_only=False)
+    model = torch.compile(model, mode="reduce-overhead")
     model.load_state_dict(state)
     model.eval()
     for p in model.parameters():
@@ -138,6 +153,7 @@ def _init_from_prev_weights(net: torch.nn.Module, prev_base_dir: Path, device: s
     if not os.path.exists(model_path):
         return
     state = torch.load(model_path, map_location=device,weights_only=False)
+
     try:
         net.load_state_dict(state, strict=False)
     except:
@@ -207,18 +223,11 @@ def run_stage(cfg: StageConfig):
         net = CPH(n_classes=3).to(device)
         net = net.to(memory_format=torch.channels_last)
     else:
-        class InputAdapter(torch.nn.Module):
-            def __init__(self, k: int):
-                super().__init__()
-                self.conv = torch.nn.Conv2d(k, 1, kernel_size=1, bias=False)
-                with torch.no_grad():
-                    self.conv.weight[:] = 1.0 / k
-            def forward(self, x):
-                return self.conv(x)
         net = torch.nn.Sequential(InputAdapter(cfg.in_channels), CPH(n_classes=3)).to(device)
         net = net.to(memory_format=torch.channels_last)
-    _init_from_prev_weights(net, cfg.prev_base_dir, str(device),cfg.prev_img_modes)
     net = torch.compile(net, mode="reduce-overhead")
+    _init_from_prev_weights(net, cfg.prev_base_dir, str(device),cfg.prev_img_modes)
+
 
 
     optimizer = _build_optimizer(net, cfg)
@@ -480,9 +489,9 @@ def run_stage(cfg: StageConfig):
                 "val/dice_TC": TC_avg,
                 "val/dice_ET": ET_avg,
 
-                # Optimizer
+                # Optimizer 
                 "lr": optimizer.param_groups[0]["lr"],
-            }
+            },step=epoch
         )
 
         if avg3 > best_avg3:

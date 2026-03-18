@@ -97,29 +97,33 @@ def softmax_output_dice_class4(output, target):
         - All computations are performed over spatial dimensions (1,2,3)
     """
     eps = 1e-8
-    assert len(output.size()) == 4, f'Wrong shape for network output: {output.shape} instead of (1,240,240,155)'
-    assert len(target.size()) == 4, f'Wrong shape for segmentation target: {target.shape} instead of (1,240,240,155)'
+    # Allow batch dimension
+    if output.dim() == 5:
+        output = output.squeeze(0)
+    if target.dim() == 5:
+        target = target.squeeze(0)
 
-    # label 1 --> Non Enhancing Tumor Core / Necrotic (NET / NCR)
-    #o1 = (output[:,3]).float()
-    t1 = (target == 1).float()
-    #intersect1 = torch.sum(2 * (o1 * t1), dim=(1,2,3)) + eps
-    #union1 = torch.sum(o1, dim=(1,2,3)) + torch.sum(t1, dim=(1,2,3)) + eps
-    #net_ncr_dice = intersect1 / union1
-    
-    # label 2 --> Edema (ED)
-    #o2 = (output == 2).float()
-    t2 = (target == 2).float()
-    #intersect2 = torch.sum(2 * (o2 * t2), dim=(1,2,3)) + eps
-    #union2 = torch.sum(o2, dim=(1,2,3)) + torch.sum(t2, dim=(1,2,3)) + eps
-    #edema_dice = intersect2 / union2
-    
+    # If target is a single-channel label map (H, W, D) or (1, H, W, D),
+    # build BraTS-style binary channels: WT, TC, ET
+    if target.dim() == 4 and target.shape[0] == 1:
+        target = target.squeeze(0)
+    if target.dim() == 3:
+        t = target
+        t_whole = (t > 0)
+        t_core = (t == 1) | (t == 3)
+        t_enh = (t == 3)
+        target = torch.stack([t_whole, t_core, t_enh], dim=0)
+
+    assert len(output.size()) == 4, f'Wrong shape for network output: {output.shape} instead of (3,240,240,155)'
+    assert len(target.size()) == 4, f'Wrong shape for segmentation target: {target.shape} instead of (3,240,240,155)'
+    assert output.shape[0] == 3, f'Expected 3 output channels, got {output.shape[0]}'
+    assert target.shape[0] == 3, f'Expected 3 target channels after conversion, got {target.shape[0]}'
 
     # label 3 --> Enhancing Tumor Core (ET)
-    o3 = (output[:,2]).float()
-    t3 = (target == 3).float()
-    intersect3 = torch.sum(2 * (o3 * t3), dim=(1,2,3)) + eps
-    denominator3 = torch.sum(o3, dim=(1,2,3)) + torch.sum(t3, dim=(1,2,3)) + eps
+    o3 = (output[2]).float()
+    t3 = (target[2]).float()
+    intersect3 = torch.sum(2 * (o3 * t3), dim=(0,1,2)) + eps
+    denominator3 = torch.sum(o3, dim=(0,1,2)) + torch.sum(t3, dim=(0,1,2)) + eps
     enhancing_dice = intersect3 / denominator3
 
     # Enhancing Tumor with post processing (ETpp)
@@ -128,28 +132,28 @@ def softmax_output_dice_class4(output, target):
     else:
        o4 = o3
     t4 = t3
-    intersect4 = torch.sum(2 * (o4 * t4), dim=(1,2,3)) + eps
-    union4 = torch.sum(o4, dim=(1,2,3)) + torch.sum(t4, dim=(1,2,3)) + eps
+    intersect4 = torch.sum(2 * (o4 * t4), dim=(0,1,2)) + eps
+    union4 = torch.sum(o4, dim=(0,1,2)) + torch.sum(t4, dim=(0,1,2)) + eps
     enhancing_dice_postpro = intersect4 / union4
 
     # Whole Tumor (WT)
-    o_whole = (output[:,0]).float()
-    t_whole = t1 + t2 + t3 
-    intersect_whole = torch.sum(2 * (o_whole * t_whole), dim=(1,2,3)) + eps
-    denominator_whole = torch.sum(o_whole, dim=(1,2,3)) + torch.sum(t_whole, dim=(1,2,3)) + eps
+    o_whole = (output[0]).float()
+    t_whole = (target[0]).float()
+    intersect_whole = torch.sum(2 * (o_whole * t_whole), dim=(0,1,2)) + eps
+    denominator_whole = torch.sum(o_whole, dim=(0,1,2)) + torch.sum(t_whole, dim=(0,1,2)) + eps
     dice_whole = intersect_whole / denominator_whole
 
     # Tumor Core (TC)
-    o_core = (output[:,1]).float()
-    t_core = t1 + t3
-    intersect_core = torch.sum(2 * (o_core * t_core), dim=(1,2,3)) + eps
-    denominator_core = torch.sum(o_core, dim=(1,2,3)) + torch.sum(t_core, dim=(1,2,3)) + eps
+    o_core = (output[1]).float()
+    t_core = (target[1]).float()
+    intersect_core = torch.sum(2 * (o_core * t_core), dim=(0,1,2)) + eps
+    denominator_core = torch.sum(o_core, dim=(0,1,2)) + torch.sum(t_core, dim=(0,1,2)) + eps
     dice_core = intersect_core / denominator_core
 
     
     # Dice with the labels aggregated using the BraTS Convention
-    dice_evaluate = torch.cat((torch.unsqueeze(dice_whole, 1), torch.unsqueeze(dice_core, 1), torch.unsqueeze(enhancing_dice, 1), torch.unsqueeze(enhancing_dice_postpro, 1)), dim=1)
-
+    dice_evaluate = torch.cat((torch.unsqueeze(dice_whole.unsqueeze(0), 1), torch.unsqueeze(dice_core.unsqueeze(0), 1), torch.unsqueeze(enhancing_dice.unsqueeze(0), 1), torch.unsqueeze(enhancing_dice_postpro.unsqueeze(0), 1)), dim=1)
+    print(dice_evaluate.cpu().numpy())
     return 0, dice_evaluate.cpu().numpy()
 
 
@@ -215,14 +219,14 @@ class CPH_3d(nn.Module):
             def forward(self, x):
                 return self.conv(x)
         net = torch.nn.Sequential(InputAdapter(4), CPH(n_classes=3)).to('cuda')
-        net = torch.compile(net, mode="reduce-overhead")
+        #net = torch.compile(net, mode="reduce-overhead")
         self.net = net.to(memory_format=torch.channels_last) # type:ignore
         
         self.batch_size = batch_size
         
 
     def forward(self, input):
-        assert tuple(input.shape) == (1,4,240,240,155), f'Wrong shape for the input: {tuple(input.shape)} instead of (1,4,240,240,155)'
+        assert tuple(input.shape) == (1,4,224,224,155), f'Wrong shape for the input: {tuple(input.shape)} instead of (1,4,240,240,155)'
         input = input.squeeze(0)
         predictions = []
         for slice_idx in range(0,155,self.batch_size):
@@ -230,15 +234,17 @@ class CPH_3d(nn.Module):
             stop = min(slice_idx + self.batch_size, 155)
 
             sliced_input = input[:,:,:,start:stop]
-            sliced_input = rearrange(sliced_input, 'C,H,W,D -> D,C,H,W').contiguous(memory_format=torch.channels_last)
+            sliced_input = rearrange(sliced_input, 'C H W D -> D C H W').contiguous(memory_format=torch.channels_last)
             prediction = self.net(sliced_input)
             predictions.append(prediction)
         predictions = torch.cat(predictions,dim=0)
-        predictions = rearrange(predictions,'D,C,H,W -> C,H,W,D').unsqueeze(0).contiguous()
+        predictions = rearrange(predictions,'D C H W -> C H W D').unsqueeze(0).contiguous()
 
         return predictions
+
+    def load_checkpoint(self, state_dict):
+        self.net.load_state_dict(state_dict)
             
 
             
-
 
