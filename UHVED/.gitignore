@@ -1,0 +1,10 @@
+hist.txt
+UHEMIS.py
+output*
+preprocess.py
+preprocess_norm.py
+train_uhemis.py
+eval/
+datalist/train2.txt
+sbatch_files/
+uhved_venv/

@@ -31,7 +31,7 @@ If you want to track the training using wandb, setup the wandb library following
 To train the model run:
 ```
 python train.py\
-  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
+  --datapath <INPUT_PATH> \                    # Directory with the dataset
   --num-epochs 250 \                           # Number of epoch
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
   --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking
@@ -42,7 +42,7 @@ To resume the training, run:
 To train the model run:
 ```
 python train.py\
-  --datapath <INPUT_PATH> \                    # Directory with the preprocessed dataset
+  --datapath <INPUT_PATH> \                    # Directory with the dataset
   --num-epochs 250 \                           # Number of epoch
   --checkpoint-path <CHECKPOINT_PATH> \        # Directory for saving the checkpoints
   --wandb-project-name PROJECT NAME \          # Optional, allows for wandb tracking

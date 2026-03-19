@@ -27,7 +27,7 @@ class Base(object):
             # print(dim,shape) # 3, (240,240,155)
             self.sample(*shape)
 
-        if isinstance(img, collections.Sequence):
+        if isinstance(img, collections.abc.Sequence):
             return [self.tf(x, k) for k, x in enumerate(img)] # img:k=0,label:k=1
 
         return self.tf(img)
@@ -157,7 +157,7 @@ class RandomFlip(Base):
 class RandSelect(Base):
     def __init__(self, prob=0.5, tf=None):
         self.prob = prob
-        self.ops  = tf if isinstance(tf, collections.Sequence) else (tf, )
+        self.ops  = tf if isinstance(tf, collections.abc.Sequence) else (tf, )
         self.buff = False
 
     def sample(self, *shape):
@@ -406,7 +406,7 @@ class Normalize(Base):
 
 class Compose(Base):
     def __init__(self, ops):
-        if not isinstance(ops, collections.Sequence):
+        if not isinstance(ops, collections.abc.Sequence):
             ops = ops,
         self.ops = ops
 

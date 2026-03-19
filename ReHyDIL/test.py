@@ -27,7 +27,7 @@ masks = [[False, False, False, True], [False, True, False, False], [False, False
          [True, False, False, True], [True, True, False, False],
          [True, True, True, False], [True, False, True, True], [True, True, False, True], [False, True, True, True],
          [True, True, True, True]]
-masks = [[True,False,False,False]]
+
 ordered_names = ['t1c', 't1n', 't2f', 't2w']
 mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask in masks]
 
@@ -59,12 +59,8 @@ with torch.no_grad():
         for element in tqdm(test_loader, total=len(test_loader), desc=f'Testing: {mask_names[i]}'):
 
             image = element['image'].to(DEVICE).float()
-
-            image[:,1] = image[:,0]
-            image[:,2] = image[:,0]
-            image[:,3] = image[:,0]
             target = element['target'].to(DEVICE)
-
+            print(image.shape,flush=True)
             for idx, value in enumerate(mask):
                 if not value:
                     image[:, idx] = 0

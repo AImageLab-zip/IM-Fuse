@@ -7,15 +7,16 @@ from test_utils import AverageMeter, softmax_output_dice_class4,set_seed
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+from pathlib import Path
 
 DEVICE = torch.device('cuda')
 set_seed(42)
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--datapath', required=True, type=str)
-parser.add_argument('--savepath', required=True, type=str)
-parser.add_argument('--resume', required=True, type=str)
+parser.add_argument('--datapath', required=True, type=Path)
+parser.add_argument('--savepath', required=True, type=Path)
+parser.add_argument('--resume', required=True, type=Path)
 parser.add_argument('--num-workers', default=8, type=int)
 path = os.path.dirname(__file__)
 
@@ -77,5 +78,5 @@ with torch.no_grad():
         
     avg_totalscore = total_score.avg[0]
     with open(output_path, 'a') as file:
-            file.write(f'Avg scores {"":<29}--> WT = {mask_score_avg[0].item():.4f}, TC = {mask_score_avg[1].item():.4f}, ET = {mask_score_avg[2].item():.4f}, ETpp = {mask_score_avg[3].item():.4f}\n')
+            file.write(f'Avg scores {"":<29}--> WT = {avg_totalscore[0].item():.4f}, TC = {avg_totalscore[1].item():.4f}, ET = {avg_totalscore[2].item():.4f}, ETpp = {avg_totalscore[3].item():.4f}\n')
         

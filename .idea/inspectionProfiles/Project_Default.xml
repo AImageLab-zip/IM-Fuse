@@ -1,0 +1,31 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="anyio" />
+          <option value="cuda-bindings" />
+          <option value="cuda-pathfinder" />
+          <option value="h11" />
+          <option value="hf-xet" />
+          <option value="httpcore" />
+          <option value="httpx" />
+          <option value="huggingface_hub" />
+          <option value="nvidia-nvshmem-cu12" />
+          <option value="regex" />
+          <option value="safetensors" />
+          <option value="tokenizers" />
+          <option value="transformers" />
+          <option value="typer-slim" />
+          <option value="charset-normalizer" />
+          <option value="pillow" />
+          <option value="requests" />
+          <option value="urllib3" />
+          <option value="accelerate" />
+          <option value="psutil" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

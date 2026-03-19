@@ -2,7 +2,6 @@ import torch
 import os
 import argparse
 from pathlib import Path
-from templates.dummies.dummy import DummyDataset,DummyModel
 from test_utils import AverageMeter, softmax_output_dice_class4,set_seed
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -17,12 +16,12 @@ set_seed(42)
 H, W, T = 240, 240, 155
 patch_size = 120
 overlap = 40
-use_TTA = True
+use_TTA = False
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--datapath', required=True, type=str)
-parser.add_argument('--savepath', required=True, type=str)
-parser.add_argument('--resume', required=True, type=str)
+parser.add_argument('--datapath', required=True, type=Path)
+parser.add_argument('--savepath', required=True, type=Path)
+parser.add_argument('--resume', required=True, type=Path)
 parser.add_argument('--num-workers', default=8, type=int)
 path = os.path.dirname(__file__)
 
@@ -61,10 +60,10 @@ with torch.no_grad():
         test_loader = DataLoader(dataset=test_set,batch_size=1,shuffle=False,num_workers=args.num_workers) 
         assert test_loader.batch_size == 1, 'keep batch size 1'
         mask_specific_score = AverageMeter()
-
-        for i, (x1, x2, x3, x4, target, mask) in tqdm(enumerate(test_loader), total=len(test_loader)):  ##xi:b*1*240*240*160
+        mask = torch.from_numpy(np.array(mask)).to(DEVICE)
+        for _, (x1, x2, x3, x4, target, _) in tqdm(enumerate(test_loader), total=len(test_loader)):  ##xi:b*1*240*240*160
             x1, x2, x3, x4 = x1.to(DEVICE), x2.to(DEVICE), x3.to(DEVICE), x4.to(DEVICE)
-            mask = mask.to(DEVICE)
+
             b,c,h,w,l = x1.shape
             cur_ret = torch.zeros((b,3,h,w,l)).to(DEVICE)
             cur_count = torch.zeros((b,3,h,w,l)).to(DEVICE)
@@ -104,14 +103,17 @@ with torch.no_grad():
                             cur_output /= 8.0
                             cur_ret[:, :, row:row + patch_size, col:col + patch_size, height:height + patch_size] += cur_output
                         cur_count[:,:,row:row+patch_size,col:col+patch_size,height:height+patch_size] += 1
-                cur_ret /= cur_count ##b*3*240*240*160
-                cur_ret = torch.sigmoid(cur_ret)
-                output = cur_ret[:, :, :H, :W, :T].cpu().numpy() ##b*3*240*240*155
-                target = target[:, :, :H, :W, :T].numpy() ##b*3*240*240*155
+            cur_ret /= cur_count ##b*3*240*240*160
+            cur_ret = torch.sigmoid(cur_ret)
+
+            #TODO 
+            output = cur_ret[:, :, :H, :W, :T].squeeze(0).permute(0,3,1,2)
+
+            target = target[:, :, :H, :W, :T].squeeze(0).permute(0,3,1,2)
 
             
             _ , brats_dice = softmax_output_dice_class4(output=output,target=target)
-            # val_WT, val_TC, val_ET, val_ETpp = brats_dice
+
             mask_specific_score.update(brats_dice)
         mask_score_avg = mask_specific_score.avg
         total_score.update(mask_score_avg)
