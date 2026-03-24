@@ -1,4 +1,6 @@
 # Virtual environment directories
+.idea
+
 /ShaSpec/ShaSpec_venv/
 /m3ae/m3ae_venv/
 /mamba_venv/

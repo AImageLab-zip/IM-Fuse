@@ -14,10 +14,17 @@ authors = [
   { name = "Kevin Marchesini", email = "kevin.marchesini@unimore.it" },
   { name = "Vittorio Pipoli", email = "vittorio.pipoli@unimore.it" },
   { name = "Alessia Saporita", email = "alessia.saporita@unimore.it" },
-  { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" }
+  { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" },
+  { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "medpy>=0.5.2",
+    "numpy>=2.4.3",
+    "pyyaml>=6.0.3",
     "rich>=14.3.3",
+    "torch==2.7.1",
+    "tqdm>=4.67.3",
+    "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",
 ]
 
@@ -50,3 +57,4 @@ strict = true
 
 [project.scripts]
 brainchmark = "brainchmark.cli:app"
+brainchmark-gui = "brainchmark.gui:launch"

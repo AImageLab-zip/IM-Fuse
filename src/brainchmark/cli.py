@@ -7,12 +7,18 @@ from rich.text import Text
 import typer
 
 # Internal modules
-from brainchmark.preprocessing import (
+from brainchmark.utils.cli_utils import parse_crop_size, parse_clamp, parse_percentile
+from brainchmark.preprocessing.config import (
+    ClampMode,
     CropMode,
+    NormMode,
+    build_clamp_config,
     build_crop_config,
-    run_preprocessing,
-    DatasetType
+    build_norm_config,
 )
+from brainchmark.datasets.config import DatasetType
+from brainchmark.preprocessing.pipeline import run_preprocessing
+from brainchmark.utils.cli_overrides import load_yaml_config, merge_cli_overrides
 
 app = typer.Typer(help="BrainchMark CLI")
 console = Console()
@@ -39,8 +45,17 @@ def hello() -> None:
 
 @app.command()
 def preprocess(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Path to a YAML config file.",
+    ),
     input_dir: Path = typer.Option(
-        ...,
+        None,
         "--input-dir",
         file_okay=False,
         dir_okay=True,
@@ -55,7 +70,7 @@ def preprocess(
         dir_okay=True,
         help="Directory where preprocessed data will be written.",
     ),
-    dataset_type: str = typer.Option(
+    dataset_type: DatasetType = typer.Option(
         ...,
         "--dataset-type",
         help="Input dataset type. Choose either brats18 or brats23",
@@ -63,35 +78,129 @@ def preprocess(
     crop_mode: CropMode = typer.Option(
         CropMode.NONE,
         "--crop-mode",
-        help="Cropping strategy: none, center, or non-empty.",
+        help= "Cropping strategy. One of: " + ", ".join(mode.value for mode in CropMode) + ".",
     ),
-    crop_size: tuple[int, int, int] | None = typer.Option(
+    crop_size: list[int] | None | None = typer.Option(
         None,
         "--crop-size",
         help="Center crop size as three integers: X Y Z.",
+        callback=lambda value: parse_crop_size(value)
     ),
-    crop_min_size: tuple[int, int, int] | None = typer.Option(
+    crop_min_size: list[int] | None | None = typer.Option(
         None,
         "--crop-min-size",
         help="Minimum non-empty crop size as three integers: X Y Z.",
+        callback=lambda value: parse_crop_size(value)
     ),
+    clamp_mode: ClampMode = typer.Option(
+        ClampMode.NONE,
+        "--clamp-mode",
+        help="Clamp mode. One of: " + ", ".join(mode.value for mode in ClampMode) + ".",
+    ),
+
+    clamp_percentile: list[float] | None = typer.Option(
+        None,
+        "--clamp-percentile",
+        help="Clamp percentiles as one or two floats: HIGH or LOW HIGH. If one value is given, LOW is assumed to be 0.",
+        callback=lambda value: parse_percentile(value),
+    ),
+
+    clamp_min: list[int] | None = typer.Option(
+        None,
+        "--clamp-min",
+        help="Minimum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
+        callback=lambda value: parse_clamp(value),
+    ),
+
+    clamp_max: list[int] | None = typer.Option(
+        None,
+        "--clamp-max",
+        help="Maximum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
+        callback=lambda value: parse_clamp(value),
+    ),
+
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Automatically answer yes to prompts",
+    ),
+    norm_mode: NormMode = typer.Option(
+        NormMode.NONE,
+        "--norm-mode",
+        help="Normalization mode. One of: " + ", ".join(mode.value for mode in NormMode) + ".",
+    ),
+    norm_min_max_range: tuple[float, float] | None = typer.Option(
+        None,
+        "--norm-min-max-range",
+        help="Target min-max normalization range as two floats: MIN MAX.",
+    ),
+
+    norm_mean: tuple[float, float, float, float] | None = typer.Option(
+        None,
+        "--norm-mean",
+        help="Normalization means as four floats, one for each modality.",
+    ),
+
+    norm_std: tuple[float, float, float, float] | None = typer.Option(
+        None,
+        "--norm-std",
+        help="Normalization standard deviations as four floats, one for each modality.",
+    ),
+
 ) -> None:
-    """Run dataset preprocessing."""
-    crop_config = build_crop_config(
+    #TODO COMPLETE THE OVERRIDES, REMEMBER TO CHANGE ALL THE CALLS UNDERNEATH
+    yaml_config = load_yaml_config(config)
+    merged = merge_cli_overrides(
+        yaml_config,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        dataset_type=dataset_type,
         crop_mode=crop_mode,
         crop_size=crop_size,
         crop_min_size=crop_min_size,
+        clamp_mode=clamp_mode,
+        clamp_percentile=clamp_percentile,
+        clamp_min=clamp_min,
+        clamp_max=clamp_max,
+        norm_mode=norm_mode,
+        norm_min_max_range=norm_min_max_range,
+        norm_mean=norm_mean,
+        norm_std=norm_std,
+        yes=yes if yes else yaml_config.get("yes"),
     )
-
+    """Run dataset preprocessing."""
+    crop_config = build_crop_config(
+        crop_mode=CropMode(merged.get("crop_mode", CropMode.NONE)),
+        crop_size=merged.get("crop_size"),
+        crop_min_size=merged.get("crop_min_size"),
+    )
+    clamp_config = build_clamp_config(
+        clamp_mode=ClampMode(merged.get("clamp_mode", ClampMode.NONE)),
+        clamp_percentile=merged.get("clamp_percentile"),
+        clamp_min=merged.get("clamp_min"),
+        clamp_max=merged.get("clamp_max"),
+    )
+    norm_config = build_norm_config(
+        norm_mode=NormMode(merged.get("norm_mode", NormMode.NONE)),
+        norm_min_max_range=merged.get("norm_min_max_range"),
+        norm_mean=merged.get("norm_mean"),
+        norm_std=merged.get("norm_std"),
+    )
     typer.echo(
         "Preprocessing data "
         f"from {input_dir} to {output_dir} "
         f"assuming a '{dataset_type}' configuration "
-        f"with crop mode '{crop_config.mode}'."
+        f"with crop mode '{crop_config.fn.__name__}', "
+        f"clamp mode '{clamp_config.fn.__name__}', "
+        f"normalization mode '{norm_config.fn.__name__}'."
     )
     run_preprocessing(
         input_dir=input_dir,
         output_dir=output_dir,
         dataset_type=dataset_type,
         crop_config=crop_config,
+        clamp_config=clamp_config,
+        norm_config = norm_config,
+        yes=yes,
     )
