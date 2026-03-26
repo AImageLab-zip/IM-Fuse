@@ -34,7 +34,7 @@ def subject_zscore(images:np.ndarray,config:NormConfig)-> np.ndarray:
 
 
 
-def min_max_range(images: np.ndarray, config: NormConfig) -> np.ndarray:
+def min_max(images: np.ndarray, config: NormConfig) -> np.ndarray:
     check_size(images)
 
     target_min = config.min_max_range[0]
@@ -68,5 +68,5 @@ def dataset_zscore(images: np.ndarray, config: NormConfig) -> np.ndarray:
     return out_image
 
 def none(images: np.ndarray, config: NormConfig) -> np.ndarray:
-
+    print("⚠️ Be careful: you are running preprocessing without any normalization.")
     return images

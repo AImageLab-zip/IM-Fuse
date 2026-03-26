@@ -1,87 +1,186 @@
-# IM-Fuse: A Mamba-based Fusion Block for Brain Tumor Segmentation with Incomplete Modalities
-[[Paper]](https://federicobolelli.it/pub_files/2025miccai_imfuse.pdf) [[Bib]](https://federicobolelli.it/pub_files/2025miccai_imfuse.html)
+# BrainchMark
 
-<figure>
- <img style="float: left" src="figs/IM-Fuse-overview.png" alt="Side view" width="100%">
- <figcaption><em>Overview of our framework IM-Fuse (Incomplete Modality Fusion), (b) represents our Mamba Fusion Block (MFB) where learnable tokens are concatenated, and (c) depicts its interleaved version (Interleaved-MFB or I-MFB) where modality tokens and learnable parameters are alternately arranged.</em></figcaption>
-</figure>
+BrainchMark is a research framework for brain tumor segmentation under missing-modality conditions.
 
-This repository contains the material from the paper "IM-Fuse: A Mamba-based Fusion Block for Brain tumor Segmentation with Incomplete Modalities".It includes all materials necessary to reproduce our framework, as well as the competitors evaluated on the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset for the glioma segmentation task.
+The repository is organized as a benchmark-oriented workspace with multiple model directories and a Python package under `src/brainchmark` that currently provides:
 
-## Introduction
-Brain tumor segmentation is a crucial task in medical imaging that involves the integrated modeling of four distinct imaging modalities to accurately delineate tumor regions. Unfortunately, in real-life scenarios, the complete acquisition of all four modalities is frequently hindered by factors such as scanning costs, time constraints, and patient condition. To address this challenge, numerous deep learning models have been developed to perform brain tumor segmentation under conditions of missing imaging modalities. 
+- a preprocessing pipeline for BraTS-style datasets
+- a Typer-based CLI
+- a small GUI built on top of the CLI
+- configuration-driven execution through YAML files
 
-Despite these advancements, the majority of existing models have been evaluated primarily on the 2018 edition of the BraTS dataset, which comprises only $285$ volumes. In this study, we reproduce and conduct an extensive analysis of the most relevant models using the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset, which includes $1,250$ volumes. This larger and more diverse dataset enables a more robust and comprehensive comparison of model performance.
+## Current Scope
 
-Moreover, we introduce and evaluate the use of Mamba as an alternative fusion mechanism for brain tumor segmentation in scenarios involving missing modalities. Experimental results indicate that transformer-based architectures achieve superior performance on the [BraTS 2023](https://www.synapse.org/Synapse:syn51156910/wiki/) dataset, outperforming purely convolutional models that previously demonstrated state-of-the-art results on BraTS2018. Notably, the proposed Mamba-based architecture exhibits promising performance compared to state-of-the-art models, competing and even outperforming transformers.
+The `brainchmark` package is the operational core of the project.
 
-## Citing our work
-If you use this code or paper in your research, you must cite:
-[[Bib]](https://federicobolelli.it/pub_files/2025miccai_imfuse.html)
+Implemented or partially implemented components include:
 
-## Dataset
-Before running this project, you need to download the data from BraTS 2023 Challenge, specifically the subset for [Glioma Segmentation](https://www.synapse.org/Synapse:syn51156910/wiki/622351) task.
+- dataset-aware preprocessing for `brats18` and `brats23`
+- cropping, clamping, and normalization configuration/validation
+- command-line entrypoints:
+  - `brainchmark`
+  - `brainchmark-gui`
+- a training command scaffold intended for config-driven training setup
 
-## IM-Fuse
-### How to run
-Clone this repository, create a python env for the project and activate it. Then install all the dependencies with pip.
-```
-git clone git@github.com:AImageLab-zip/IM-Fuse.git
-cd IMFuse
-python -m venv imfuse_venv
-source imfuse_venv/bin/activate
-pip install -r requirements.txt
-```
-### Preprocess data
-Run `python preprocess.py` with the following arguments:
-```
-python preprocess.py \
-  --input-path <INPUT_PATH>				       # Directory containing the unprocessed BRATS2023 files
-  --output-path	<OUTPUT_PATH>				   # Destination directory for the preprocessed dataset								
+The repository also contains several model folders at the project root. Those are part of the broader experimentation workspace, but they are not documented here as a unified public API.
+
+## Installation
+
+BrainchMark targets Python `>=3.13`.
+
+Recommended setup with `uv`:
+
+```bash
+uv sync
+source .venv/bin/activate
 ```
 
-### Training
-Run the training script `train_poly.py` with the following arguments:
-```
-python train_poly.py \
-  --datapath <PATH>/BRATS2023_Training_npy \   # Directory containing BRATS2023 .npy files
-  --num_epochs 1000 \                          # Total number of training epochs
-  --dataname BRATS2023 \                       # Dataset identifier
-  --savepath <OUTPUT_PATH> \                   # Directory for saving checkpoints 
-  --mamba_skip \                               # Using Mamba in the skip connections
-  --interleaved_tokenization                   # Enable interleaved tokenization
+That installs the project and the locked dependency set from `uv.lock`.
+
+If you want the development tools too:
+
+```bash
+uv sync --extra dev
+source .venv/bin/activate
 ```
 
-### Test
-Run the test script `test.py` with the following arguments:
-```
-python test.py \
-  --datapath <PATH>/BRATS2023_Training_npy \   # Directory containing BRATS2023 .npy files
-  --dataname BRATS2023 \                       # Dataset identifier
-  --savepath <OUTPUT_PATH> \                   # Directory for saving results
-  --resume <RESUME_PATH> \                     # Path to the checkpoints 
-  --mamba_skip \                               # Using Mamba in the skip connections
-  --batch_size 2 \                             # Batch size
-  --interleaved_tokenization                   # Enable interleaved tokenization
+If you prefer a manual fallback:
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
 ```
 
-## How to Run Competitor Models
-We provide implementations for evaluating the primary competitor models on the BraTS 2023 dataset. Please consult the respective README files for detailed instructions on installation, usage, and reproduction of results.
-- [Missing as Masking](MaM/README.md)
-- [M3AE](m3ae/README.md)
-- [ShaSpec](ShaSpec/README.md)
-- [SFusion](SFusion/README.md)
-- [mmFormer](mmFormer/README.md)
-- [Robust-MSeg](RobustSeg/README.md)
-- [U-HVED](UHVED/README.md)
+## CLI
 
-## References
-* [Missing as Masking: Arbitrary Cross-modal Feature Reconstruction for Incomplete Multimodal Brain Tumor Segmentation](https://papers.miccai.org/miccai-2024/paper/0067_paper.pdf)
-* [M3AE: Multimodal Representation Learning for Brain Tumor Segmentation with Missing Modalities](https://github.com/ccarliu/m3ae)
-* [Multi-modal Learning with Missing Modality via Shared-Specific Feature Modelling](https://github.com/billhhh/ShaSpec)
-* [SFusion: Self-attention based N-to-One Multimodal Fusion Block](https://github.com/scut-cszcl/SFusion)
-* [mmformer: Multimodal medical transformer for incomplete multimodal learning of brain tumor segmentation](https://github.com/YaoZhang93/mmFormer)
-* [Hetero-Modal Variational Encoder-Decoder for Joint Modality Completion and Segmentation](https://github.com/ReubenDo/U-HVED)
-* [Robust Multimodal Brain Tumor Segmentation via Feature Disentanglement and Gated Fusion](https://github.com/cchen-cc/Robust-Mseg)
+After installation, the main entrypoint is:
 
+```bash
+brainchmark --help
+```
 
+Currently exposed commands include:
+
+- `hello`
+- `preprocess`
+- `train`
+
+The most mature command is `preprocess`.
+
+## Preprocessing Quick Start
+
+This is the part of the framework that currently has the clearest story and the least drama.
+
+Run preprocessing from a YAML file:
+
+```bash
+brainchmark preprocess --config src/brainchmark/data/configs/example.yaml
+```
+
+Run preprocessing from CLI flags:
+
+```bash
+brainchmark preprocess \
+  --input-dir /path/to/brats23 \
+  --output-dir /path/to/preprocessed \
+  --dataset-type brats23 \
+  --crop-mode center \
+  --crop-size 128 128 128 \
+  --clamp-mode subject \
+  --clamp-percentile 0.5 99.5 \
+  --norm-mode min_max \
+  --norm-min-max-range 0.0 1.0
+```
+
+Preprocessing writes one compressed `.npz` file per case containing:
+
+- `images`
+- `seg`
+
+For the full option reference and valid parameter combinations, see [docs/preprocessing.md](/home/ocarpentiero/PycharmProjects/IM-Fuse/docs/preprocessing.md).
+
+## Configuration
+
+BrainchMark supports YAML-driven execution for reproducible runs.
+
+Typical pattern:
+
+- put the boring stable stuff in YAML
+- override the spicy bits from the CLI when needed
+
+Example:
+
+```bash
+brainchmark preprocess \
+  --config src/brainchmark/data/configs/example.yaml \
+  --output-dir /tmp/brainchmark-run
+```
+
+Current example configs live in [src/brainchmark/data/configs](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/data/configs).
+
+## GUI
+
+The GUI is generated from the Typer command signatures and can be launched with:
+
+```bash
+brainchmark-gui
+```
+
+It is useful for:
+
+- browsing command options
+- filling preprocessing parameters interactively
+- running CLI-backed workflows without typing long commands
+
+If you do not feel like remembering twenty flags before coffee, this is the button-heavy path.
+
+## Project Layout
+
+Key package files:
+
+- [src/brainchmark/cli.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/cli.py): CLI entrypoints
+- [src/brainchmark/gui.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/gui.py): Tk/ttkbootstrap GUI
+- [src/brainchmark/preprocessing/config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/preprocessing/config.py): preprocessing validation and config builders
+- [src/brainchmark/preprocessing/pipeline.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/preprocessing/pipeline.py): preprocessing execution pipeline
+- [src/brainchmark/datasets/config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/datasets/config.py): dataset enums
+- [docs/preprocessing.md](/home/ocarpentiero/PycharmProjects/IM-Fuse/docs/preprocessing.md): preprocessing documentation
+
+## Development
+
+Basic checks:
+
+```bash
+python -m py_compile src/brainchmark/cli.py
+python -m py_compile src/brainchmark/gui.py
+python -m py_compile src/brainchmark/preprocessing/config.py
+```
+
+Lint and type-check:
+
+```bash
+ruff check .
+mypy src
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+## Status
+
+This repository is under active development.
+
+Right now:
+
+- preprocessing is the most solid workflow
+- the GUI is useful for exploring and launching commands
+- the training command is still more scaffold than battle-tested pipeline
+
+So the current vibe is:
+
+- good for structured preprocessing
+- promising for benchmark orchestration
+- not done pretending to be finished

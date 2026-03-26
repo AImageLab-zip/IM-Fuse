@@ -1,11 +1,11 @@
 # Example preprocess config
-input_dir: /path/to/brats23
-output_dir: /path/to/preprocessed
+input_dir: /storage/datasets/BraTS-GLI-2023-train/
+output_dir: /storage/datasets/test-brainchmark/
 dataset_type: brats23
 
 # Cropping
 crop_mode: center
-crop_size: [128, 128, 128]
+crop_size: [128,128,128]
 crop_min_size: null
 
 # Clamping
