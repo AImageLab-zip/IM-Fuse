@@ -28,6 +28,11 @@ The repository also contains several model folders at the project root. Those ar
 
 BrainchMark targets Python `>=3.13`.
 
+## System Requirements
+
+- CUDA Toolkit with `nvcc` available in `PATH`
+- compatible NVIDIA driver
+
 Recommended setup with `uv`:
 
 ```bash
@@ -75,7 +80,7 @@ This is the part of the framework that currently has the clearest story and the 
 Run preprocessing from a YAML file:
 
 ```bash
-brainchmark preprocess --config src/brainchmark/data/configs/example.yaml
+brainchmark preprocess --config src/brainchmark/data/configs/preprocessing.yaml
 ```
 
 Run preprocessing from CLI flags:
@@ -113,7 +118,7 @@ Example:
 
 ```bash
 brainchmark preprocess \
-  --config src/brainchmark/data/configs/example.yaml \
+  --config src/brainchmark/data/configs/preprocessing.yaml \
   --output-dir /tmp/brainchmark-run
 ```
 

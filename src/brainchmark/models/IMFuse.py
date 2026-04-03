@@ -3,24 +3,236 @@ import torch.nn.functional as F
 from torch.nn.init import xavier_uniform_, constant_
 import torch
 import math
-from layers import general_conv3d_prenorm, fusion_prenorm
 from mamba_ssm import Mamba
-from torch.cuda.amp import autocast
-from utils.initialization import InitWeights_He
-
-basic_dims = 8  # 5 for SS
-transformer_basic_dims = 512
-mlp_dim = 4096
-num_heads = 8
-depth = 1
-num_modals = 4
-patch_size = 8
-input_patch_size = 128
+from torch.amp import autocast
 
 
-class MambaTrans(nn.Module):
+_basic_dims = 8  # 5 for SS
+_transformer_basic_dims = 512
+_mlp_dim = 4096
+_num_heads = 8
+_depth = 1
+_num_modals = 4
+_patch_size = 8
+_input_patch_size = 128
+
+import torch
+import torch.nn as nn
+
+def normalization(planes, norm='bn'):
+    if norm == 'bn':
+        m = nn.BatchNorm3d(planes)
+    elif norm == 'gn':
+        m = nn.GroupNorm(4, planes)
+    elif norm == 'in':
+        m = nn.InstanceNorm3d(planes)
+    else:
+        raise ValueError('normalization type {} is not supported'.format(norm))
+    return m
+
+class _GeneralConv1d(nn.Module):
+    def __init__(self, in_ch, out_ch, k_size=3, stride=1, padding=1, pad_type='zeros', norm='in', is_training=True, act_type='lrelu', relufactor=0.2):
+        super(_GeneralConv1d, self).__init__()
+        self.conv = nn.Conv1d(in_channels=in_ch, out_channels=out_ch, kernel_size=k_size, stride=stride, padding=padding, padding_mode=pad_type, bias=True)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+class _GeneralConv3dPrenorm(nn.Module):
+    def __init__(self, in_ch, out_ch, k_size=3, stride=1, padding=1, pad_type='zeros', norm='in', is_training=True, act_type='lrelu', relufactor=0.2):
+        super(_GeneralConv3dPrenorm, self).__init__()
+        self.conv = nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=k_size, stride=stride, padding=padding, padding_mode=pad_type, bias=True)
+
+        self.norm = normalization(out_ch, norm=norm)
+        if act_type == 'relu':
+            self.activation = nn.ReLU(inplace=True)
+        elif act_type == 'lrelu':
+            self.activation = nn.LeakyReLU(negative_slope=relufactor, inplace=True)
+
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.activation(x)
+        x = self.conv(x)
+        return x
+
+class _GeneralConv3d(nn.Module):
+    def __init__(self, in_ch, out_ch, k_size=3, stride=1, padding=1, pad_type='zeros', norm='in', is_training=True, act_type='lrelu', relufactor=0.2):
+        super(_GeneralConv3d, self).__init__()
+        self.conv = nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=k_size, stride=stride, padding=padding, padding_mode=pad_type, bias=True)
+
+        self.norm = normalization(out_ch, norm=norm)
+        if act_type == 'relu':
+            self.activation = nn.ReLU(inplace=True)
+        elif act_type == 'lrelu':
+            self.activation = nn.LeakyReLU(negative_slope=relufactor, inplace=True)
+
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.norm(x)
+        x = self.activation(x)
+        return x
+
+class _PrmGeneratorLaststage(nn.Module):
+    def __init__(self, in_channel=64, norm='in', num_cls=4):
+        super(_PrmGeneratorLaststage, self).__init__()
+
+        self.embedding_layer = nn.Sequential(
+                            _GeneralConv3d(in_channel * 4, int(in_channel // 4), k_size=1, padding=0, stride=1),
+                            _GeneralConv3d(int(in_channel // 4), int(in_channel // 4), k_size=3, padding=1, stride=1),
+                            _GeneralConv3d(int(in_channel // 4), in_channel, k_size=1, padding=0, stride=1))
+
+        self.prm_layer = nn.Sequential(
+                            _GeneralConv3d(in_channel, 16, k_size=1, stride=1, padding=0),
+                            nn.Conv3d(16, num_cls, kernel_size=1, padding=0, stride=1, bias=True),
+                            nn.Softmax(dim=1))
+
+    def forward(self, x):
+        seg = self.prm_layer(self.embedding_layer(x))
+        return seg
+
+class _PrmGenerator(nn.Module):
+    def __init__(self, in_channel=64, norm='in', num_cls=4):
+        super(_PrmGenerator, self).__init__()
+
+        self.embedding_layer = nn.Sequential(
+                            _GeneralConv3d(in_channel * 4, int(in_channel // 4), k_size=1, padding=0, stride=1),
+                            _GeneralConv3d(int(in_channel // 4), int(in_channel // 4), k_size=3, padding=1, stride=1),
+                            _GeneralConv3d(int(in_channel // 4), in_channel, k_size=1, padding=0, stride=1))
+
+
+        self.prm_layer = nn.Sequential(
+                            _GeneralConv3d(in_channel * 2, 16, k_size=1, stride=1, padding=0),
+                            nn.Conv3d(16, num_cls, kernel_size=1, padding=0, stride=1, bias=True),
+                            nn.Softmax(dim=1))
+
+    def forward(self, x1, x2):
+        seg = self.prm_layer(torch.cat((x1, self.embedding_layer(x2)), dim=1))
+        return seg
+
+####modal fusion in each region
+class _ModalFusion(nn.Module):
+    def __init__(self, in_channel=64):
+        super(_ModalFusion, self).__init__()
+        self.weight_layer = nn.Sequential(
+                            nn.Conv3d(4*in_channel+1, 128, 1, padding=0, bias=True),
+                            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                            nn.Conv3d(128, 4, 1, padding=0, bias=True))
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x, prm, region_name):
+        B, K, C, H, W, Z = x.size()
+
+        prm_avg = torch.mean(prm, dim=(3,4,5), keepdim=False) + 1e-7
+        feat_avg = torch.mean(x, dim=(3,4,5), keepdim=False) / prm_avg
+
+        feat_avg = feat_avg.view(B, K*C, 1, 1, 1)
+        feat_avg = torch.cat((feat_avg, prm_avg[:, 0, 0, ...].view(B, 1, 1, 1, 1)), dim=1)
+        weight = torch.reshape(self.weight_layer(feat_avg), (B, K, 1))
+        weight = self.sigmoid(weight).view(B, K, 1, 1, 1, 1)
+
+        ###we find directly using weighted sum still achieve competing performance
+        region_feat = torch.sum(x * weight, dim=1)
+        return region_feat
+
+###fuse region feature
+class _RegionFusionLaststage(nn.Module):
+    def __init__(self, in_channel=64, num_cls=4):
+        super(_RegionFusionLaststage, self).__init__()
+        self.fusion_layer = nn.Sequential(
+                        _GeneralConv3d(in_channel * num_cls, in_channel, k_size=1, padding=0, stride=1),
+                        _GeneralConv3d(in_channel, in_channel, k_size=3, padding=1, stride=1),
+                        _GeneralConv3d(in_channel, in_channel, k_size=1, padding=0, stride=1))
+
+    def forward(self, x):
+        B, _, _, H, W, Z = x.size()
+        x = torch.reshape(x, (B, -1, H, W, Z))
+        return self.fusion_layer(x)
+
+class _RegionFusion(nn.Module):
+    def __init__(self, in_channel=64, num_cls=4):
+        super(_RegionFusion, self).__init__()
+        self.fusion_layer = nn.Sequential(
+                        _GeneralConv3d(in_channel * num_cls, in_channel, k_size=1, padding=0, stride=1),
+                        _GeneralConv3d(in_channel, in_channel, k_size=3, padding=1, stride=1),
+                        # general_conv3d(in_channel, in_channel, k_size=1, padding=0, stride=1)
+                        )
+
+    def forward(self, x):
+        return self.fusion_layer(x)
+
+class _FusionPrenorm(nn.Module):
+    def __init__(self, in_channel=64, num_cls=4):
+        super(_FusionPrenorm, self).__init__()
+        self.fusion_layer = nn.Sequential(
+                        _GeneralConv3dPrenorm(in_channel * num_cls, in_channel, k_size=1, padding=0, stride=1),
+                        _GeneralConv3dPrenorm(in_channel, in_channel, k_size=3, padding=1, stride=1),
+                        _GeneralConv3dPrenorm(in_channel, in_channel, k_size=1, padding=0, stride=1))
+
+    def forward(self, x):
+        return self.fusion_layer(x)
+
+class _RegionAwareModalFusion(nn.Module):
+    def __init__(self, in_channel=64, norm='in', num_cls=4):
+        super(_RegionAwareModalFusion, self).__init__()
+        self.num_cls = num_cls
+
+        self.modal_fusion = nn.ModuleList([_ModalFusion(in_channel=in_channel) for i in range(num_cls)])
+        self.region_fusion = _RegionFusion(in_channel=in_channel, num_cls=num_cls)
+        self.short_cut = nn.Sequential(
+                        _GeneralConv3d(in_channel * 4, in_channel, k_size=1, padding=0, stride=1),
+                        _GeneralConv3d(in_channel, in_channel, k_size=3, padding=1, stride=1),
+                        _GeneralConv3d(in_channel, in_channel // 2, k_size=1, padding=0, stride=1))
+
+        self.clsname_list = ['BG', 'NCR/NET', 'ED', 'ET'] ##BRATS2020 and BRATS2018
+        self.clsname_list = ['BG', 'NCR', 'ED', 'NET', 'ET'] ##BRATS2015
+
+    def forward(self, x, prm):
+        B, _, H, W, Z = x.size()
+        y = x.view(B, 4, -1, H, W, Z)
+        B, K, C, H, W, Z = y.size()
+
+        prm = torch.unsqueeze(prm, 2).repeat(1, 1, C, 1, 1, 1)
+        ###divide modal features into different regions
+        flair = y[:, 0:1, ...] * prm
+        t1ce = y[:, 1:2, ...] * prm
+        t1 = y[:, 2:3, ...] * prm
+        t2 = y[:, 3:4, ...] * prm
+
+        modal_feat = torch.stack((flair, t1ce, t1, t2), dim=1)
+        region_feat = [modal_feat[:, :, i, :, :] for i in range(self.num_cls)]
+
+        ###modal fusion in each region
+        region_fused_feat = []
+        for i in range(self.num_cls):
+            region_fused_feat.append(self.modal_fusion[i](region_feat[i], prm[:, i:i+1, ...], self.clsname_list[i]))
+        region_fused_feat = torch.stack(region_fused_feat, dim=1)
+        '''
+        region_fused_feat = torch.stack((self.modal_fusion[0](region_feat[0], prm[:, 0:1, ...], 'BG'),
+                                         self.modal_fusion[1](region_feat[1], prm[:, 1:2, ...], 'NCR/NET'),
+                                         self.modal_fusion[2](region_feat[2], prm[:, 2:3, ...], 'ED'),
+                                         self.modal_fusion[3](region_feat[3], prm[:, 3:4, ...], 'ET')), dim=1)
+        '''
+
+        ###gain final feat with a short cut
+        final_feat = torch.cat((self.region_fusion(region_fused_feat), self.short_cut(y.view(B, -1, H, W, Z))), dim=1)
+        return final_feat
+
+
+class _InitWeights_He(object):
+    def __init__(self, neg_slope=1e-2):
+        self.neg_slope = neg_slope
+
+    def __call__(self, module):
+        if isinstance(module, nn.Conv3d) or isinstance(module, nn.Conv2d) or isinstance(module, nn.ConvTranspose2d) or isinstance(module, nn.ConvTranspose3d):
+            module.weight = nn.init.kaiming_normal_(module.weight, a=self.neg_slope)
+            if module.bias is not None:
+                module.bias = nn.init.constant_(module.bias, 0)
+class _MambaTrans(nn.Module):
     def __init__(self, channels):
-        super(MambaTrans, self).__init__()
+        super(_MambaTrans, self).__init__()
         self.mamba = Mamba(
             d_model=channels,
             d_state=min(channels, 256),
@@ -37,14 +249,14 @@ class MambaTrans(nn.Module):
         return x
 
 
-class MambaLayer(nn.Module):
+class _MambaLayer(nn.Module):
     def __init__(self, dim, d_state=16, d_conv=4, expand=2):
         super().__init__()
         self.dim = dim
         # self.norm = nn.LayerNorm(dim)
-        self.mamba = MambaTrans(dim)
+        self.mamba = _MambaTrans(dim)
 
-    @autocast(enabled=False)
+    @autocast(enabled=False,device_type='cuda')
     def forward(self, x):
         if x.dtype == torch.float16:
             x = x.type(torch.float32)
@@ -54,13 +266,13 @@ class MambaLayer(nn.Module):
         return x_mamba
 
 
-class MambaFusionLayer(nn.Module):
+class _MambaFusionLayer(nn.Module):
     def __init__(self, dim, num_tokens_fused_representation=None):
         super().__init__()
         self.dim = dim
         self.num_tokens_fused_representation = num_tokens_fused_representation
         self.fused_tokens = nn.Parameter(torch.randn(1, self.num_tokens_fused_representation, dim))
-        self.mamba_layer = MambaLayer(dim)
+        self.mamba_layer = _MambaLayer(dim)
 
     def forward(self, x):  # (B, 2048, 512)
         B = x.size(0)
@@ -69,15 +281,15 @@ class MambaFusionLayer(nn.Module):
         x_mamba = self.mamba_layer(x_fused)
         x_mamba = x_mamba[:, -self.num_tokens_fused_representation:, :]  # (B, 512, 512)
         return x_mamba
+ 
 
-
-class MambaFusionCatLayer(nn.Module):
+class _MambaFusionCatLayer(nn.Module):
     def __init__(self, dim, num_tokens_fused_representation=None):
         super().__init__()
         self.dim = dim
         self.num_tokens_fused_representation = num_tokens_fused_representation
         self.fused_tokens = nn.Parameter(torch.randn(1, self.num_tokens_fused_representation, dim))
-        self.mamba_layer = MambaLayer(dim)
+        self.mamba_layer = _MambaLayer(dim)
 
     def forward(self, x):  # [(B, 512, 512)]*4
         B = x[0].size(0)
@@ -89,9 +301,9 @@ class MambaFusionCatLayer(nn.Module):
         return x  # (B, 512, 512)
 
 
-class Tokenize(nn.Module):
+class _Tokenize(nn.Module):
     def __init__(self, dims, num_modals=4):
-        super(Tokenize, self).__init__()
+        super(_Tokenize, self).__init__()
         self.dims = dims
         self.num_modals = num_modals
 
@@ -107,9 +319,9 @@ class Tokenize(nn.Module):
         return multimodal_token_x
 
 
-class TokenizeSep(nn.Module):
+class _TokenizeSep(nn.Module):
     def __init__(self, dims, num_modals=4):
-        super(TokenizeSep, self).__init__()
+        super(_TokenizeSep, self).__init__()
         self.dims = dims
         self.num_modals = num_modals
 
@@ -122,30 +334,30 @@ class TokenizeSep(nn.Module):
             t2_intra_x.permute(0, 2, 3, 4, 1).contiguous().view(x.size(0), -1, self.dims)
 
 
-class Encoder(nn.Module):
+class _Encoder(nn.Module):
     def __init__(self):
-        super(Encoder, self).__init__()
+        super(_Encoder, self).__init__()
 
-        self.e1_c1 = nn.Conv3d(in_channels=1, out_channels=basic_dims, kernel_size=3, stride=1, padding=1,
+        self.e1_c1 = nn.Conv3d(in_channels=1, out_channels=_basic_dims, kernel_size=3, stride=1, padding=1,
                                padding_mode='reflect', bias=True)
-        self.e1_c2 = general_conv3d_prenorm(basic_dims, basic_dims, pad_type='reflect')
-        self.e1_c3 = general_conv3d_prenorm(basic_dims, basic_dims, pad_type='reflect')
+        self.e1_c2 = _GeneralConv3dPrenorm(_basic_dims, _basic_dims, pad_type='reflect')
+        self.e1_c3 = _GeneralConv3dPrenorm(_basic_dims, _basic_dims, pad_type='reflect')
 
-        self.e2_c1 = general_conv3d_prenorm(basic_dims, basic_dims * 2, stride=2, pad_type='reflect')
-        self.e2_c2 = general_conv3d_prenorm(basic_dims * 2, basic_dims * 2, pad_type='reflect')
-        self.e2_c3 = general_conv3d_prenorm(basic_dims * 2, basic_dims * 2, pad_type='reflect')
+        self.e2_c1 = _GeneralConv3dPrenorm(_basic_dims, _basic_dims * 2, stride=2, pad_type='reflect')
+        self.e2_c2 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims * 2, pad_type='reflect')
+        self.e2_c3 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims * 2, pad_type='reflect')
 
-        self.e3_c1 = general_conv3d_prenorm(basic_dims * 2, basic_dims * 4, stride=2, pad_type='reflect')
-        self.e3_c2 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 4, pad_type='reflect')
-        self.e3_c3 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 4, pad_type='reflect')
+        self.e3_c1 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims * 4, stride=2, pad_type='reflect')
+        self.e3_c2 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 4, pad_type='reflect')
+        self.e3_c3 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 4, pad_type='reflect')
 
-        self.e4_c1 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 8, stride=2, pad_type='reflect')
-        self.e4_c2 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 8, pad_type='reflect')
-        self.e4_c3 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 8, pad_type='reflect')
+        self.e4_c1 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 8, stride=2, pad_type='reflect')
+        self.e4_c2 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 8, pad_type='reflect')
+        self.e4_c3 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 8, pad_type='reflect')
 
-        self.e5_c1 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 16, stride=2, pad_type='reflect')
-        self.e5_c2 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 16, pad_type='reflect')
-        self.e5_c3 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 16, pad_type='reflect')
+        self.e5_c1 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 16, stride=2, pad_type='reflect')
+        self.e5_c2 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 16, pad_type='reflect')
+        self.e5_c3 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 16, pad_type='reflect')
 
     def forward(self, x):
         x1 = self.e1_c1(x)
@@ -166,31 +378,31 @@ class Encoder(nn.Module):
         return x1, x2, x3, x4, x5
 
 
-class Decoder_sep(nn.Module):
+class _Decoder_sep(nn.Module):
     def __init__(self, num_cls=4):
-        super(Decoder_sep, self).__init__()
+        super(_Decoder_sep, self).__init__()
 
         self.d4 = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-        self.d4_c1 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 8, pad_type='reflect')
-        self.d4_c2 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 8, pad_type='reflect')
-        self.d4_out = general_conv3d_prenorm(basic_dims * 8, basic_dims * 8, k_size=1, padding=0, pad_type='reflect')
+        self.d4_c1 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 8, pad_type='reflect')
+        self.d4_c2 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 8, pad_type='reflect')
+        self.d4_out = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 8, k_size=1, padding=0, pad_type='reflect')
 
         self.d3 = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-        self.d3_c1 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 4, pad_type='reflect')
-        self.d3_c2 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 4, pad_type='reflect')
-        self.d3_out = general_conv3d_prenorm(basic_dims * 4, basic_dims * 4, k_size=1, padding=0, pad_type='reflect')
+        self.d3_c1 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 4, pad_type='reflect')
+        self.d3_c2 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 4, pad_type='reflect')
+        self.d3_out = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 4, k_size=1, padding=0, pad_type='reflect')
 
         self.d2 = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-        self.d2_c1 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 2, pad_type='reflect')
-        self.d2_c2 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 2, pad_type='reflect')
-        self.d2_out = general_conv3d_prenorm(basic_dims * 2, basic_dims * 2, k_size=1, padding=0, pad_type='reflect')
+        self.d2_c1 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 2, pad_type='reflect')
+        self.d2_c2 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 2, pad_type='reflect')
+        self.d2_out = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims * 2, k_size=1, padding=0, pad_type='reflect')
 
         self.d1 = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-        self.d1_c1 = general_conv3d_prenorm(basic_dims * 2, basic_dims, pad_type='reflect')
-        self.d1_c2 = general_conv3d_prenorm(basic_dims * 2, basic_dims, pad_type='reflect')
-        self.d1_out = general_conv3d_prenorm(basic_dims, basic_dims, k_size=1, padding=0, pad_type='reflect')
+        self.d1_c1 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims, pad_type='reflect')
+        self.d1_c2 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims, pad_type='reflect')
+        self.d1_out = _GeneralConv3dPrenorm(_basic_dims, _basic_dims, k_size=1, padding=0, pad_type='reflect')
 
-        self.seg_layer = nn.Conv3d(in_channels=basic_dims, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_layer = nn.Conv3d(in_channels=_basic_dims, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                    bias=True)
         self.softmax = nn.Softmax(dim=1)
 
@@ -218,35 +430,35 @@ class Decoder_sep(nn.Module):
         return pred
 
 
-class Decoder_fuse(nn.Module):
+class _Decoder_fuse(nn.Module):
     def __init__(self, num_cls=4, mamba_skip=False):
-        super(Decoder_fuse, self).__init__()
+        super(_Decoder_fuse, self).__init__()
 
-        self.d4_c1 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 8, pad_type='reflect')
-        self.d4_c2 = general_conv3d_prenorm(basic_dims * 16, basic_dims * 8, pad_type='reflect')
-        self.d4_out = general_conv3d_prenorm(basic_dims * 8, basic_dims * 8, k_size=1, padding=0, pad_type='reflect')
+        self.d4_c1 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 8, pad_type='reflect')
+        self.d4_c2 = _GeneralConv3dPrenorm(_basic_dims * 16, _basic_dims * 8, pad_type='reflect')
+        self.d4_out = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 8, k_size=1, padding=0, pad_type='reflect')
 
-        self.d3_c1 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 4, pad_type='reflect')
-        self.d3_c2 = general_conv3d_prenorm(basic_dims * 8, basic_dims * 4, pad_type='reflect')
-        self.d3_out = general_conv3d_prenorm(basic_dims * 4, basic_dims * 4, k_size=1, padding=0, pad_type='reflect')
+        self.d3_c1 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 4, pad_type='reflect')
+        self.d3_c2 = _GeneralConv3dPrenorm(_basic_dims * 8, _basic_dims * 4, pad_type='reflect')
+        self.d3_out = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 4, k_size=1, padding=0, pad_type='reflect')
 
-        self.d2_c1 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 2, pad_type='reflect')
-        self.d2_c2 = general_conv3d_prenorm(basic_dims * 4, basic_dims * 2, pad_type='reflect')
-        self.d2_out = general_conv3d_prenorm(basic_dims * 2, basic_dims * 2, k_size=1, padding=0, pad_type='reflect')
+        self.d2_c1 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 2, pad_type='reflect')
+        self.d2_c2 = _GeneralConv3dPrenorm(_basic_dims * 4, _basic_dims * 2, pad_type='reflect')
+        self.d2_out = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims * 2, k_size=1, padding=0, pad_type='reflect')
 
-        self.d1_c1 = general_conv3d_prenorm(basic_dims * 2, basic_dims, pad_type='reflect')
-        self.d1_c2 = general_conv3d_prenorm(basic_dims * 2, basic_dims, pad_type='reflect')
-        self.d1_out = general_conv3d_prenorm(basic_dims, basic_dims, k_size=1, padding=0, pad_type='reflect')
+        self.d1_c1 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims, pad_type='reflect')
+        self.d1_c2 = _GeneralConv3dPrenorm(_basic_dims * 2, _basic_dims, pad_type='reflect')
+        self.d1_out = _GeneralConv3dPrenorm(_basic_dims, _basic_dims, k_size=1, padding=0, pad_type='reflect')
 
-        self.seg_d4 = nn.Conv3d(in_channels=basic_dims * 16, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_d4 = nn.Conv3d(in_channels=_basic_dims * 16, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                 bias=True)
-        self.seg_d3 = nn.Conv3d(in_channels=basic_dims * 8, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_d3 = nn.Conv3d(in_channels=_basic_dims * 8, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                 bias=True)
-        self.seg_d2 = nn.Conv3d(in_channels=basic_dims * 4, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_d2 = nn.Conv3d(in_channels=_basic_dims * 4, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                 bias=True)
-        self.seg_d1 = nn.Conv3d(in_channels=basic_dims * 2, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_d1 = nn.Conv3d(in_channels=_basic_dims * 2, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                 bias=True)
-        self.seg_layer = nn.Conv3d(in_channels=basic_dims, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
+        self.seg_layer = nn.Conv3d(in_channels=_basic_dims, out_channels=num_cls, kernel_size=1, stride=1, padding=0,
                                    bias=True)
         self.softmax = nn.Softmax(dim=1)
 
@@ -255,11 +467,11 @@ class Decoder_fuse(nn.Module):
         self.up8 = nn.Upsample(scale_factor=8, mode='trilinear', align_corners=True)
         self.up16 = nn.Upsample(scale_factor=16, mode='trilinear', align_corners=True)
 
-        self.RFM5 = fusion_prenorm(in_channel=basic_dims * 16, num_cls=num_cls)
-        self.RFM4 = fusion_prenorm(in_channel=basic_dims * 8, num_cls=1 if mamba_skip else num_cls)
-        self.RFM3 = fusion_prenorm(in_channel=basic_dims * 4, num_cls=1 if mamba_skip else num_cls)
-        self.RFM2 = fusion_prenorm(in_channel=basic_dims * 2, num_cls=1 if mamba_skip else num_cls)
-        self.RFM1 = fusion_prenorm(in_channel=basic_dims * 1, num_cls=1 if mamba_skip else num_cls)
+        self.RFM5 = _FusionPrenorm(in_channel=_basic_dims * 16, num_cls=num_cls)
+        self.RFM4 = _FusionPrenorm(in_channel=_basic_dims * 8, num_cls=1 if mamba_skip else num_cls)
+        self.RFM3 = _FusionPrenorm(in_channel=_basic_dims * 4, num_cls=1 if mamba_skip else num_cls)
+        self.RFM2 = _FusionPrenorm(in_channel=_basic_dims * 2, num_cls=1 if mamba_skip else num_cls)
+        self.RFM1 = _FusionPrenorm(in_channel=_basic_dims * 1, num_cls=1 if mamba_skip else num_cls)
         self.mamba_skip = mamba_skip
 
     def forward(self, x1, x2, x3, x4, x5):
@@ -295,7 +507,7 @@ class Decoder_fuse(nn.Module):
         return pred, (self.up2(pred1), self.up4(pred2), self.up8(pred3), self.up16(pred4))
 
 
-class SelfAttention(nn.Module):
+class _SelfAttention(nn.Module):
     def __init__(
             self, dim, heads=8, qkv_bias=False, qk_scale=None, dropout_rate=0.0
     ):
@@ -332,7 +544,7 @@ class SelfAttention(nn.Module):
         return x
 
 
-class Residual(nn.Module):
+class _Residual(nn.Module):
     def __init__(self, fn):
         super().__init__()
         self.fn = fn
@@ -341,7 +553,7 @@ class Residual(nn.Module):
         return self.fn(x) + x
 
 
-class PreNorm(nn.Module):
+class _PreNorm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
@@ -351,7 +563,7 @@ class PreNorm(nn.Module):
         return self.fn(self.norm(x))
 
 
-class PreNormDrop(nn.Module):
+class _PreNormDrop(nn.Module):
     def __init__(self, dim, dropout_rate, fn):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
@@ -362,7 +574,7 @@ class PreNormDrop(nn.Module):
         return self.dropout(self.fn(self.norm(x)))
 
 
-class GELU(nn.Module):
+class _GELU(nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -370,12 +582,12 @@ class GELU(nn.Module):
         return F.gelu(x)
 
 
-class FeedForward(nn.Module):
+class _FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout_rate):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
-            GELU(),
+            _GELU(),
             nn.Dropout(p=dropout_rate),
             nn.Linear(hidden_dim, dim),
             nn.Dropout(p=dropout_rate),
@@ -385,25 +597,25 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-class Transformer(nn.Module):
+class _Transformer(nn.Module):
     def __init__(self, embedding_dim, depth, heads, mlp_dim, dropout_rate=0.1, n_levels=1, n_points=4):
-        super(Transformer, self).__init__()
+        super(_Transformer, self).__init__()
         self.cross_attention_list = []
         self.cross_ffn_list = []
         self.depth = depth
         for j in range(self.depth):
             self.cross_attention_list.append(
-                Residual(
-                    PreNormDrop(
+                _Residual(
+                    _PreNormDrop(
                         embedding_dim,
                         dropout_rate,
-                        SelfAttention(embedding_dim, heads=heads, dropout_rate=dropout_rate),
+                        _SelfAttention(embedding_dim, heads=heads, dropout_rate=dropout_rate),
                     )
                 )
             )
             self.cross_ffn_list.append(
-                Residual(
-                    PreNorm(embedding_dim, FeedForward(embedding_dim, mlp_dim, dropout_rate))
+                _Residual(
+                    _PreNorm(embedding_dim, _FeedForward(embedding_dim, mlp_dim, dropout_rate))
                 )
             )
 
@@ -418,9 +630,9 @@ class Transformer(nn.Module):
         return x
 
 
-class MaskModal(nn.Module):
+class _MaskModal(nn.Module):
     def __init__(self):
-        super(MaskModal, self).__init__()
+        super(_MaskModal, self).__init__()
 
     def forward(self, x, mask):
         B, K, C, H, W, Z = x.size()
@@ -435,63 +647,63 @@ class IMFuse(nn.Module):
         super(IMFuse, self).__init__()
         self.interleaved_tokenization = interleaved_tokenization
 
-        self.flair_encoder = Encoder()
-        self.t1ce_encoder = Encoder()
-        self.t1_encoder = Encoder()
-        self.t2_encoder = Encoder()
+        self.flair_encoder = _Encoder()
+        self.t1ce_encoder = _Encoder()
+        self.t1_encoder = _Encoder()
+        self.t2_encoder = _Encoder()
 
         if self.interleaved_tokenization:
-            TokenizerClass = TokenizeSep
-            MambaFusionLayerClass = MambaFusionCatLayer
+            TokenizerClass = _TokenizeSep
+            MambaFusionLayerClass = _MambaFusionCatLayer
         else:
-            TokenizerClass = Tokenize
-            MambaFusionLayerClass = MambaFusionLayer
+            TokenizerClass = _Tokenize
+            MambaFusionLayerClass = _MambaFusionLayer
 
         ########### IntraFormer
-        self.flair_encode_conv = nn.Conv3d(basic_dims * 16, transformer_basic_dims, kernel_size=1, stride=1, padding=0)
-        self.t1ce_encode_conv = nn.Conv3d(basic_dims * 16, transformer_basic_dims, kernel_size=1, stride=1, padding=0)
-        self.t1_encode_conv = nn.Conv3d(basic_dims * 16, transformer_basic_dims, kernel_size=1, stride=1, padding=0)
-        self.t2_encode_conv = nn.Conv3d(basic_dims * 16, transformer_basic_dims, kernel_size=1, stride=1, padding=0)
+        self.flair_encode_conv = nn.Conv3d(_basic_dims * 16, _transformer_basic_dims, kernel_size=1, stride=1, padding=0)
+        self.t1ce_encode_conv = nn.Conv3d(_basic_dims * 16, _transformer_basic_dims, kernel_size=1, stride=1, padding=0)
+        self.t1_encode_conv = nn.Conv3d(_basic_dims * 16, _transformer_basic_dims, kernel_size=1, stride=1, padding=0)
+        self.t2_encode_conv = nn.Conv3d(_basic_dims * 16, _transformer_basic_dims, kernel_size=1, stride=1, padding=0)
 
-        self.flair_decode_conv = nn.Conv3d(transformer_basic_dims, basic_dims * 16, kernel_size=1, stride=1, padding=0)
-        self.t1ce_decode_conv = nn.Conv3d(transformer_basic_dims, basic_dims * 16, kernel_size=1, stride=1, padding=0)
-        self.t1_decode_conv = nn.Conv3d(transformer_basic_dims, basic_dims * 16, kernel_size=1, stride=1, padding=0)
-        self.t2_decode_conv = nn.Conv3d(transformer_basic_dims, basic_dims * 16, kernel_size=1, stride=1, padding=0)
+        self.flair_decode_conv = nn.Conv3d(_transformer_basic_dims, _basic_dims * 16, kernel_size=1, stride=1, padding=0)
+        self.t1ce_decode_conv = nn.Conv3d(_transformer_basic_dims, _basic_dims * 16, kernel_size=1, stride=1, padding=0)
+        self.t1_decode_conv = nn.Conv3d(_transformer_basic_dims, _basic_dims * 16, kernel_size=1, stride=1, padding=0)
+        self.t2_decode_conv = nn.Conv3d(_transformer_basic_dims, _basic_dims * 16, kernel_size=1, stride=1, padding=0)
 
-        self.flair_pos = nn.Parameter(torch.zeros(1, patch_size ** 3, transformer_basic_dims))
-        self.t1ce_pos = nn.Parameter(torch.zeros(1, patch_size ** 3, transformer_basic_dims))
-        self.t1_pos = nn.Parameter(torch.zeros(1, patch_size ** 3, transformer_basic_dims))
-        self.t2_pos = nn.Parameter(torch.zeros(1, patch_size ** 3, transformer_basic_dims))
-        self.fused_pos = nn.Parameter(torch.zeros(1, patch_size ** 3, transformer_basic_dims))
+        self.flair_pos = nn.Parameter(torch.zeros(1, _patch_size ** 3, _transformer_basic_dims))
+        self.t1ce_pos = nn.Parameter(torch.zeros(1, _patch_size ** 3, _transformer_basic_dims))
+        self.t1_pos = nn.Parameter(torch.zeros(1, _patch_size ** 3, _transformer_basic_dims))
+        self.t2_pos = nn.Parameter(torch.zeros(1, _patch_size ** 3, _transformer_basic_dims))
+        self.fused_pos = nn.Parameter(torch.zeros(1, _patch_size ** 3, _transformer_basic_dims))
 
-        self.flair_transformer = Transformer(embedding_dim=transformer_basic_dims, depth=depth, heads=num_heads,
-                                             mlp_dim=mlp_dim)
-        self.t1ce_transformer = Transformer(embedding_dim=transformer_basic_dims, depth=depth, heads=num_heads,
-                                            mlp_dim=mlp_dim)
-        self.t1_transformer = Transformer(embedding_dim=transformer_basic_dims, depth=depth, heads=num_heads,
-                                          mlp_dim=mlp_dim)
-        self.t2_transformer = Transformer(embedding_dim=transformer_basic_dims, depth=depth, heads=num_heads,
-                                          mlp_dim=mlp_dim)
+        self.flair_transformer = _Transformer(embedding_dim=_transformer_basic_dims, depth=_depth, heads=_num_heads,
+                                              mlp_dim=_mlp_dim)
+        self.t1ce_transformer = _Transformer(embedding_dim=_transformer_basic_dims, depth=_depth, heads=_num_heads,
+                                             mlp_dim=_mlp_dim)
+        self.t1_transformer = _Transformer(embedding_dim=_transformer_basic_dims, depth=_depth, heads=_num_heads,
+                                           mlp_dim=_mlp_dim)
+        self.t2_transformer = _Transformer(embedding_dim=_transformer_basic_dims, depth=_depth, heads=_num_heads,
+                                           mlp_dim=_mlp_dim)
         ########### IntraFormer
 
         ########### InterFormer
-        self.mamba_fusion_layer = MambaFusionLayer(dim=transformer_basic_dims,
-                                                   num_tokens_fused_representation=patch_size ** 3)
-        self.multimodal_transformer = Transformer(embedding_dim=transformer_basic_dims, depth=depth, heads=num_heads,
-                                                  mlp_dim=mlp_dim, n_levels=num_modals)
-        self.multimodal_decode_conv = nn.Conv3d(transformer_basic_dims, basic_dims * 16 * num_modals, kernel_size=1,
+        self.mamba_fusion_layer = _MambaFusionLayer(dim=_transformer_basic_dims,
+                                                    num_tokens_fused_representation=_patch_size ** 3)
+        self.multimodal_transformer = _Transformer(embedding_dim=_transformer_basic_dims, depth=_depth, heads=_num_heads,
+                                                   mlp_dim=_mlp_dim, n_levels=_num_modals)
+        self.multimodal_decode_conv = nn.Conv3d(_transformer_basic_dims, _basic_dims * 16 * _num_modals, kernel_size=1,
                                                 padding=0)
         ########### InterFormer
 
-        self.masker = MaskModal()
+        self.masker = _MaskModal()
 
         ######## Skip Connections
         self.tokenize = nn.ModuleList([
-            TokenizerClass(dims=8, num_modals=num_modals),  # (B, 8, 128, 128, 128)->(B, 128**3, 8)
-            TokenizerClass(dims=16, num_modals=num_modals),  # (B, 16, 64, 64, 64)->(B, 64**3, 16)
-            TokenizerClass(dims=32, num_modals=num_modals),  # (B, 32, 32, 32, 32)->(B, 32**3, 32)
-            TokenizerClass(dims=64, num_modals=num_modals),  # (B, 64, 16, 16, 16)->(B, 16**3, 64)
-            TokenizerClass(dims=512, num_modals=num_modals),  # (B, 512, 8, 8, 8)->(B, 8**3, 512)
+            TokenizerClass(dims=8, num_modals=_num_modals),  # (B, 8, 128, 128, 128)->(B, 128**3, 8)
+            TokenizerClass(dims=16, num_modals=_num_modals),  # (B, 16, 64, 64, 64)->(B, 64**3, 16)
+            TokenizerClass(dims=32, num_modals=_num_modals),  # (B, 32, 32, 32, 32)->(B, 32**3, 32)
+            TokenizerClass(dims=64, num_modals=_num_modals),  # (B, 64, 16, 16, 16)->(B, 16**3, 64)
+            TokenizerClass(dims=512, num_modals=_num_modals),  # (B, 512, 8, 8, 8)->(B, 8**3, 512)
         ])
         self.mamba_fusion_layers = nn.ModuleList([
             MambaFusionLayerClass(dim=8, num_tokens_fused_representation=128 ** 3),  # (B, 128**3, 8)->(B, 128**3, 8)
@@ -502,13 +714,13 @@ class IMFuse(nn.Module):
         ])
         ########
 
-        self.decoder_fuse = Decoder_fuse(num_cls=num_cls, mamba_skip=mamba_skip)
-        self.decoder_sep = Decoder_sep(num_cls=num_cls)
+        self.decoder_fuse = _Decoder_fuse(num_cls=num_cls, mamba_skip=mamba_skip)
+        self.decoder_sep = _Decoder_sep(num_cls=num_cls)
 
         self.is_training = False
         self.mamba_skip = mamba_skip
 
-        self.apply(InitWeights_He(1e-2))
+        self.apply(_InitWeights_He(1e-2))
 
     def forward(self, x, mask):
         # extract feature from different layers
@@ -519,28 +731,28 @@ class IMFuse(nn.Module):
 
         ########### IntraFormer
         flair_token_x5 = self.flair_encode_conv(flair_x5).permute(0, 2, 3, 4, 1).contiguous().view(x.size(0), -1,
-                                                                                                   transformer_basic_dims)  # (B, 512, 512)
+                                                                                                   _transformer_basic_dims)  # (B, 512, 512)
         t1ce_token_x5 = self.t1ce_encode_conv(t1ce_x5).permute(0, 2, 3, 4, 1).contiguous().view(x.size(0), -1,
-                                                                                                transformer_basic_dims)
+                                                                                                _transformer_basic_dims)
         t1_token_x5 = self.t1_encode_conv(t1_x5).permute(0, 2, 3, 4, 1).contiguous().view(x.size(0), -1,
-                                                                                          transformer_basic_dims)
+                                                                                          _transformer_basic_dims)
         t2_token_x5 = self.t2_encode_conv(t2_x5).permute(0, 2, 3, 4, 1).contiguous().view(x.size(0), -1,
-                                                                                          transformer_basic_dims)
+                                                                                          _transformer_basic_dims)
 
         flair_intra_token_x5 = self.flair_transformer(flair_token_x5, self.flair_pos)
         t1ce_intra_token_x5 = self.t1ce_transformer(t1ce_token_x5, self.t1ce_pos)
         t1_intra_token_x5 = self.t1_transformer(t1_token_x5, self.t1_pos)
         t2_intra_token_x5 = self.t2_transformer(t2_token_x5, self.t2_pos)
 
-        flair_intra_x5 = flair_intra_token_x5.view(x.size(0), patch_size, patch_size, patch_size,
-                                                   transformer_basic_dims).permute(0, 4, 1, 2,
-                                                                                   3).contiguous()  # (B, 512, 8, 8, 8)
-        t1ce_intra_x5 = t1ce_intra_token_x5.view(x.size(0), patch_size, patch_size, patch_size,
-                                                 transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
-        t1_intra_x5 = t1_intra_token_x5.view(x.size(0), patch_size, patch_size, patch_size,
-                                             transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
-        t2_intra_x5 = t2_intra_token_x5.view(x.size(0), patch_size, patch_size, patch_size,
-                                             transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
+        flair_intra_x5 = flair_intra_token_x5.view(x.size(0), _patch_size, _patch_size, _patch_size,
+                                                   _transformer_basic_dims).permute(0, 4, 1, 2,
+                                                                                    3).contiguous()  # (B, 512, 8, 8, 8)
+        t1ce_intra_x5 = t1ce_intra_token_x5.view(x.size(0), _patch_size, _patch_size, _patch_size,
+                                                 _transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
+        t1_intra_x5 = t1_intra_token_x5.view(x.size(0), _patch_size, _patch_size, _patch_size,
+                                             _transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
+        t2_intra_x5 = t2_intra_token_x5.view(x.size(0), _patch_size, _patch_size, _patch_size,
+                                             _transformer_basic_dims).permute(0, 4, 1, 2, 3).contiguous()
 
         if self.is_training:
             flair_pred = self.decoder_sep(flair_x1, flair_x2, flair_x3, flair_x4, flair_x5)  # (B, C, 128, 128, 128)
@@ -561,24 +773,24 @@ class IMFuse(nn.Module):
         if self.mamba_skip:
             x1 = self.tokenize[-5](x1)  # (B, 128**3, 8)*4
             x1 = self.mamba_fusion_layers[-5](x1)  # (B, 128**3, 8)
-            x1 = x1.view(x.size(0), input_patch_size, input_patch_size, input_patch_size, basic_dims).permute(0, 4, 1,
-                                                                                                              2,
-                                                                                                              3).contiguous()  # (B, 8, 128, 128, 128)
+            x1 = x1.view(x.size(0), _input_patch_size, _input_patch_size, _input_patch_size, _basic_dims).permute(0, 4, 1,
+                                                                                                                  2,
+                                                                                                                  3).contiguous()  # (B, 8, 128, 128, 128)
 
             x2 = self.tokenize[-4](x2)  # (B, 64**3, 16)*4
             x2 = self.mamba_fusion_layers[-4](x2)  # (B, 64**3, 16)
-            x2 = x2.view(x.size(0), input_patch_size // 2, input_patch_size // 2, input_patch_size // 2,
-                         basic_dims * 2).permute(0, 4, 1, 2, 3).contiguous()  # (B, 16, 64, 64, 64)
+            x2 = x2.view(x.size(0), _input_patch_size // 2, _input_patch_size // 2, _input_patch_size // 2,
+                         _basic_dims * 2).permute(0, 4, 1, 2, 3).contiguous()  # (B, 16, 64, 64, 64)
 
             x3 = self.tokenize[-3](x3)  # (B, 32**3, 32)*4
             x3 = self.mamba_fusion_layers[-3](x3)  # (B, 32**3, 32)
-            x3 = x3.view(x.size(0), input_patch_size // 4, input_patch_size // 4, input_patch_size // 4,
-                         basic_dims * 4).permute(0, 4, 1, 2, 3).contiguous()  # (B, 32, 32, 32, 32)
+            x3 = x3.view(x.size(0), _input_patch_size // 4, _input_patch_size // 4, _input_patch_size // 4,
+                         _basic_dims * 4).permute(0, 4, 1, 2, 3).contiguous()  # (B, 32, 32, 32, 32)
 
             x4 = self.tokenize[-2](x4)  # (B, 16**3, 64)*4
             x4 = self.mamba_fusion_layers[-2](x4)  # (B, 16**3, 64)
-            x4 = x4.view(x.size(0), input_patch_size // 8, input_patch_size // 8, input_patch_size // 8,
-                         basic_dims * 8).permute(0, 4, 1, 2, 3).contiguous()  # (B, 64, 16, 16, 16)
+            x4 = x4.view(x.size(0), _input_patch_size // 8, _input_patch_size // 8, _input_patch_size // 8,
+                         _basic_dims * 8).permute(0, 4, 1, 2, 3).contiguous()  # (B, 64, 16, 16, 16)
         #######
 
         ########### MambaFusion + InterFormer
@@ -587,9 +799,9 @@ class IMFuse(nn.Module):
         multimodal_pos = self.fused_pos.repeat(x.size(0), 1, 1)
         multimodal_inter_token_x5 = self.multimodal_transformer(fused_multimodal, multimodal_pos)
         multimodal_inter_x5 = self.multimodal_decode_conv(
-            multimodal_inter_token_x5.view(multimodal_inter_token_x5.size(0), patch_size, patch_size, patch_size,
-                                           transformer_basic_dims).permute(0, 4, 1, 2,
-                                                                           3).contiguous())  # (B, 512, 8, 8, 8) -> (B, 512, 8, 8, 8)
+            multimodal_inter_token_x5.view(multimodal_inter_token_x5.size(0), _patch_size, _patch_size, _patch_size,
+                                           _transformer_basic_dims).permute(0, 4, 1, 2,
+                                                                            3).contiguous())  # (B, 512, 8, 8, 8) -> (B, 512, 8, 8, 8)
         x5_inter = multimodal_inter_x5
 
         fuse_pred, preds = self.decoder_fuse(x1, x2, x3, x4, x5_inter)

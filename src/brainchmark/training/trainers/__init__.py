@@ -1,3 +1,4 @@
-from brainchmark.training.trainers.imfuse import IMFuseTrainer
+from brainchmark.training.trainers.base_trainer import BaseTrainer
 
-__all__ = ["IMFuseTrainer"]
+
+__all__ = ["BaseTrainer"]

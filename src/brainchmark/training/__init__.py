@@ -1,17 +1,18 @@
+from brainchmark.models.config import ModelConfig, ModelKind, build_model_config
 from brainchmark.training.config import (
-    IMFuseTrainingConfig,
     OptimizerKind,
     SchedulerKind,
     TrainerKind,
     WandbConfig,
 )
-from brainchmark.training.trainers import IMFuseTrainer
+
 
 __all__ = [
-    "IMFuseTrainer",
-    "IMFuseTrainingConfig",
+    "ModelConfig",
+    "ModelKind",
     "OptimizerKind",
     "SchedulerKind",
     "TrainerKind",
     "WandbConfig",
+    "build_model_config",
 ]

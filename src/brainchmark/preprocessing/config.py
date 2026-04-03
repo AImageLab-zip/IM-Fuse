@@ -8,17 +8,29 @@ import typer
 from brainchmark.utils.cli_overrides import CONFIG_NONE
 
 
-def _load_mode_fn(module_path: str, mode: StrEnum, param_hint: str) -> Callable:
+def _mode_value(mode: StrEnum | str) -> str:
+    return mode.value if isinstance(mode, StrEnum) else str(mode).strip()
+
+
+def _load_mode_fn(module_path: str, mode: StrEnum | str, param_hint: str) -> Callable:
     module = importlib.import_module(module_path)
-    fn = getattr(module, mode.value, None)
+    mode_name = _mode_value(mode)
+    fn = getattr(module, mode_name, None)
 
     if fn is None or not callable(fn):
         raise typer.BadParameter(
-            f"Function {mode.value!r} was not found in module {module.__name__!r}.",
+            f"Function {mode_name!r} was not found in module {module.__name__!r}.",
             param_hint=param_hint,
         )
 
     return fn
+
+
+def _known_mode(enum_cls: type[StrEnum], mode: StrEnum | str) -> StrEnum | None:
+    try:
+        return enum_cls(_mode_value(mode))
+    except ValueError:
+        return None
 
 
 def _require_tuple(
@@ -61,15 +73,16 @@ class CropConfig:
 
 
 def build_crop_config(
-    crop_mode: CropMode,
+    crop_mode: CropMode | str,
     crop_size: tuple[int, int, int] | None,
     crop_min_size: tuple[int, int, int] | None,
 ) -> CropConfig:
     crop_size = _require_tuple(crop_size, 3, int, "--crop-size")
     crop_min_size = _require_tuple(crop_min_size, 3, int, "--crop-min-size")
     fn = _load_mode_fn("brainchmark.preprocessing.cropping", crop_mode, "--crop-mode")
+    known_mode = _known_mode(CropMode, crop_mode)
 
-    if crop_mode is CropMode.NONE:
+    if known_mode is CropMode.NONE:
         if crop_size is not None:
             raise typer.BadParameter(
                 "must be omitted when --crop-mode is 'none'",
@@ -80,7 +93,7 @@ def build_crop_config(
                 "must be omitted when --crop-mode is 'none'",
                 param_hint="--crop-min-size",
             )
-    elif crop_mode is CropMode.CENTER:
+    elif known_mode is CropMode.CENTER:
         if crop_size is None:
             raise typer.BadParameter(
                 "is required when --crop-mode is 'center'",
@@ -91,7 +104,7 @@ def build_crop_config(
                 "must be omitted when --crop-mode is 'center'",
                 param_hint="--crop-min-size",
             )
-    elif crop_mode is CropMode.NON_EMPTY:
+    elif known_mode is CropMode.NON_EMPTY:
         if crop_min_size is None:
             raise typer.BadParameter(
                 "is required when --crop-mode is 'non_empty'",
@@ -121,7 +134,7 @@ class ClampMode(StrEnum):
 
 
 def build_clamp_config(
-    clamp_mode: ClampMode,
+    clamp_mode: ClampMode | str,
     clamp_percentile: tuple[float, float] | None,
     clamp_min: tuple[float, float, float, float] | None,
     clamp_max: tuple[float, float, float, float] | None,
@@ -130,8 +143,9 @@ def build_clamp_config(
     clamp_min = _require_tuple(clamp_min, 4, float, "--clamp-min")
     clamp_max = _require_tuple(clamp_max, 4, float, "--clamp-max")
     fn = _load_mode_fn("brainchmark.preprocessing.clamping", clamp_mode, "--clamp-mode")
+    known_mode = _known_mode(ClampMode, clamp_mode)
 
-    if clamp_mode is ClampMode.NONE:
+    if known_mode is ClampMode.NONE:
         if clamp_percentile is not None:
             raise typer.BadParameter(
                 "must be omitted when --clamp-mode is 'none'",
@@ -147,7 +161,7 @@ def build_clamp_config(
                 "must be omitted when --clamp-mode is 'none'",
                 param_hint="--clamp-max",
             )
-    elif clamp_mode is ClampMode.SUBJECT:
+    elif known_mode is ClampMode.SUBJECT:
         if clamp_percentile is None:
             raise typer.BadParameter(
                 "is required when --clamp-mode is 'subject'",
@@ -179,7 +193,7 @@ def build_clamp_config(
                 "HIGH must be between 0 and 100.",
                 param_hint="--clamp-percentile",
             )
-    elif clamp_mode is ClampMode.DATASET:
+    elif known_mode is ClampMode.DATASET:
         if clamp_percentile is not None:
             raise typer.BadParameter(
                 "must be omitted when --clamp-mode is 'dataset'",
@@ -221,7 +235,7 @@ class NormConfig:
 
 
 def build_norm_config(
-    norm_mode: NormMode,
+    norm_mode: NormMode | str,
     norm_min_max_range: tuple[float, float] | None,
     norm_mean: tuple[float, float, float, float] | None,
     norm_std: tuple[float, float, float, float] | None,
@@ -230,8 +244,9 @@ def build_norm_config(
     norm_mean = _require_tuple(norm_mean, 4, float, "--norm-mean")
     norm_std = _require_tuple(norm_std, 4, float, "--norm-std")
     fn = _load_mode_fn("brainchmark.preprocessing.normalization", norm_mode, "--norm-mode")
+    known_mode = _known_mode(NormMode, norm_mode)
 
-    if norm_mode is NormMode.NONE:
+    if known_mode is NormMode.NONE:
         if norm_min_max_range is not None:
             raise typer.BadParameter(
                 "must be omitted when --norm-mode is 'none'",
@@ -247,7 +262,7 @@ def build_norm_config(
                 "must be omitted when --norm-mode is 'none'",
                 param_hint="--norm-std",
             )
-    elif norm_mode is NormMode.MIN_MAX:
+    elif known_mode is NormMode.MIN_MAX:
         if norm_min_max_range is None:
             raise typer.BadParameter(
                 "is required when --norm-mode is 'min_max'",
@@ -268,7 +283,7 @@ def build_norm_config(
                 "MIN must be strictly smaller than MAX.",
                 param_hint="--norm-min-max-range",
             )
-    elif norm_mode is NormMode.SUBJECT_ZSCORE:
+    elif known_mode is NormMode.SUBJECT_ZSCORE:
         if norm_min_max_range is not None:
             raise typer.BadParameter(
                 "must be omitted when --norm-mode is 'subject_zscore'",
@@ -284,7 +299,7 @@ def build_norm_config(
                 "must be omitted when --norm-mode is 'subject_zscore'",
                 param_hint="--norm-std",
             )
-    elif norm_mode is NormMode.DATASET_ZSCORE:
+    elif known_mode is NormMode.DATASET_ZSCORE:
         if norm_min_max_range is not None:
             raise typer.BadParameter(
                 "must be omitted when --norm-mode is 'dataset_zscore'",

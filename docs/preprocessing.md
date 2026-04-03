@@ -20,7 +20,7 @@ If the same parameter is provided in both places, the CLI value should override 
 Run from YAML:
 
 ```bash
-brainchmark preprocess --config src/brainchmark/data/configs/example.yaml
+brainchmark preprocess --config src/brainchmark/data/configs/preprocessing.yaml
 ```
 
 Run from CLI:

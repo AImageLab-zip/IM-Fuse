@@ -27,7 +27,7 @@ class IMFuseTrainer:
         self.val_loader: Any | None = None
         self.test_loader: Any | None = None
         self.wandb_run: Any | None = None
-        self.best_val_dice = float("-inf")
+
 
     def fit(self) -> None:
         self._configure_logging()

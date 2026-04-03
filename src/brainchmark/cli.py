@@ -1,37 +1,64 @@
 # Standard library
+from enum import StrEnum
 from pathlib import Path
+import sys
+import time
 
 # External dependencies
-from rich.console import Console
-from rich.text import Text
 import typer
 
 # Internal modules
-from brainchmark.utils.cli_utils import require_preprocess_values
-from brainchmark.preprocessing.config import (
-    ClampMode,
-    CropMode,
-    NormMode,
-    build_clamp_config,
-    build_crop_config,
-    build_norm_config,
-)
-from brainchmark.datasets.config import DatasetType
-from brainchmark.preprocessing.pipeline import run_preprocessing
-from brainchmark.training import IMFuseTrainer
-from brainchmark.training.config import (
-    DEFAULT_TEST_TRANSFORMS,
-    DEFAULT_TRAIN_TRANSFORMS,
-    IMFuseTrainingConfig,
-    OptimizerKind,
-    SchedulerKind,
-    TrainerKind,
-    WandbConfig,
-)
 from brainchmark.utils.cli_overrides import load_yaml_config, merge_cli_overrides
+from brainchmark.utils.cli_utils import require_preprocess_values
 
-app = typer.Typer(help="BrainchMark CLI")
-console = Console()
+class DatasetType(StrEnum):
+    BRATS18 = "brats18"
+    BRATS23 = "brats23"
+
+
+class CropMode(StrEnum):
+    NONE = "none"
+    CENTER = "center"
+    NON_EMPTY = "non_empty"
+
+
+class ClampMode(StrEnum):
+    NONE = "none"
+    SUBJECT = "subject"
+    DATASET = "dataset"
+
+
+class NormMode(StrEnum):
+    NONE = "none"
+    MIN_MAX = "min_max"
+    SUBJECT_ZSCORE = "subject_zscore"
+    DATASET_ZSCORE = "dataset_zscore"
+
+
+class TrainerKind(StrEnum):
+    IMFUSE = "imfuse"
+
+
+class ModelKind(StrEnum):
+    IMFUSE = "imfuse"
+
+
+class OptimizerKind(StrEnum):
+    RADAM = "radam"
+    ADAMW = "adamw"
+    SGD = "sgd"
+    ADAM = "adam"
+
+
+class SchedulerKind(StrEnum):
+    POLY = "poly"
+    COSINE = "cosine"
+    STEP = "step"
+    MULTISTEP = "multistep"
+    PLATEAU = "plateau"
+
+
+app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
 
 
 def _require_train_values(merged: dict[str, object], *required_keys: str) -> None:
@@ -43,12 +70,33 @@ def _require_train_values(merged: dict[str, object], *required_keys: str) -> Non
             )
 
 
+def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
+    resume = merged.get("resume")
+    if not resume:
+        return None
+
+    output_dir = merged.get("output_dir")
+    if output_dir is None:
+        raise typer.BadParameter(
+            "missing value; provide it in the CLI or in --config",
+            param_hint="--output-dir",
+        )
+    output_dir = merged.get("output_dir")
+    checkpoint_path = Path(output_dir) / 'checkpoints' /  "model_last.pth"
+    if not checkpoint_path.is_file():
+        raise typer.BadParameter(
+            f"resume checkpoint not found at {checkpoint_path}",
+            param_hint="--output-dir",
+        )
+    return checkpoint_path
+
+
 @app.callback()
 def main() -> None:
     """BrainchMark command group."""
 
 
-@app.command()
+'''@app.command()
 def hello() -> None:
     """Simple test command."""
     message = "Hello from the AImageLab Team!"
@@ -59,8 +107,51 @@ def hello() -> None:
 
     console.print()
     console.print(text, justify="center")
-    console.print()
+    console.print()'''
 
+@app.command("self-destruct")
+def self_destruct(
+    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt")
+):
+    """
+    Totally irreversible self-destruct sequence.
+    """
+    if not force:
+        confirm = typer.confirm("Are you absolutely sure you want to self-destruct?")
+        if not confirm:
+            typer.echo("Aborted.")
+            raise typer.Exit()
+        confirm = typer.confirm("Are you ABSOLUTELY sure you want to DESTROY YOUR PC AND THIS REPO?")
+        if not confirm:
+            typer.echo("Aborted.")
+            raise typer.Exit()
+
+    typer.echo("Initializing self-destruct sequence...\n")
+
+    for i in range(5, 0, -1):
+        typer.echo(f"{i}...", nl=False)
+        sys.stdout.flush()
+        time.sleep(1)
+        typer.echo("")
+
+    text = \
+"""———————————No brains?———————————
+⠀⣞⢽⢪⢣⢣⢣⢫⡺⡵⣝⡮⣗⢷⢽⢽⢽⣮⡷⡽⣜⣜⢮⢺⣜⢷⢽⢝⡽⣝
+⠸⡸⠜⠕⠕⠁⢁⢇⢏⢽⢺⣪⡳⡝⣎⣏⢯⢞⡿⣟⣷⣳⢯⡷⣽⢽⢯⣳⣫⠇
+⠀⠀⢀⢀⢄⢬⢪⡪⡎⣆⡈⠚⠜⠕⠇⠗⠝⢕⢯⢫⣞⣯⣿⣻⡽⣏⢗⣗⠏⠀
+⠀⠪⡪⡪⣪⢪⢺⢸⢢⢓⢆⢤⢀⠀⠀⠀⠀⠈⢊⢞⡾⣿⡯⣏⢮⠷⠁⠀⠀
+⠀⠀⠀⠈⠊⠆⡃⠕⢕⢇⢇⢇⢇⢇⢏⢎⢎⢆⢄⠀⢑⣽⣿⢝⠲⠉⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⡿⠂⠠⠀⡇⢇⠕⢈⣀⠀⠁⠡⠣⡣⡫⣂⣿⠯⢪⠰⠂⠀⠀⠀⠀
+⠀⠀⠀⠀⡦⡙⡂⢀⢤⢣⠣⡈⣾⡃⠠⠄⠀⡄⢱⣌⣶⢏⢊⠂⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⢝⡲⣜⡮⡏⢎⢌⢂⠙⠢⠐⢀⢘⢵⣽⣿⡿⠁⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠨⣺⡺⡕⡕⡱⡑⡆⡕⡅⡕⡜⡼⢽⡻⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣼⣳⣫⣾⣵⣗⡵⡱⡡⢣⢑⢕⢜⢕⡝⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣴⣿⣾⣿⣿⣿⡿⡽⡑⢌⠪⡢⡣⣣⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡟⡾⣿⢿⢿⢵⣽⣾⣼⣘⢸⢸⣞⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠁⠇⠡⠩⡫⢿⣝⡻⡮⣒⢽⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+—————————————————————————————
+    """
+    typer.echo(text)
 
 @app.command()
 def preprocess(
@@ -72,6 +163,7 @@ def preprocess(
         exists=True,
         readable=True,
         help="Path to a YAML config file.",
+        rich_help_panel="Config",
     ),
     input_dir: Path = typer.Option(
         None,
@@ -81,6 +173,7 @@ def preprocess(
         exists=True,
         readable=True,
         help="Directory containing the input data to preprocess.",
+        rich_help_panel="Input/Output",
     ),
     output_dir: Path = typer.Option(
         None,
@@ -88,43 +181,51 @@ def preprocess(
         file_okay=False,
         dir_okay=True,
         help="Directory where preprocessed data will be written.",
+        rich_help_panel="Input/Output",
     ),
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
         help="Input dataset type. Choose either brats18 or brats23",
+        rich_help_panel="Input/Output",
     ),
-    crop_mode: CropMode = typer.Option(
-        CropMode.NONE,
+    crop_mode: str = typer.Option(
+        CropMode.NONE.value,
         "--crop-mode",
-        help= "Cropping strategy. One of: " + ", ".join(mode.value for mode in CropMode) + ".",
+        help= "Cropping strategy. Built-ins: " + ", ".join(mode.value for mode in CropMode) + ". Custom function names from preprocessing.cropping are also accepted.",
+        rich_help_panel="Cropping",
     ),
     crop_size: list[int] | None | None = typer.Option(
         None,
         "--crop-size",
         help="Center crop size as three integers: X Y Z.",
+        rich_help_panel="Cropping",
     ),
     crop_min_size: list[int] | None | None = typer.Option(
         None,
         "--crop-min-size",
         help="Minimum non-empty crop size as three integers: X Y Z.",
+        rich_help_panel="Cropping",
     ),
-    clamp_mode: ClampMode = typer.Option(
-        ClampMode.NONE,
+    clamp_mode: str = typer.Option(
+        ClampMode.NONE.value,
         "--clamp-mode",
-        help="Clamp mode. One of: " + ", ".join(mode.value for mode in ClampMode) + ".",
+        help="Clamp mode. Built-ins: " + ", ".join(mode.value for mode in ClampMode) + ". Custom function names from preprocessing.clamping are also accepted.",
+        rich_help_panel="Clamping",
     ),
 
     clamp_percentile: list[float] | None = typer.Option(
         None,
         "--clamp-percentile",
         help="Clamp percentiles as one or two floats: HIGH or LOW HIGH. If one value is given, LOW is assumed to be 0.",
+        rich_help_panel="Clamping",
     ),
 
     clamp_min: list[int] | None = typer.Option(
         None,
         "--clamp-min",
         help="Minimum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
+        rich_help_panel="Clamping",
 
     ),
 
@@ -132,6 +233,7 @@ def preprocess(
         None,
         "--clamp-max",
         help="Maximum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
+        rich_help_panel="Clamping",
 
     ),
 
@@ -140,31 +242,44 @@ def preprocess(
         "--yes",
         "-y",
         help="Automatically answer yes to prompts",
+        rich_help_panel="Execution",
     ),
-    norm_mode: NormMode = typer.Option(
-        NormMode.NONE,
+    norm_mode: str = typer.Option(
+        NormMode.NONE.value,
         "--norm-mode",
-        help="Normalization mode. One of: " + ", ".join(mode.value for mode in NormMode) + ".",
+        help="Normalization mode. Built-ins: " + ", ".join(mode.value for mode in NormMode) + ". Custom function names from preprocessing.normalization are also accepted.",
+        rich_help_panel="Normalization",
     ),
     norm_min_max_range: tuple[float, float] | None = typer.Option(
         None,
         "--norm-min-max-range",
         help="Target min-max normalization range as two floats: MIN MAX.",
+        rich_help_panel="Normalization",
     ),
 
     norm_mean: tuple[float, float, float, float] | None = typer.Option(
         None,
         "--norm-mean",
         help="Normalization means as four floats, one for each modality.",
+        rich_help_panel="Normalization",
     ),
 
     norm_std: tuple[float, float, float, float] | None = typer.Option(
         None,
         "--norm-std",
         help="Normalization standard deviations as four floats, one for each modality.",
+        rich_help_panel="Normalization",
     ),
 
 ) -> None:
+    from brainchmark.preprocessing.config import (
+        build_clamp_config,
+        build_crop_config,
+        build_norm_config,
+    )
+    from brainchmark.preprocessing.pipeline import run_preprocessing
+    from brainchmark.datasets.config import DatasetType as PreprocessingDatasetType
+
     #TODO COMPLETE THE OVERRIDES, REMEMBER TO CHANGE ALL THE CALLS UNDERNEATH
     yaml_config = load_yaml_config(config)
     merged = merge_cli_overrides(
@@ -188,18 +303,18 @@ def preprocess(
     require_preprocess_values(merged,"input_dir", "output_dir", "dataset_type")
     """Run dataset preprocessing."""
     crop_config = build_crop_config(
-        crop_mode=CropMode(merged.get("crop_mode", CropMode.NONE)),
+        crop_mode=str(merged.get("crop_mode", CropMode.NONE.value)),
         crop_size=merged.get("crop_size"),
         crop_min_size=merged.get("crop_min_size"),
     )
     clamp_config = build_clamp_config(
-        clamp_mode=ClampMode(merged.get("clamp_mode", ClampMode.NONE)),
+        clamp_mode=str(merged.get("clamp_mode", ClampMode.NONE.value)),
         clamp_percentile=merged.get("clamp_percentile"),
         clamp_min=merged.get("clamp_min"),
         clamp_max=merged.get("clamp_max"),
     )
     norm_config = build_norm_config(
-        norm_mode=NormMode(merged.get("norm_mode", NormMode.NONE)),
+        norm_mode=str(merged.get("norm_mode", NormMode.NONE.value)),
         norm_min_max_range=merged.get("norm_min_max_range"),
         norm_mean=merged.get("norm_mean"),
         norm_std=merged.get("norm_std"),
@@ -215,7 +330,7 @@ def preprocess(
     run_preprocessing(
         input_dir=Path(merged.get("input_dir")),
         output_dir=Path(merged.get("output_dir")),
-        dataset_type=merged.get("dataset_type"),
+        dataset_type=PreprocessingDatasetType(merged.get("dataset_type")),
         crop_config=crop_config,
         clamp_config=clamp_config,
         norm_config = norm_config,
@@ -233,6 +348,7 @@ def train(
         exists=True,
         readable=True,
         help="Path to a YAML config file.",
+        rich_help_panel="Config",
     ),
     input_dir: Path | None = typer.Option(
         None,
@@ -242,6 +358,7 @@ def train(
         exists=True,
         readable=True,
         help="Directory containing the training data.",
+        rich_help_panel="Input/Output",
     ),
     output_dir: Path | None = typer.Option(
         None,
@@ -249,152 +366,252 @@ def train(
         file_okay=False,
         dir_okay=True,
         help="Directory where training artifacts will be written.",
+        rich_help_panel="Input/Output",
     ),
     trainer: TrainerKind | None = typer.Option(
         None,
         "--trainer",
         help="Trainer implementation or preset to use.",
+        rich_help_panel="Trainer",
     ),
-    dataname: str | None = typer.Option(
+    model: ModelKind | None = typer.Option(
         None,
-        "--dataname",
-        help="Dataset name, for example BRATS2018 or BRATS2023.",
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    custom_trainer_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-trainer-kwargs",
+        "--costom--trainer--kwargs",
+        help="Additional trainer kwargs in key=value form.",
+        rich_help_panel="Trainer",
     ),
     optimizer: OptimizerKind | None = typer.Option(
         None,
         "--optimizer",
         help="Optimizer name.",
+        rich_help_panel="Optimization",
+    ),
+    betas: tuple[float, float] | None = typer.Option(
+        None,
+        "--betas",
+        help="Optimizer betas as two floats: BETA1 BETA2.",
+        rich_help_panel="Optimization",
+    ),
+    momentum: float | None = typer.Option(
+        None,
+        "--momentum",
+        help="SGD momentum.",
+        rich_help_panel="Optimization",
     ),
     scheduler: SchedulerKind | None = typer.Option(
         None,
         "--scheduler",
         help="Learning-rate scheduler name.",
+        rich_help_panel="Scheduler",
+    ),
+    poly_total_iters: int | None = typer.Option(
+        None,
+        "--poly-total-iters",
+        help="Total iterations for the polynomial scheduler. Defaults to num_epochs.",
+        rich_help_panel="Scheduler",
+    ),
+    poly_power: float | None = typer.Option(
+        None,
+        "--poly-power",
+        help="Power for the polynomial scheduler.",
+        rich_help_panel="Scheduler",
+    ),
+    cosine_t_max: int | None = typer.Option(
+        None,
+        "--cosine-t-max",
+        help="T_max for cosine annealing. Defaults to num_epochs.",
+        rich_help_panel="Scheduler",
+    ),
+    cosine_eta_min: float | None = typer.Option(
+        None,
+        "--cosine-eta-min",
+        help="Minimum learning rate for cosine annealing.",
+        rich_help_panel="Scheduler",
+    ),
+    step_step_size: int | None = typer.Option(
+        None,
+        "--step-step-size",
+        help="Step size for StepLR.",
+        rich_help_panel="Scheduler",
+    ),
+    step_gamma: float | None = typer.Option(
+        None,
+        "--step-gamma",
+        help="Decay factor for StepLR.",
+        rich_help_panel="Scheduler",
+    ),
+    multistep_milestones: list[int] | None = typer.Option(
+        None,
+        "--multistep-milestones",
+        help="Milestones for MultiStepLR. Repeat the option or pass multiple integers.",
+        rich_help_panel="Scheduler",
+    ),
+    multistep_gamma: float | None = typer.Option(
+        None,
+        "--multistep-gamma",
+        help="Decay factor for MultiStepLR.",
+        rich_help_panel="Scheduler",
+    ),
+    plateau_mode: str | None = typer.Option(
+        None,
+        "--plateau-mode",
+        help="Mode for ReduceLROnPlateau, usually min or max.",
+        rich_help_panel="Scheduler",
+    ),
+    plateau_factor: float | None = typer.Option(
+        None,
+        "--plateau-factor",
+        help="Decay factor for ReduceLROnPlateau.",
+        rich_help_panel="Scheduler",
+    ),
+    plateau_patience: int | None = typer.Option(
+        None,
+        "--plateau-patience",
+        help="Patience for ReduceLROnPlateau.",
+        rich_help_panel="Scheduler",
+    ),
+    custom_scheduler_kwarg: list[str] | None = typer.Option(
+        None,
+        "--custom-scheduler-kwarg",
+        help="Additional custom scheduler kwargs in key=value form.",
+        rich_help_panel="Scheduler",
     ),
     train_transforms: str | None = typer.Option(
         None,
         "--train-transforms",
         help="Training transform pipeline expression.",
+        rich_help_panel="Data Pipeline",
     ),
     test_transforms: str | None = typer.Option(
         None,
         "--test-transforms",
         help="Validation/test transform pipeline expression.",
+        rich_help_panel="Data Pipeline",
     ),
     lr: float | None = typer.Option(
         None,
         "--lr",
         help="Learning rate.",
+        rich_help_panel="Optimization",
     ),
     num_epochs: int | None = typer.Option(
         None,
         "--num-epochs",
         help="Number of training epochs.",
+        rich_help_panel="Training",
     ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
         help="Mini-batch size.",
+        rich_help_panel="Training",
     ),
     weight_decay: float | None = typer.Option(
         None,
         "--weight-decay",
         help="Weight decay.",
-    ),
-    region_fusion_start_epoch: int | None = typer.Option(
-        None,
-        "--region-fusion-start-epoch",
-        help="Epoch at which fused-region loss starts contributing.",
+        rich_help_panel="Optimization",
     ),
     num_workers: int | None = typer.Option(
         None,
         "--num-workers",
         help="Number of dataloader workers.",
+        rich_help_panel="Runtime",
     ),
-    resume: Path | None = typer.Option(
-        None,
+    resume: bool = typer.Option(
+        False,
         "--resume",
-        file_okay=True,
-        dir_okay=False,
-        exists=True,
-        readable=True,
-        help="Checkpoint path to resume training from.",
+        help="Resume training from output_dir/model_last.pth.",
+        rich_help_panel="Checkpointing",
+    ),
+    seed: int = typer.Option(
+        69,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
     ),
     pretrain: Path | None = typer.Option(
         None,
         "--pretrain",
         file_okay=True,
         dir_okay=False,
-        exists=True,
         readable=True,
-        help="Checkpoint path to use as pretrained initialization.",
-    ),
-    seed: int | None = typer.Option(
-        None,
-        "--seed",
-        help="Random seed.",
-    ),
-    device: str | None = typer.Option(
-        None,
-        "--device",
-        help="Device identifier, for example cpu, cuda, or cuda:0.",
-    ),
-    debug: bool = typer.Option(
-        False,
-        "--debug",
-        help="Run a shortened debug training loop.",
-    ),
-    interleaved_tokenization: bool = typer.Option(
-        False,
-        "--interleaved-tokenization",
-        help="Enable interleaved tokenization in IMFuse.",
-    ),
-    mamba_skip: bool = typer.Option(
-        False,
-        "--mamba-skip",
-        help="Enable mamba-based skip fusion.",
-    ),
-    first_skip: bool = typer.Option(
-        False,
-        "--first-skip",
-        help="Use the first-skip IMFuse variant instead of the no-1-skip variant.",
+        help="Path to pretrained weights to load before training.",
+        rich_help_panel="Checkpointing",
     ),
     wandb_project: str | None = typer.Option(
         None,
         "--wandb-project",
         help="Weights & Biases project name.",
+        rich_help_panel="Logging",
     ),
     wandb_mode: str | None = typer.Option(
         None,
         "--wandb-mode",
         help="Weights & Biases mode, for example online, offline, or disabled.",
+        rich_help_panel="Logging",
     ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
+
+    from brainchmark.training.config import (
+        ModelKind as TrainingModelKind,
+        OptimizerKind as TrainingOptimizerKind,
+        SchedulerKind as TrainingSchedulerKind,
+        build_model_config,
+        build_optimizer_config,
+        build_scheduler_config,
+        parse_kv_list,
+    )
+
     yaml_config = load_yaml_config(config)
     merged = merge_cli_overrides(
         yaml_config,
         input_dir=input_dir,
         output_dir=output_dir,
         trainer=trainer,
-        dataname=dataname,
+        model=model,
+        custom_model_kwargs=parse_kv_list(custom_model_kwargs),
+        custom_trainer_kwargs=parse_kv_list(custom_trainer_kwargs),
         optimizer=optimizer,
+        betas=betas,
+        momentum=momentum,
         scheduler=scheduler,
+        poly_total_iters=poly_total_iters,
+        poly_power=poly_power,
+        cosine_t_max=cosine_t_max,
+        cosine_eta_min=cosine_eta_min,
+        step_step_size=step_step_size,
+        step_gamma=step_gamma,
+        multistep_milestones=multistep_milestones,
+        multistep_gamma=multistep_gamma,
+        plateau_mode=plateau_mode,
+        plateau_factor=plateau_factor,
+        plateau_patience=plateau_patience,
+        custom_scheduler_kwargs=parse_kv_list(custom_scheduler_kwarg),
         train_transforms=train_transforms,
         test_transforms=test_transforms,
         lr=lr,
         num_epochs=num_epochs,
         batch_size=batch_size,
         weight_decay=weight_decay,
-        region_fusion_start_epoch=region_fusion_start_epoch,
         num_workers=num_workers,
         resume=resume,
         pretrain=pretrain,
         seed=seed,
-        device=device,
-        debug=debug if debug else yaml_config.get("debug"),
-        interleaved_tokenization=interleaved_tokenization if interleaved_tokenization else yaml_config.get("interleaved_tokenization"),
-        mamba_skip=mamba_skip if mamba_skip else yaml_config.get("mamba_skip"),
-        first_skip=first_skip if first_skip else yaml_config.get("first_skip"),
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
     )
@@ -406,42 +623,37 @@ def train(
         "optimizer",
         "num_epochs",
     )
-    train_config = IMFuseTrainingConfig(
-        input_dir=Path(merged["input_dir"]),
-        output_dir=Path(merged["output_dir"]),
-        trainer=TrainerKind(merged.get("trainer", TrainerKind.IMFUSE)),
-        dataname=str(merged.get("dataname", "BRATS2018")),
-        optimizer=OptimizerKind(merged.get("optimizer", OptimizerKind.RADAM)),
-        scheduler=SchedulerKind(merged.get("scheduler", SchedulerKind.POLY)),
-        batch_size=int(merged.get("batch_size", 1)),
+    model_kind = TrainingModelKind(merged.get("model", TrainingModelKind.IMFUSE))
+    optimizer_kind = TrainingOptimizerKind(
+        merged.get("optimizer", TrainingOptimizerKind.RADAM)
+    )
+    scheduler_kind = TrainingSchedulerKind(
+        merged.get("scheduler", TrainingSchedulerKind.POLY)
+    )
+    model_config = build_model_config(
+        model_kind=model_kind,
+        model_kwargs=merged.get("custom_model_kwargs"),
+    )
+    resolved_num_epochs = int(merged["num_epochs"])
+    optimizer_config = build_optimizer_config(
+        optimizer_kind=optimizer_kind,
         lr=float(merged.get("lr", 2e-4)),
         weight_decay=float(merged.get("weight_decay", 3e-5)),
-        num_epochs=int(merged["num_epochs"]),
-        num_workers=int(merged.get("num_workers", 8)),
-        region_fusion_start_epoch=int(merged.get("region_fusion_start_epoch", 0)),
-        seed=int(merged.get("seed", 999)),
-        resume=Path(merged["resume"]) if merged.get("resume") is not None else None,
-        pretrain=Path(merged["pretrain"]) if merged.get("pretrain") is not None else None,
-        debug=bool(merged.get("debug", False)),
-        interleaved_tokenization=bool(merged.get("interleaved_tokenization", False)),
-        mamba_skip=bool(merged.get("mamba_skip", False)),
-        first_skip=bool(merged.get("first_skip", False)),
-        device=str(merged["device"]) if merged.get("device") is not None else None,
-        train_transforms=str(merged.get("train_transforms")) if merged.get("train_transforms") is not None else DEFAULT_TRAIN_TRANSFORMS,
-        test_transforms=str(merged.get("test_transforms")) if merged.get("test_transforms") is not None else DEFAULT_TEST_TRANSFORMS,
-        wandb=WandbConfig(
-            enabled=str(merged.get("wandb_mode", "online")) != "disabled",
-            project=str(merged.get("wandb_project", "SegmentationMM")),
-            mode=str(merged.get("wandb_mode", "online")),
-        ),
+        betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
+        momentum=float(merged.get("momentum", 0.9)),
     )
-
-    typer.echo(
-        "Training "
-        f"{train_config.trainer.value} on {train_config.dataname} "
-        f"from {train_config.input_dir} into {train_config.output_dir} "
-        f"with optimizer={train_config.optimizer.value}, "
-        f"scheduler={train_config.scheduler.value}, "
-        f"lr={train_config.lr}, epochs={train_config.num_epochs}."
+    scheduler_config = build_scheduler_config(
+        scheduler_kind=scheduler_kind,
+        poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
+        poly_power=float(merged.get("poly_power", 0.9)),
+        cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
+        cosine_eta_min=float(merged.get("cosine_eta_min", 0.0)),
+        step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
+        step_gamma=float(merged.get("step_gamma", 0.1)),
+        multistep_milestones=list(merged["multistep_milestones"]) if merged.get("multistep_milestones") is not None else None,
+        multistep_gamma=float(merged.get("multistep_gamma", 0.1)),
+        plateau_mode=str(merged.get("plateau_mode", "min")),
+        plateau_factor=float(merged.get("plateau_factor", 0.1)),
+        plateau_patience=int(merged.get("plateau_patience", 10)),
+        custom_scheduler_kwargs=merged.get("custom_scheduler_kwargs"),
     )
-    IMFuseTrainer(train_config).fit()
