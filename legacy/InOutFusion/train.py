@@ -368,7 +368,8 @@ if __name__ == '__main__':
     args.add_argument('--train_list', type=str, default='./process/partition/0-train.txt')
     args.add_argument('--val_list', type=str, default='./process/partition/0-val.txt')
     args.add_argument('--test_list', type=str, default='./process/partition/0-test.txt')
-    
+    args.add_argument('--version', type=str, default='brats23')
+        
     args.add_argument('--selected_modal', nargs='+', default=['t1c', 't1n', 't2w', 't2f'])
     args.add_argument('--batch_size', type=int, default=1)
     args.add_argument('--out_channels', type=int, default=4)
@@ -431,7 +432,15 @@ if __name__ == '__main__':
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     datalist_dir = Path(__file__).parent / 'datalist' 
-    data_files = dict(train = datalist_dir/'train.txt', val = datalist_dir/'val.txt', test = datalist_dir/'test.txt')
+    if args.version not in ['brats23','brats18']:
+        raise RuntimeError('--version must be either brats23 or brats18')
+    
+    if args.version == 'brats23':
+        version = 23
+    elif args.version == 'brats18':
+        version = 18
+    
+    data_files = dict(train = datalist_dir/f'train_{version}.txt', val = datalist_dir/f'val_{version}.txt', test = datalist_dir/f'test_{version}.txt')
     args.checkpoint_path = args.checkpoint_path + args.model_name
     assert args.batch_size == 1, 'This script only supports batch size 1'
     solver = Solver(data_files, args,args.datapath)
