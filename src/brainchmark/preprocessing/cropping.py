@@ -4,23 +4,18 @@ import click
 from brainchmark.preprocessing.config import CropConfig
 
 def template(images:np.ndarray,seg:np.ndarray,config:CropConfig)-> tuple[np.ndarray, np.ndarray]:
-    def template(
-            images: np.ndarray,
-            seg: np.ndarray,
-            config: CropConfig,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Template function for cropping multi-modal 3D images and segmentations.
+    """Template function for cropping multi-modal 3D images and segmentations.
 
-        Args:
-            images: Input image array with shape `(C, X, Y, Z)`, where `C` is the
-                modality/channel dimension.
-            seg: Input segmentation array with shape `(1, X, Y, Z)`.
-            config: Crop configuration controlling the cropping behavior.
+    Args:
+        images: Input image array with shape `(C, X, Y, Z)`, where `C` is the
+            modality/channel dimension.
+        seg: Input segmentation array with shape `(1, X, Y, Z)`.
+        config: Crop configuration controlling the cropping behavior.
 
-        Returns:
-            A tuple `(cropped_images, cropped_seg)` containing the cropped image
-            and segmentation arrays.
-        """
+    Returns:
+        A tuple `(cropped_images, cropped_seg)` containing the cropped image
+        and segmentation arrays.
+    """
     check_size(images,seg)
     # add cropping logic here
     # return cropped_images, cropped_seg
@@ -149,6 +144,6 @@ def non_empty(
     vol_out = vol[:, x_min:x_max, y_min:y_max, z_min:z_max]
 
 
-    seg_out = seg.astype(np.uint8)[x_min:x_max, y_min:y_max, z_min:z_max]
+    seg_out = seg.astype(np.uint8)[:,x_min:x_max, y_min:y_max, z_min:z_max]
 
     return vol_out.astype(np.float32), seg_out.astype(np.uint8)

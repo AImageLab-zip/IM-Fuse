@@ -18,7 +18,6 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
-    "mamba-ssm>=2.3.1",
     "medpy>=0.5.2",
     "numpy>=2.4.3",
     "pandas>=3.0.2",
@@ -28,6 +27,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",
+    "wandb>=0.25.1",
 ]
 
 [project.optional-dependencies]
@@ -54,13 +54,10 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 
 [project.scripts]
 brainchmark = "brainchmark.cli:app"
 brainchmark-gui = "brainchmark.gui:launch"
 
-[tool.uv.extra-build-dependencies]
-mamba-ssm = [{ requirement = "torch", match-runtime = true }]
-causal-conv1d = [{ requirement = "torch", match-runtime = true }]

@@ -26,10 +26,21 @@ def subject_zscore(images:np.ndarray,config:NormConfig)-> np.ndarray:
     check_size(images)
     out_image = np.zeros_like(images)
     for i in range(images.shape[0]):
-        foreground = images[i][images[i] > 0]
+        modal = images[i]
+        foreground_mask = modal > 0
+        foreground = modal[foreground_mask]
+
+        if foreground.size == 0:
+            out_image[i] = modal
+            continue
+
         mean = np.mean(foreground)
         std = np.std(foreground)
-        out_image[i] = (images[i] - mean) / std
+        if not np.isfinite(std) or std == 0:
+            out_image[i] = np.zeros_like(modal)
+            continue
+
+        out_image[i] = (modal - mean) / std
     return out_image
 
 

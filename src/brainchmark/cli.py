@@ -5,10 +5,17 @@ import sys
 import time
 
 # External dependencies
+from click.shell_completion import CompletionItem
 import typer
 
 # Internal modules
-from brainchmark.utils.cli_overrides import load_yaml_config, merge_cli_overrides
+from brainchmark.utils.cli_overrides import (
+    CONFIGS_DIR,
+    SPLITS_DIR,
+    load_yaml_config,
+    merge_cli_overrides,
+    resolve_split_path,
+)
 from brainchmark.utils.cli_utils import require_preprocess_values
 
 class DatasetType(StrEnum):
@@ -61,6 +68,65 @@ class SchedulerKind(StrEnum):
 app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
 
 
+def _config_shell_complete(
+    _ctx: typer.Context,
+    _param: typer.CallbackParam,
+    incomplete: str,
+) -> list[CompletionItem]:
+    suggestions: dict[str, CompletionItem] = {}
+
+    for config_path in sorted(CONFIGS_DIR.glob("*.y*ml")):
+        if config_path.name.startswith(incomplete):
+            suggestions[config_path.name] = CompletionItem(
+                config_path.name,
+                help=str(CONFIGS_DIR),
+            )
+
+    if incomplete.startswith("/") or "/" in incomplete or incomplete.startswith("."):
+        raw_path = Path(incomplete).expanduser()
+        parent = raw_path if incomplete.endswith("/") else raw_path.parent
+        prefix = "" if incomplete.endswith("/") else raw_path.name
+        if parent.exists() and parent.is_dir():
+            for candidate in sorted(parent.iterdir()):
+                if candidate.suffix not in {".yaml", ".yml"}:
+                    continue
+                if not candidate.name.startswith(prefix):
+                    continue
+                suggestions[str(candidate)] = CompletionItem(str(candidate))
+
+    return list(suggestions.values())
+
+
+def _split_shell_complete(
+    _ctx: typer.Context,
+    _param: typer.CallbackParam,
+    incomplete: str,
+) -> list[CompletionItem]:
+    suggestions: dict[str, CompletionItem] = {}
+
+    for split_path in sorted(path for path in SPLITS_DIR.rglob("*") if path.is_file()):
+        relative_name = split_path.relative_to(SPLITS_DIR).as_posix()
+        if relative_name.startswith(incomplete):
+            suggestions[relative_name] = CompletionItem(
+                relative_name,
+                help=str(SPLITS_DIR),
+            )
+
+    if incomplete.startswith("/") or "/" in incomplete or incomplete.startswith("."):
+        raw_path = Path(incomplete).expanduser()
+        parent = raw_path if incomplete.endswith("/") else raw_path.parent
+        prefix = "" if incomplete.endswith("/") else raw_path.name
+        if parent.exists() and parent.is_dir():
+            for candidate in sorted(parent.iterdir()):
+                if not candidate.is_file():
+                    continue
+                if not candidate.name.startswith(prefix):
+                    continue
+                suggestions[str(candidate)] = CompletionItem(str(candidate))
+
+    return list(suggestions.values())
+
+
 def _require_train_values(merged: dict[str, object], *required_keys: str) -> None:
     for key in required_keys:
         if merged.get(key) is None:
@@ -68,6 +134,15 @@ def _require_train_values(merged: dict[str, object], *required_keys: str) -> Non
                 "missing value; provide it in the CLI or in --config",
                 param_hint=f"--{key.replace('_', '-')}",
             )
+
+
+def _merged_value(
+    merged: dict[str, object],
+    key: str,
+    default: object,
+) -> object:
+    value = merged.get(key)
+    return default if value is None else value
 
 
 def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
@@ -89,6 +164,21 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
             param_hint="--output-dir",
         )
     return checkpoint_path
+
+
+def _resolve_trainer_class(trainer_kind: TrainerKind):
+    from brainchmark.training.trainers import IMFuseTrainer
+
+    trainer_map = {
+        TrainerKind.IMFUSE: IMFuseTrainer,
+    }
+    try:
+        return trainer_map[trainer_kind]
+    except KeyError as exc:
+        raise typer.BadParameter(
+            f"Unsupported trainer: {trainer_kind}",
+            param_hint="--trainer",
+        ) from exc
 
 
 @app.callback()
@@ -160,8 +250,7 @@ def preprocess(
         "--config",
         file_okay=True,
         dir_okay=False,
-        exists=True,
-        readable=True,
+        shell_complete=_config_shell_complete,
         help="Path to a YAML config file.",
         rich_help_panel="Config",
     ),
@@ -345,14 +434,13 @@ def train(
         "--config",
         file_okay=True,
         dir_okay=False,
-        exists=True,
-        readable=True,
+        shell_complete=_config_shell_complete,
         help="Path to a YAML config file.",
         rich_help_panel="Config",
     ),
-    input_dir: Path | None = typer.Option(
+    data_dir: Path | None = typer.Option(
         None,
-        "--input-dir",
+        "--data-dir",
         file_okay=False,
         dir_okay=True,
         exists=True,
@@ -360,9 +448,9 @@ def train(
         help="Directory containing the training data.",
         rich_help_panel="Input/Output",
     ),
-    output_dir: Path | None = typer.Option(
+    art_dir: Path | None = typer.Option(
         None,
-        "--output-dir",
+        "--art-dir",
         file_okay=False,
         dir_okay=True,
         help="Directory where training artifacts will be written.",
@@ -380,11 +468,23 @@ def train(
         help="Model implementation or preset to use.",
         rich_help_panel="Model",
     ),
+    loss: str | None = typer.Option(
+        None,
+        "--loss",
+        help="Loss implementation or preset to use.",
+        rich_help_panel="Loss",
+    ),
     custom_model_kwargs: list[str] | None = typer.Option(
         None,
         "--custom-model-kwargs",
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
+    ),
+    custom_loss_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-loss-kwargs",
+        help="Additional loss kwargs in key=value form.",
+        rich_help_panel="Loss",
     ),
     custom_trainer_kwargs: list[str] | None = typer.Option(
         None,
@@ -392,6 +492,16 @@ def train(
         "--costom--trainer--kwargs",
         help="Additional trainer kwargs in key=value form.",
         rich_help_panel="Trainer",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=_split_shell_complete,
+        help="Split file path. Relative paths are resolved under brainchmark/data/splits.",
+        rich_help_panel="Trainer",
+        show_default="split.json",
     ),
     optimizer: OptimizerKind | None = typer.Option(
         None,
@@ -483,12 +593,6 @@ def train(
         help="Patience for ReduceLROnPlateau.",
         rich_help_panel="Scheduler",
     ),
-    custom_scheduler_kwarg: list[str] | None = typer.Option(
-        None,
-        "--custom-scheduler-kwarg",
-        help="Additional custom scheduler kwargs in key=value form.",
-        rich_help_panel="Scheduler",
-    ),
     train_transforms: str | None = typer.Option(
         None,
         "--train-transforms",
@@ -525,8 +629,8 @@ def train(
         help="Weight decay.",
         rich_help_panel="Optimization",
     ),
-    num_workers: int | None = typer.Option(
-        None,
+    num_workers: int= typer.Option(
+        8,
         "--num-workers",
         help="Number of dataloader workers.",
         rich_help_panel="Runtime",
@@ -534,7 +638,7 @@ def train(
     resume: bool = typer.Option(
         False,
         "--resume",
-        help="Resume training from output_dir/model_last.pth.",
+        help="Resume training from <output_dir>/model_last.pth.",
         rich_help_panel="Checkpointing",
     ),
     seed: int = typer.Option(
@@ -564,28 +668,42 @@ def train(
         help="Weights & Biases mode, for example online, offline, or disabled.",
         rich_help_panel="Logging",
     ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Input dataset type. Choose either brats18 or brats23",
+        rich_help_panel="Input/Output",
+    ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
 
     from brainchmark.training.config import (
-        ModelKind as TrainingModelKind,
         OptimizerKind as TrainingOptimizerKind,
         SchedulerKind as TrainingSchedulerKind,
-        build_model_config,
         build_optimizer_config,
         build_scheduler_config,
         parse_kv_list,
     )
+    from brainchmark.losses.config import build_loss_config
+
+    from brainchmark.models.config import (
+    ModelKind as TrainingModelKind,
+    build_model_config
+    )
 
     yaml_config = load_yaml_config(config)
+    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
     merged = merge_cli_overrides(
         yaml_config,
-        input_dir=input_dir,
-        output_dir=output_dir,
+        data_dir=data_dir,
+        art_dir=art_dir,
         trainer=trainer,
         model=model,
+        loss=loss,
         custom_model_kwargs=parse_kv_list(custom_model_kwargs),
-        custom_trainer_kwargs=parse_kv_list(custom_trainer_kwargs),
+        custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
+        custom_trainer_kwargs=trainer_kwargs,
+        split_file=split_file,
         optimizer=optimizer,
         betas=betas,
         momentum=momentum,
@@ -601,7 +719,6 @@ def train(
         plateau_mode=plateau_mode,
         plateau_factor=plateau_factor,
         plateau_patience=plateau_patience,
-        custom_scheduler_kwargs=parse_kv_list(custom_scheduler_kwarg),
         train_transforms=train_transforms,
         test_transforms=test_transforms,
         lr=lr,
@@ -614,11 +731,20 @@ def train(
         seed=seed,
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
+        dataset_type=dataset_type,
     )
+    merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
+    split_file_value = merged.get("split_file")
+    if split_file_value is None:
+        split_file_value = merged_trainer_kwargs.get("split_file")
+    resolved_split_file = resolve_split_path(split_file_value)
+    merged_trainer_kwargs["split_file"] = str(resolved_split_file)
+    merged["custom_trainer_kwargs"] = merged_trainer_kwargs
+    merged["split_file"] = str(resolved_split_file)
     _require_train_values(
         merged,
-        "input_dir",
-        "output_dir",
+        "data_dir",
+        "art_dir",
         "trainer",
         "optimizer",
         "num_epochs",
@@ -634,26 +760,52 @@ def train(
         model_kind=model_kind,
         model_kwargs=merged.get("custom_model_kwargs"),
     )
+    loss_config = build_loss_config(
+        loss_kind=merged.get("loss", "imfuse"),
+        loss_kwargs=merged.get("custom_loss_kwargs"),
+    )
     resolved_num_epochs = int(merged["num_epochs"])
     optimizer_config = build_optimizer_config(
         optimizer_kind=optimizer_kind,
-        lr=float(merged.get("lr", 2e-4)),
-        weight_decay=float(merged.get("weight_decay", 3e-5)),
+        lr=float(_merged_value(merged, "lr", 2e-4)),
+        weight_decay=float(_merged_value(merged, "weight_decay", 3e-5)),
         betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
-        momentum=float(merged.get("momentum", 0.9)),
+        momentum=float(_merged_value(merged, "momentum", 0.9)),
     )
     scheduler_config = build_scheduler_config(
         scheduler_kind=scheduler_kind,
         poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
-        poly_power=float(merged.get("poly_power", 0.9)),
+        poly_power=float(_merged_value(merged, "poly_power", 0.9)),
         cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
-        cosine_eta_min=float(merged.get("cosine_eta_min", 0.0)),
+        cosine_eta_min=float(_merged_value(merged, "cosine_eta_min", 0.0)),
         step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
-        step_gamma=float(merged.get("step_gamma", 0.1)),
+        step_gamma=float(_merged_value(merged, "step_gamma", 0.1)),
         multistep_milestones=list(merged["multistep_milestones"]) if merged.get("multistep_milestones") is not None else None,
-        multistep_gamma=float(merged.get("multistep_gamma", 0.1)),
-        plateau_mode=str(merged.get("plateau_mode", "min")),
-        plateau_factor=float(merged.get("plateau_factor", 0.1)),
-        plateau_patience=int(merged.get("plateau_patience", 10)),
-        custom_scheduler_kwargs=merged.get("custom_scheduler_kwargs"),
+        multistep_gamma=float(_merged_value(merged, "multistep_gamma", 0.1)),
+        plateau_mode=str(_merged_value(merged, "plateau_mode", "min")),
+        plateau_factor=float(_merged_value(merged, "plateau_factor", 0.1)),
+        plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
     )
+    trainer_kind = TrainerKind(merged.get("trainer", TrainerKind.IMFUSE))
+    trainer_class = _resolve_trainer_class(trainer_kind)
+    trainer_instance = trainer_class(
+        input_dir=Path(merged["data_dir"]),
+        output_dir=Path(merged["art_dir"]),
+        custom_trainer_kwargs=merged_trainer_kwargs,
+        model_config=model_config,
+        loss_config=loss_config,
+        optimizer_config=optimizer_config,
+        scheduler_config=scheduler_config,
+        train_transforms=merged.get("train_transforms"),
+        test_transforms=merged.get("test_transforms"),
+        num_epochs=resolved_num_epochs,
+        batch_size=int(merged.get("batch_size", 1)),
+        num_workers=int(merged.get("num_workers", 8)),
+        resume=bool(merged.get("resume", False)),
+        seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
+        pretrain=merged.get("pretrain"),
+        wandb_project=merged.get("wandb_project"),
+        wandb_mode=merged.get("wandb_mode"),
+        dataset_type=merged.get("dataset_type")
+    )
+    trainer_instance.fit()

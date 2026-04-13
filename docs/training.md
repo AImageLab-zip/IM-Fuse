@@ -136,30 +136,6 @@ Relevant fields:
 - `plateau_factor`
 - `plateau_patience`
 
-Custom scheduler support is partially wired:
-
-- custom scheduler names can be resolved from `brainchmark.training.scheduling`
-- YAML and CLI can both provide `custom_scheduler_kwargs`
-- runtime trainer integration is still incomplete
-
-Example:
-
-```yaml
-scheduler: my_custom_scheduler
-custom_scheduler_kwargs:
-  warmup_steps: 100
-  decay: 0.95
-```
-
-CLI form:
-
-```bash
-brainchmark train \
-  --scheduler my_custom_scheduler \
-  --custom-scheduler-kwarg warmup_steps=100 \
-  --custom-scheduler-kwarg decay=0.95
-```
-
 ## Other Training Options
 
 The train command also accepts:

@@ -1,466 +1,583 @@
-import importlib
+from __future__ import annotations
+
 import logging
-import os
-import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
-from brainchmark.training.config import IMFuseTrainingConfig, OptimizerKind, SchedulerKind
+from brainchmark.datasets import DatasetType, IMFuseDataset, MaskingMode
+from brainchmark.losses.config import LossConfig
+from brainchmark.models.config import ModelConfig
+from brainchmark.training.config import OptimizerConfig, SchedulerConfig
+from brainchmark.training.trainers.base_trainer import BaseTrainer
 
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_PATCH_SIZE = 128
 
 
-class IMFuseTrainer:
-    def __init__(self, config: IMFuseTrainingConfig) -> None:
-        self.config = config
-        self.device = self._resolve_device(config.device)
-        self.model: torch.nn.Module | None = None
-        self.optimizer: Optimizer | None = None
-        self.scheduler: Any | None = None
-        self.train_loader: Any | None = None
-        self.val_loader: Any | None = None
-        self.test_loader: Any | None = None
-        self.wandb_run: Any | None = None
-
-
-    def fit(self) -> None:
-        self._configure_logging()
-        self._setup_seed()
-        self.config.output_dir.mkdir(parents=True, exist_ok=True)
-
-        self.model = self._build_model()
-        self.optimizer = self._build_optimizer(self.model)
-        self.scheduler = self._build_scheduler(self.optimizer)
-        self.train_loader, self.val_loader, self.test_loader = self._build_dataloaders()
-        self._maybe_load_checkpoint_or_pretrain()
-        self._init_wandb()
-
-        start_time = time.time()
-        train_iter = iter(self.train_loader)
-        start_epoch = self._load_resume_epoch()
-
-        for epoch in range(start_epoch, self.config.num_epochs):
-            step_lr = self._step_scheduler(epoch)
-            epoch_metrics: dict[str, float] = {
-                "fusecross": 0.0,
-                "fusedice": 0.0,
-                "sepcross": 0.0,
-                "sepdice": 0.0,
-                "prmcross": 0.0,
-                "prmdice": 0.0,
-                "loss": 0.0,
-            }
-
-            self.model.train()
-            self._set_aux_training_flag(True)
-            iter_per_epoch = self.config.iter_per_epoch or len(self.train_loader)
-
-            for iteration in range(iter_per_epoch):
-                try:
-                    batch = next(train_iter)
-                except StopIteration:
-                    train_iter = iter(self.train_loader)
-                    batch = next(train_iter)
-
-                batch_metrics = self._train_step(batch, epoch)
-                for key, value in batch_metrics.items():
-                    epoch_metrics[key] += value
-
-                LOGGER.info(
-                    "Epoch %s/%s Iter %s/%s Loss %.4f fusecross:%.4f fusedice:%.4f "
-                    "sepcross:%.4f sepdice:%.4f prmcross:%.4f prmdice:%.4f",
-                    epoch + 1,
-                    self.config.num_epochs,
-                    iteration + 1,
-                    iter_per_epoch,
-                    batch_metrics["loss"],
-                    batch_metrics["fusecross"],
-                    batch_metrics["fusedice"],
-                    batch_metrics["sepcross"],
-                    batch_metrics["sepdice"],
-                    batch_metrics["prmcross"],
-                    batch_metrics["prmdice"],
-                )
-
-                if self.config.debug:
-                    break
-
-            divisor = 1 if self.config.debug else iter_per_epoch
-            averaged = {key: value / divisor for key, value in epoch_metrics.items()}
-            self._log_wandb_train(epoch, averaged, step_lr)
-            self._save_checkpoint(epoch, best=False)
-
-            should_validate = self.config.debug or (epoch + 1) in self.config.val_check
-            if should_validate:
-                self._run_validation_and_test(epoch)
-
-            if self.config.debug:
-                break
-
-        LOGGER.info("total time: %.4f hours", (time.time() - start_time) / 3600)
-        if self.wandb_run is not None:
-            self.wandb_run.finish()
-
-    def _configure_logging(self) -> None:
-        if logging.getLogger().handlers:
-            return
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+class IMFuseTrainer(BaseTrainer):
+    def __init__(
+        self,
+        input_dir: Path,
+        output_dir: Path,
+        custom_trainer_kwargs: dict[str, Any] | None = None,
+        model_config: ModelConfig | None = None,
+        loss_config: LossConfig | None = None,
+        optimizer_config: OptimizerConfig | None = None,
+        scheduler_config: SchedulerConfig | None = None,
+        train_transforms: str | None = None,
+        test_transforms: str | None = None,
+        num_epochs: int = 1,
+        batch_size: int | None = None,
+        num_workers: int | None = None,
+        resume: bool = False,
+        seed: int | None = None,
+        pretrain: str | Path | None = None,
+        wandb_project: str | None = None,
+        wandb_mode: str | None = None,
+        dataset_type:str|None = None
+    ) -> None:
+        trainer_kwargs = dict(custom_trainer_kwargs or {})
+        self.dataset_type = self._resolve_dataset_type(
+             dataset_type
         )
-
-    def _resolve_device(self, requested: str | None) -> torch.device:
-        if requested:
-            return torch.device(requested)
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def _legacy(self, module_name: str) -> Any:
-        return importlib.import_module(module_name)
-
-    def _setup_seed(self) -> None:
-        random_seed = self._legacy("IMFuse.utils.random_seed")
-        random_seed.setup_seed(self.config.seed)
-
-    def _build_model(self) -> torch.nn.Module:
-        if self.config.first_skip:
-            model_module = self._legacy("IMFuse.IMFuse")
-            model = model_module.IMFuse(
-                num_cls=self.config.num_classes,
-                interleaved_tokenization=self.config.interleaved_tokenization,
-                mamba_skip=self.config.mamba_skip,
+        self.dataname = str(
+            trainer_kwargs.get(
+                "dataname",
+                "BRATS2023" if self.dataset_type is DatasetType.BRATS23 else "BRATS2018",
             )
-        else:
-            model_module = self._legacy("IMFuse.IMFuse_no1skip")
-            model = model_module.Model(
-                num_cls=self.config.num_classes,
-                interleaved_tokenization=self.config.interleaved_tokenization,
-                mamba_skip=self.config.mamba_skip,
-            )
-
-        if self.device.type == "cuda":
-            if torch.cuda.device_count() > 1:
-                model = torch.nn.DataParallel(model).cuda()
-            else:
-                model = model.cuda()
-        else:
-            model = model.to(self.device)
-
-        return model
-
-    def _build_optimizer(self, model: torch.nn.Module) -> Optimizer:
-        train_params = [
-            {
-                "params": model.parameters(),
-                "lr": self.config.lr,
-                "weight_decay": self.config.weight_decay,
-            }
-        ]
-
-        if self.config.optimizer is OptimizerKind.RADAM:
-            return torch.optim.RAdam(train_params)
-        if self.config.optimizer is OptimizerKind.ADAMW:
-            return torch.optim.AdamW(train_params)
-        if self.config.optimizer is OptimizerKind.SGD:
-            return torch.optim.SGD(train_params, momentum=0.9)
-        raise ValueError(f"Unsupported optimizer: {self.config.optimizer}")
-
-    def _build_scheduler(self, optimizer: Optimizer) -> Any:
-        if self.config.scheduler is SchedulerKind.COSINE:
-            return CosineAnnealingLR(optimizer, T_max=self.config.num_epochs)
-        scheduler_module = self._legacy("IMFuse.utils.lr_scheduler")
-        return scheduler_module.LR_Scheduler(self.config.lr, self.config.num_epochs)
-
-    def _build_dataloaders(self) -> tuple[Any, Any, Any]:
-        datasets_module = self._legacy("IMFuse.data.datasets_nii")
-        data_utils_module = self._legacy("IMFuse.data.data_utils")
-        scheduler_module = self._legacy("IMFuse.utils.lr_scheduler")
-
-        train_file, val_file, test_file = self.config.resolved_split_files()
-
-        train_set = datasets_module.Brats_loadall_nii(
-            transforms=self.config.train_transforms,
-            root=str(self.config.input_dir),
-            num_cls=self.config.num_classes,
-            train_file=train_file,
         )
-        val_set = datasets_module.Brats_loadall_val_nii(
-            transforms=self.config.test_transforms,
-            root=str(self.config.input_dir),
-            num_cls=self.config.num_classes,
-            val_file=val_file,
+        self.iter_per_epoch = (
+            int(trainer_kwargs["iter_per_epoch"])
+            if trainer_kwargs.get("iter_per_epoch") is not None
+            else None
         )
-        test_set = datasets_module.Brats_loadall_test_nii(
-            transforms=self.config.test_transforms,
-            root=str(self.config.input_dir),
-            num_cls=self.config.num_classes,
-            test_file=test_file,
+        self.region_fusion_start_epoch = int(
+            trainer_kwargs.get("region_fusion_start_epoch", 0)
+        )
+        self.patch_size = int(trainer_kwargs.get("patch_size", DEFAULT_PATCH_SIZE))
+        self.debug = bool(trainer_kwargs.get("debug", False))
+        self.best_val_dice = float("-inf")
+        self._train_iterator: Any | None = None
+
+        effective_batch_size = 1 if batch_size is None else batch_size
+        effective_num_workers = 0 if num_workers is None else num_workers
+
+        super().__init__(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            custom_trainer_kwargs=trainer_kwargs,
+            model_config=model_config,
+            loss_config=loss_config,
+            optimizer_config=optimizer_config,
+            scheduler_config=scheduler_config,
+            train_transforms=train_transforms,
+            test_transforms=test_transforms,
+            num_epochs=num_epochs,
+            batch_size=effective_batch_size,
+            num_workers=effective_num_workers,
+            resume=resume,
+            seed=seed,
+            pretrain=pretrain,
+            wandb_project=wandb_project,
+            wandb_mode=wandb_mode,
+            dataset_type=dataset_type
         )
 
-        loader_cls = scheduler_module.MultiEpochsDataLoader
-        train_loader = loader_cls(
-            dataset=train_set,
-            batch_size=self.config.batch_size,
-            num_workers=self.config.num_workers,
-            pin_memory=self.device.type == "cuda",
-            shuffle=True,
-            worker_init_fn=data_utils_module.init_fn,
-        )
-        val_loader = loader_cls(
-            dataset=val_set,
-            batch_size=1,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=self.device.type == "cuda",
-        )
-        test_loader = loader_cls(
-            dataset=test_set,
-            batch_size=1,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=self.device.type == "cuda",
-        )
-        return train_loader, val_loader, test_loader
+        if self.pretrain is not None and self.resume is None:
+            self._load_pretrain()
 
-    def _model_core(self) -> torch.nn.Module:
-        assert self.model is not None
-        return self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+    @property
+    def num_classes(self) -> int:
+        if self.model_config is not None:
+            explicit = self.model_config.kwargs.get("num_cls")
+            if explicit is not None:
+                return int(explicit)
+        return 4
 
-    def _set_aux_training_flag(self, enabled: bool) -> None:
-        core = self._model_core()
-        if hasattr(core, "is_training"):
-            core.is_training = enabled
+    def train_epoch(self, epoch: int) -> dict[str, float]:
+        if self.train_loader is None:
+            raise RuntimeError("train_loader must be initialized before training")
 
-    def _maybe_load_checkpoint_or_pretrain(self) -> None:
-        if self.config.resume is not None:
-            return
-        if self.config.pretrain is None:
-            return
-        checkpoint = torch.load(self.config.pretrain, map_location=self.device)
-        state_dict = checkpoint.get("state_dict", checkpoint)
-        assert self.model is not None
-        self.model.load_state_dict(state_dict, strict=False)
-        LOGGER.info("Loaded pretrained weights from %s", self.config.pretrain)
-
-    def _load_resume_epoch(self) -> int:
-        if self.config.resume is None:
-            return 0
-        checkpoint = torch.load(self.config.resume, map_location=self.device)
-        assert self.model is not None
-        assert self.optimizer is not None
-        self.model.load_state_dict(checkpoint["state_dict"])
-        self.optimizer.load_state_dict(checkpoint["optim_dict"])
-        self.best_val_dice = checkpoint.get("val_Dice_best", float("-inf"))
-        LOGGER.info("Resumed from %s at epoch %s", self.config.resume, checkpoint["epoch"])
-        return int(checkpoint["epoch"]) + 1
-
-    def _init_wandb(self) -> None:
-        if not self.config.wandb.enabled:
-            return
-        import wandb
-
-        slurm_job_id = os.getenv("SLURM_JOB_ID")
-        run_name = (
-            f"{self.config.dataname}_IMFuse"
-            f"{'no_1_skip' if not self.config.first_skip else ''}_"
-            f"{'Interleaved' if self.config.interleaved_tokenization else ''}"
-            f"{'Skip' if self.config.mamba_skip else ''}_jobid{slurm_job_id}"
-        )
-        config_dict = asdict(self.config)
-        config_dict["input_dir"] = str(self.config.input_dir)
-        config_dict["output_dir"] = str(self.config.output_dir)
-        if self.config.resume is not None:
-            config_dict["resume"] = str(self.config.resume)
-        if self.config.pretrain is not None:
-            config_dict["pretrain"] = str(self.config.pretrain)
-
-        self.wandb_run = wandb.init(
-            project=self.config.wandb.project,
-            name=run_name,
-            id=run_name,
-            mode=self.config.wandb.mode,
-            resume=self.config.wandb.resume,
-            config=config_dict,
-        )
-
-    def _step_scheduler(self, epoch: int) -> float:
-        assert self.optimizer is not None
-        if self.config.scheduler is SchedulerKind.COSINE:
-            assert isinstance(self.scheduler, CosineAnnealingLR)
-            self.scheduler.step(epoch)
-            return float(self.optimizer.param_groups[0]["lr"])
-        return float(self.scheduler(self.optimizer, epoch))
-
-    def _train_step(self, batch: Any, epoch: int) -> dict[str, float]:
-        assert self.model is not None
-        assert self.optimizer is not None
-
-        criterions = self._legacy("IMFuse.utils.criterions")
-        x, target, mask = batch[:3]
-        x = x.to(self.device, non_blocking=True)
-        target = target.to(self.device, non_blocking=True)
-        mask = mask.to(self.device, non_blocking=True)
-
-        fuse_pred, sep_preds, prm_preds = self.model(x, mask)
-
-        fuse_cross_loss = criterions.softmax_weighted_loss(fuse_pred, target, num_cls=self.config.num_classes)
-        fuse_dice_loss = criterions.dice_loss(fuse_pred, target, num_cls=self.config.num_classes)
-        fuse_loss = fuse_cross_loss + fuse_dice_loss
-
-        sep_cross_loss = torch.zeros(1, device=self.device).float()
-        sep_dice_loss = torch.zeros(1, device=self.device).float()
-        for sep_pred in sep_preds:
-            sep_cross_loss += criterions.softmax_weighted_loss(sep_pred, target, num_cls=self.config.num_classes)
-            sep_dice_loss += criterions.dice_loss(sep_pred, target, num_cls=self.config.num_classes)
-        sep_loss = sep_cross_loss + sep_dice_loss
-
-        prm_cross_loss = torch.zeros(1, device=self.device).float()
-        prm_dice_loss = torch.zeros(1, device=self.device).float()
-        for prm_pred in prm_preds:
-            prm_cross_loss += criterions.softmax_weighted_loss(prm_pred, target, num_cls=self.config.num_classes)
-            prm_dice_loss += criterions.dice_loss(prm_pred, target, num_cls=self.config.num_classes)
-        prm_loss = prm_cross_loss + prm_dice_loss
-
-        if epoch < self.config.region_fusion_start_epoch:
-            loss = sep_loss + prm_loss
-        else:
-            loss = fuse_loss + sep_loss + prm_loss
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        return {
-            "loss": float(loss.item()),
-            "fusecross": float(fuse_cross_loss.item()),
-            "fusedice": float(fuse_dice_loss.item()),
-            "sepcross": float(sep_cross_loss.item()),
-            "sepdice": float(sep_dice_loss.item()),
-            "prmcross": float(prm_cross_loss.item()),
-            "prmdice": float(prm_dice_loss.item()),
+        self.model.train()
+        self._set_aux_training_flag(True)
+        steps = self.iter_per_epoch or len(self.train_loader)
+        totals = {
+            "loss": 0.0,
+            "fusecross": 0.0,
+            "fusedice": 0.0,
+            "sepcross": 0.0,
+            "sepdice": 0.0,
+            "prmcross": 0.0,
+            "prmdice": 0.0,
         }
 
-    def _save_checkpoint(self, epoch: int, best: bool) -> None:
-        assert self.model is not None
-        assert self.optimizer is not None
-        filename = "best.pth" if best else "model_last.pth"
-        file_path = self.config.output_dir / filename
-        torch.save(
-            {
-                "epoch": epoch,
-                "state_dict": self.model.state_dict(),
-                "optim_dict": self.optimizer.state_dict(),
-                "val_Dice_best": self.best_val_dice,
-            },
-            file_path,
-        )
-
-    def _run_validation_and_test(self, epoch: int) -> None:
-        assert self.model is not None
-        assert self.val_loader is not None
-        assert self.test_loader is not None
-        predict_module = self._legacy("IMFuse.predict")
-
-        LOGGER.info("validate ...")
-        with torch.no_grad():
-            val_scores, val_loss = predict_module.test_softmax(
-                self.val_loader,
-                self.model,
-                dataname=self.config.dataname,
+        iterations = 0
+        for step in range(steps):
+            batch = self._next_train_batch()
+            metrics = self._train_step(batch, epoch)
+            iterations += 1
+            for key, value in metrics.items():
+                totals[key] += value
+            LOGGER.info(
+                "Epoch %s/%s Iter %s/%s Loss %.4f fusecross:%.4f fusedice:%.4f "
+                "sepcross:%.4f sepdice:%.4f prmcross:%.4f prmdice:%.4f",
+                epoch + 1,
+                self.num_epochs,
+                step + 1,
+                steps,
+                metrics["loss"],
+                metrics["fusecross"],
+                metrics["fusedice"],
+                metrics["sepcross"],
+                metrics["sepdice"],
+                metrics["prmcross"],
+                metrics["prmdice"],
             )
-        val_wt, val_tc, val_et, val_etpp = val_scores
-        val_dice = (val_et + val_wt + val_tc) / 3
-        self._log_wandb_eval(
-            prefix="val",
-            epoch=epoch,
-            wt=val_wt.item(),
-            tc=val_tc.item(),
-            et=val_et.item(),
-            etpp=val_etpp.item(),
-            dice=val_dice.item(),
-            seg_loss=val_loss.cpu().item(),
-        )
-        if val_dice.item() > self.best_val_dice:
-            self.best_val_dice = val_dice.item()
-            LOGGER.info("save best model ...")
-            self._save_checkpoint(epoch, best=True)
+            if self.debug:
+                break
 
-        LOGGER.info("testing ...")
+        return {
+            key: value / max(iterations, 1)
+            for key, value in totals.items()
+        }
+
+    def val_epoch(self, epoch: int) -> dict[str, float]:
+        if self.val_loader is None:
+            raise RuntimeError("val_loader must be initialized before validation")
+
+        self.model.eval()
+        self._set_aux_training_flag(False)
+        loss_sum = 0.0
+        wt_sum = 0.0
+        tc_sum = 0.0
+        et_sum = 0.0
+        etpp_sum = 0.0
+        sample_count = 0
+
         with torch.no_grad():
-            test_scores, test_loss = predict_module.test_softmax(
-                self.test_loader,
-                self.model,
-                dataname=self.config.dataname,
-            )
-        test_wt, test_tc, test_et, test_etpp = test_scores
-        test_dice = (test_et + test_wt + test_tc) / 3
-        self._log_wandb_eval(
-            prefix="test",
-            epoch=epoch,
-            wt=test_wt.item(),
-            tc=test_tc.item(),
-            et=test_et.item(),
-            etpp=test_etpp.item(),
-            dice=test_dice.item(),
-            seg_loss=test_loss.cpu().item(),
-        )
+            for batch in self.val_loader:
+                images = batch["images"].to(self.device, non_blocking=True)
+                seg = batch["seg"].to(self.device, non_blocking=True).long()
+                mask = batch["mask"].to(self.device, non_blocking=True).bool()
+
+                pred = self._predict_volume(images, mask)
+                target = self._seg_to_one_hot(seg)
+                seg_loss = self._segmentation_loss(pred, target)
+                wt, tc, et, etpp = self._evaluate_scores(pred.argmax(dim=1), seg.squeeze(1))
+
+                batch_size = images.shape[0]
+                sample_count += batch_size
+                loss_sum += float(seg_loss.item()) * batch_size
+                wt_sum += float(wt.sum().item())
+                tc_sum += float(tc.sum().item())
+                et_sum += float(et.sum().item())
+                etpp_sum += float(etpp.sum().item())
+
+                if self.debug:
+                    break
 
         self.model.train()
         self._set_aux_training_flag(True)
 
-    def _log_wandb_train(self, epoch: int, metrics: dict[str, float], step_lr: float) -> None:
-        if self.wandb_run is None:
-            return
-        self.wandb_run.log(
+        divisor = max(sample_count, 1)
+        wt_score = wt_sum / divisor
+        tc_score = tc_sum / divisor
+        et_score = et_sum / divisor
+        dice_score = (wt_score + tc_score + et_score) / 3.0
+        return {
+            "loss": loss_sum / divisor,
+            "wt": wt_score,
+            "tc": tc_score,
+            "et": et_score,
+            "etpp": etpp_sum / divisor,
+            "dice": dice_score,
+        }
+
+    def build_datasets(self) -> tuple[Dataset, Dataset]:
+        if self.train_split is None or self.val_split is None:
+            raise RuntimeError("train_split and val_split must be loaded before building datasets")
+
+        train_set = IMFuseDataset(
+            root=self.input_dir,
+            masking_mode=MaskingMode.RANDOM,
+            split=self.train_split,
+        )
+        val_set = IMFuseDataset(
+            root=self.input_dir,
+            masking_mode=MaskingMode.VALIDATION,
+            split=self.val_split,
+        )
+        return train_set, val_set
+
+    def build_dataloaders(
+        self,
+        *,
+        batch_size: int,
+        num_workers: int,
+    ) -> tuple[DataLoader, DataLoader]:
+        train_sampler: DistributedSampler | None = None
+        val_sampler: DistributedSampler | None = None
+        if self.distributed:
+            train_sampler = DistributedSampler(
+                self.train_set,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=True,
+            )
+            val_sampler = DistributedSampler(
+                self.val_set,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=False,
+                drop_last=False,
+            )
+
+        pin_memory = self.device.type == "cuda"
+        train_loader = DataLoader(
+            self.train_set,
+            batch_size=batch_size,
+            shuffle=train_sampler is None,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            sampler=train_sampler,
+            drop_last=True,
+        )
+        val_loader = DataLoader(
+            self.val_set,
+            batch_size=1,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=pin_memory,
+            sampler=val_sampler,
+            drop_last=False,
+        )
+        return train_loader, val_loader
+
+    def _build_model(self) -> torch.nn.Module:
+        if self.model_config is None:
+            raise RuntimeError("model_config must be set before building a model")
+
+        model_kwargs = dict(self.model_config.kwargs)
+        model_kwargs.setdefault("num_cls", self.num_classes)
+        model_class = self.model_config.model_class
+        model = model_class(**model_kwargs)
+        return model.to(self.device)
+
+    def _build_loss(self) -> Any | None:
+        if self.loss_config is None:
+            return super()._build_loss()
+
+        loss_kwargs = dict(self.loss_config.kwargs)
+        loss_kwargs.setdefault("num_classes", self.num_classes)
+        self.loss_fn = self.loss_config.loss_class(**loss_kwargs)
+        return self.loss_fn
+
+    def load_checkpoint(self, checkpoint_path: str | Path) -> int:
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before loading a checkpoint")
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        model.load_state_dict(checkpoint["state_dict"])
+        if self.optimizer is not None and checkpoint.get("optim_dict") is not None:
+            self.optimizer.load_state_dict(checkpoint["optim_dict"])
+        if self.scheduler is not None and checkpoint.get("scheduler_dict") is not None:
+            self.scheduler.load_state_dict(checkpoint["scheduler_dict"])
+
+        self.best_val_dice = float(
+            checkpoint.get(
+                "best_val_dice",
+                checkpoint.get("val_Dice_best", self.best_val_dice),
+            )
+        )
+        self.best_val_loss = float(checkpoint.get("best_val_loss", self.best_val_loss))
+        epoch = int(checkpoint.get("epoch", -1)) + 1
+        LOGGER.info("resumed from %s at epoch %s", checkpoint_path, epoch)
+        return epoch
+
+    def save_checkpoint(self, epoch: int, is_best: bool = False) -> Path:
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before saving a checkpoint")
+        if not self.is_main_process:
+            return self.checkpoint_dir / "model_last.pth"
+
+        checkpoint = {
+            "epoch": epoch,
+            "state_dict": model.state_dict(),
+            "optim_dict": self.optimizer.state_dict() if self.optimizer is not None else None,
+            "scheduler_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "best_val_loss": self.best_val_loss,
+            "best_val_dice": self.best_val_dice,
+        }
+        last_path = self.checkpoint_dir / "model_last.pth"
+        torch.save(checkpoint, last_path)
+
+        epoch_path = self.checkpoint_dir / f"model_{epoch}.pth"
+        torch.save(checkpoint, epoch_path)
+        if is_best:
+            best_path = self.checkpoint_dir / "best.pth"
+            torch.save(checkpoint, best_path)
+        return last_path
+
+    def _is_best_checkpoint(self, val_metrics: dict[str, float]) -> bool:
+        if "dice" not in val_metrics:
+            return False
+
+        val_dice = float(val_metrics["dice"])
+        if val_dice <= self.best_val_dice:
+            return False
+
+        self.best_val_dice = val_dice
+        return True
+
+    def _wandb_config_payload(self) -> dict[str, Any]:
+        payload = super()._wandb_config_payload()
+        payload.update(
             {
-                "train/epoch": epoch,
-                "train/loss": metrics["loss"],
-                "train/fusecross": metrics["fusecross"],
-                "train/fusedice": metrics["fusedice"],
-                "train/sepcross": metrics["sepcross"],
-                "train/sepdice": metrics["sepdice"],
-                "train/prmcross": metrics["prmcross"],
-                "train/prmdice": metrics["prmdice"],
-                "train/learning_rate": step_lr,
+                "dataset_type": self.dataset_type,
+                "iter_per_epoch": self.iter_per_epoch,
+                "region_fusion_start_epoch": self.region_fusion_start_epoch,
+                "patch_size": self.patch_size,
+                "debug": self.debug,
+                "split_file": str(self.split_file),
             }
+        )
+        return payload
+
+    @staticmethod
+    def _resolve_dataset_type(
+        dataset_type: Any | None,
+    ) -> DatasetType:
+
+        return DatasetType(str(dataset_type).lower())
+
+
+    def _load_pretrain(self) -> None:
+        checkpoint = torch.load(self.pretrain, map_location=self.device)
+        state_dict = checkpoint.get("state_dict", checkpoint)
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before loading pretrained weights")
+        model.load_state_dict(state_dict, strict=False)
+        LOGGER.info("loaded pretrained weights from %s", self.pretrain)
+
+    def _next_train_batch(self) -> dict[str, Any]:
+        if self._train_iterator is None:
+            self._train_iterator = iter(self.train_loader)
+
+        try:
+            return next(self._train_iterator)
+        except StopIteration:
+            self._train_iterator = iter(self.train_loader)
+            return next(self._train_iterator)
+
+    def _train_step(self, batch: dict[str, Any], epoch: int) -> dict[str, float]:
+        images = batch["images"].to(self.device, non_blocking=True)
+        seg = batch["seg"].to(self.device, non_blocking=True).long()
+        mask = batch["mask"].to(self.device, non_blocking=True).bool()
+        images, seg = self._crop_pair(images, seg, random_crop=True)
+        target = self._seg_to_one_hot(seg)
+
+        fuse_pred, sep_preds, prm_preds = self.model(images, mask)
+        metrics = self._loss_impl().training_loss(
+            fuse_pred,
+            sep_preds,
+            prm_preds,
+            target,
+            include_fuse=epoch >= self.region_fusion_start_epoch,
+        )
+        loss = metrics["loss"]
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return {
+            "loss": float(loss.item()),
+            "fusecross": float(metrics["fusecross"].item()),
+            "fusedice": float(metrics["fusedice"].item()),
+            "sepcross": float(metrics["sepcross"].item()),
+            "sepdice": float(metrics["sepdice"].item()),
+            "prmcross": float(metrics["prmcross"].item()),
+            "prmdice": float(metrics["prmdice"].item()),
+        }
+
+    def _predict_volume(
+        self,
+        images: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        _, _, height, width, depth = images.shape
+        if (height, width, depth) == (self.patch_size, self.patch_size, self.patch_size):
+            return self.model(images, mask)
+
+        h_starts = self._window_starts(height)
+        w_starts = self._window_starts(width)
+        d_starts = self._window_starts(depth)
+        prediction = torch.zeros(
+            images.size(0),
+            self.num_classes,
+            height,
+            width,
+            depth,
+            device=self.device,
+        )
+        weight = torch.zeros(
+            images.size(0),
+            1,
+            height,
+            width,
+            depth,
+            device=self.device,
         )
 
-    def _log_wandb_eval(
+        for h in h_starts:
+            for w in w_starts:
+                for d in d_starts:
+                    patch = images[
+                        :,
+                        :,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
+                    ]
+                    patch_pred = self.model(patch, mask)
+                    prediction[
+                        :,
+                        :,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
+                    ] += patch_pred
+                    weight[
+                        :,
+                        :,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
+                    ] += 1
+        return prediction / weight
+
+    def _crop_pair(
         self,
-        prefix: str,
-        epoch: int,
-        wt: float,
-        tc: float,
-        et: float,
-        etpp: float,
-        dice: float,
-        seg_loss: float,
-    ) -> None:
-        LOGGER.info(
-            "%s epoch = %s, WT = %.2f, TC = %.2f, ET = %.2f, ETpp = %.2f, loss = %.2f",
-            prefix.capitalize(),
-            epoch,
-            wt,
-            tc,
-            et,
-            etpp,
-            seg_loss,
+        images: torch.Tensor,
+        seg: torch.Tensor,
+        *,
+        random_crop: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        _, _, height, width, depth = images.shape
+        if (height, width, depth) == (self.patch_size, self.patch_size, self.patch_size):
+            return images, seg
+
+        if min(height, width, depth) < self.patch_size:
+            raise RuntimeError(
+                "IMFuseTrainer expects preprocessed crops to be at least "
+                f"{self.patch_size} voxels along each spatial dimension, got "
+                f"{(height, width, depth)}"
+            )
+
+        start_h = self._crop_start(height, self.patch_size, random_crop)
+        start_w = self._crop_start(width, self.patch_size, random_crop)
+        start_d = self._crop_start(depth, self.patch_size, random_crop)
+        images = images[
+            :,
+            :,
+            start_h : start_h + self.patch_size,
+            start_w : start_w + self.patch_size,
+            start_d : start_d + self.patch_size,
+        ]
+        seg = seg[
+            :,
+            :,
+            start_h : start_h + self.patch_size,
+            start_w : start_w + self.patch_size,
+            start_d : start_d + self.patch_size,
+        ]
+        return images, seg
+
+    def _seg_to_one_hot(self, seg: torch.Tensor) -> torch.Tensor:
+        labels = seg.squeeze(1).long()
+        one_hot = torch.nn.functional.one_hot(labels, num_classes=self.num_classes)
+        return one_hot.permute(0, 4, 1, 2, 3).float()
+
+    def _segmentation_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self._loss_impl().segmentation_loss(pred, target)
+
+    def _evaluate_scores(
+        self,
+        output: torch.Tensor,
+        target: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.num_classes != 4:
+            raise RuntimeError("IMFuseTrainer currently supports 4-class BraTS labels only")
+
+        eps = 1e-8
+        o1 = (output == 1).float()
+        t1 = (target == 1).float()
+        o2 = (output == 2).float()
+        t2 = (target == 2).float()
+        o3 = (output == 3).float()
+        t3 = (target == 3).float()
+
+        o3_post = torch.where(
+            o3.sum(dim=(1, 2, 3), keepdim=True) < 500,
+            torch.zeros_like(o3),
+            o3,
         )
-        if self.wandb_run is None:
-            return
-        self.wandb_run.log(
-            {
-                f"{prefix}/epoch": epoch,
-                f"{prefix}/{prefix}_WT_Dice": wt,
-                f"{prefix}/{prefix}_TC_Dice": tc,
-                f"{prefix}/{prefix}_ET_Dice": et,
-                f"{prefix}/{prefix}_ETpp_Dice": etpp,
-                f"{prefix}/{prefix}_Dice": dice,
-                f"{prefix}/seg_loss": seg_loss,
-            }
-        )
+
+        whole_pred = o1 + o2 + o3
+        whole_target = t1 + t2 + t3
+        core_pred = o1 + o3
+        core_target = t1 + t3
+
+        wt = self._dice_from_binary(whole_pred, whole_target, eps)
+        tc = self._dice_from_binary(core_pred, core_target, eps)
+        et = self._dice_from_binary(o3, t3, eps)
+        etpp = self._dice_from_binary(o3_post, t3, eps)
+        return wt, tc, et, etpp
+
+    @staticmethod
+    def _dice_from_binary(
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        eps: float,
+    ) -> torch.Tensor:
+        intersection = 2 * (pred * target).sum(dim=(1, 2, 3)) + eps
+        denominator = pred.sum(dim=(1, 2, 3)) + target.sum(dim=(1, 2, 3)) + eps
+        return intersection / denominator
+
+    def _set_aux_training_flag(self, enabled: bool) -> None:
+        model = self._model_for_state()
+        if model is not None and hasattr(model, "is_training"):
+            model.is_training = enabled
+
+    @staticmethod
+    def _crop_start(size: int, patch_size: int, random_crop: bool) -> int:
+        if size == patch_size:
+            return 0
+        max_start = size - patch_size
+        if not random_crop:
+            return max_start // 2
+        return int(torch.randint(max_start + 1, size=(1,)).item())
+
+    def _window_starts(self, size: int) -> list[int]:
+        if size <= self.patch_size:
+            return [0]
+
+        stride = self.patch_size // 2
+        starts = list(range(0, max(size - self.patch_size, 0), stride))
+        last_start = size - self.patch_size
+        if not starts or starts[-1] != last_start:
+            starts.append(last_start)
+        return starts
+
+    def _loss_impl(self) -> Any:
+        if self.loss_fn is None:
+            raise RuntimeError("loss_config must be set before computing losses")
+        return self.loss_fn

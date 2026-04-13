@@ -7,47 +7,47 @@ from typing import Any
 import typer
 
 
-class ModelKind(StrEnum):
+class LossKind(StrEnum):
     IMFUSE = "imfuse"
 
 
 @dataclass(frozen=True)
-class ModelConfig:
-    model_class: Any
+class LossConfig:
+    loss_class: Any
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-def build_model_config(
-    model_kind: ModelKind | str,
-    model_kwargs: dict[str, Any] | None = None,
-) -> ModelConfig:
-    if isinstance(model_kind, ModelKind):
-        resolved_model_name = model_kind.value
+def build_loss_config(
+    loss_kind: LossKind | str,
+    loss_kwargs: dict[str, Any] | None = None,
+) -> LossConfig:
+    if isinstance(loss_kind, LossKind):
+        resolved_loss_name = loss_kind.value
     else:
-        resolved_model_name = str(model_kind).strip()
+        resolved_loss_name = str(loss_kind).strip()
 
-    if not resolved_model_name:
+    if not resolved_loss_name:
         raise typer.BadParameter(
-            "Model name cannot be empty",
-            param_hint="--model",
+            "Loss name cannot be empty",
+            param_hint="--loss",
         )
 
-    model_class = _resolve_model(resolved_model_name)
-    return ModelConfig(
-        model_class=model_class,
-        kwargs=model_kwargs or {},
+    loss_class = _resolve_loss(resolved_loss_name)
+    return LossConfig(
+        loss_class=loss_class,
+        kwargs=loss_kwargs or {},
     )
 
 
-def _resolve_model(model_name: str) -> Any:
-    target_name = _normalize_name(model_name)
+def _resolve_loss(loss_name: str) -> Any:
+    target_name = _normalize_name(loss_name)
     package_dir = Path(__file__).resolve().parent
 
     for module_path in sorted(package_dir.glob("*.py")):
         if module_path.stem in {"__init__", "config"}:
             continue
 
-        module = importlib.import_module(f"brainchmark.models.{module_path.stem}")
+        module = importlib.import_module(f"brainchmark.losses.{module_path.stem}")
         for attr_name in dir(module):
             if attr_name.startswith("_"):
                 continue
@@ -61,8 +61,8 @@ def _resolve_model(model_name: str) -> Any:
                 return attr
 
     raise typer.BadParameter(
-        f"Unsupported model: {model_name}",
-        param_hint="--model",
+        f"Unsupported loss: {loss_name}",
+        param_hint="--loss",
     )
 
 
@@ -70,8 +70,8 @@ def _matches_name(target_name: str, candidate_name: str) -> bool:
     normalized_candidate = _normalize_name(candidate_name)
     return (
         normalized_candidate == target_name
-        or normalized_candidate.removesuffix("model") == target_name
-        or target_name.removesuffix("model") == normalized_candidate
+        or normalized_candidate.removesuffix("loss") == target_name
+        or target_name.removesuffix("loss") == normalized_candidate
     )
 
 

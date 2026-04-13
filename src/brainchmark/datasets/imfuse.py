@@ -1,7 +1,3 @@
-import ast
-import csv
-import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -9,8 +5,29 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-# Custom imports
-from brainchmark.datasets.config import MaskingMode,DatasetType
+from brainchmark.datasets.config import MaskingMode
+
+
+MASK_PATTERNS = torch.tensor(
+    [
+        [True, False, False, False],
+        [False, True, False, False],
+        [False, False, True, False],
+        [False, False, False, True],
+        [True, True, False, False],
+        [True, False, True, False],
+        [True, False, False, True],
+        [False, True, True, False],
+        [False, True, False, True],
+        [False, False, True, True],
+        [True, True, True, False],
+        [True, True, False, True],
+        [True, False, True, True],
+        [False, True, True, True],
+        [True, True, True, True],
+    ],
+    dtype=torch.bool,
+)
 
 
 class IMFuseDataset(Dataset):
@@ -18,8 +35,7 @@ class IMFuseDataset(Dataset):
         self,
         root: str | Path,
         masking_mode: MaskingMode,
-        dataset_type: DatasetType,
-        split_file: str | Path | None = None,
+        split: list[dict[str, Any]],
         image_transforms: Callable[[torch.Tensor], Any] | None = None,
         target_transforms: Callable[[torch.Tensor], Any] | None = None
 
@@ -31,19 +47,43 @@ class IMFuseDataset(Dataset):
         self.image_transform = image_transforms
         self.target_transform = target_transforms
         self.masking_mode = masking_mode
-        self.samples = self._load_samples(split_file)
+        self.samples = self._load_samples(split)
 
         if not self.samples:
             raise ValueError(f"No samples found in {self.root}")
+
+    def _load_samples(self, split: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        for sample in split:
+            subject_name = str(sample["sub"])
+            subject_path = self.root / f"{subject_name}.npz"
+            if not subject_path.is_file():
+                raise ValueError(f"Sample file not found: {subject_path}")
+            samples.append(
+                {
+                    "sub": subject_path,
+                    "mask": sample.get("mask"),
+                }
+            )
+        return samples
+
+    def _resolve_mask(self, raw_mask: Any) -> torch.Tensor:
+        if raw_mask is None:
+            if self.masking_mode is MaskingMode.RANDOM:
+                index = int(torch.randint(len(MASK_PATTERNS), size=(1,)).item())
+                return MASK_PATTERNS[index].clone()
+            return torch.ones(4, dtype=torch.bool)
+
+        return torch.as_tensor(raw_mask, dtype=torch.bool)
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         sample = self.samples[index]
-        with np.load(sample.path) as data:
+        with np.load(sample["sub"]) as data:
             images = torch.from_numpy(data["images"]).float()
-            seg = torch.from_numpy(data["seg"]).long()
+            seg = torch.from_numpy(data["seg"]).float()
 
         if self.image_transform is not None:
             images = self.image_transform(images)
@@ -51,54 +91,9 @@ class IMFuseDataset(Dataset):
             seg = self.target_transform(seg)
 
         item: dict[str, Any] = {
-            "case": sample.case,
+            "sub": sample["sub"].stem,
             "images": images,
             "seg": seg,
-            "mask" : sample.mask
+            "mask": self._resolve_mask(sample["mask"]),
         }
-        if self.return_mask:
-            item["mask"] = sample.mask
         return item
-
-
-
-
-    def _load_json_split(self, split_path: Path) -> list:
-        payload = json.loads(split_path.read_text(encoding="utf-8"))
-        samples: list = []
-
-        if isinstance(payload, list):
-            entries = payload
-        else:
-            entries = []
-            for value in payload.values():
-                if isinstance(value, list):
-                    entries.extend(value)
-
-        for entry in entries:
-            if not isinstance(entry, dict):
-                raise ValueError(f"Invalid split entry: {entry}")
-            case = str(entry.get("case") or entry.get("sub") or "").strip()
-            if not case:
-                raise ValueError(f"Missing case/sub field in entry: {entry}")
-            samples.append(
-                self._build_sample(
-                    case=case,
-                    mask=self._parse_mask(entry.get("mask")),
-                )
-            )
-        return samples
-
-
-
-    def _parse_mask(self, raw_mask: Any) -> list[bool] | None:
-        if raw_mask is None or raw_mask == "":
-            return None
-        if isinstance(raw_mask, list):
-            return [bool(value) for value in raw_mask]
-        if isinstance(raw_mask, str):
-            parsed = ast.literal_eval(raw_mask)
-            if not isinstance(parsed, list):
-                raise ValueError(f"Mask must parse to a list, got {type(parsed).__name__}")
-            return [bool(value) for value in parsed]
-        raise ValueError(f"Unsupported mask type: {type(raw_mask).__name__}")

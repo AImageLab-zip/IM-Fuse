@@ -1,11 +1,7 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
-from types import ModuleType
 from typing import Type, Any
 import ast
-
-import brainchmark.training.scheduling as custom_scheduling
 
 import typer
 
@@ -133,32 +129,8 @@ def parse_kv_list(items: list[str] | None) -> dict[str, Any]:
     return out
 
 
-def _resolve_custom_scheduler(module: ModuleType, scheduler_name: str) -> type:
-    candidates = (
-        scheduler_name,
-        scheduler_name.upper(),
-        scheduler_name.capitalize(),
-        "".join(part.capitalize() for part in scheduler_name.split("_")),
-    )
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-
-        scheduler_class = getattr(module, candidate, None)
-        if isinstance(scheduler_class, type):
-            return scheduler_class
-
-    raise typer.BadParameter(
-        f"Unsupported scheduler: {scheduler_name}",
-        param_hint="--scheduler",
-    )
-
-
 def build_scheduler_config(
-    scheduler_kind: SchedulerKind | str,
+    scheduler_kind: SchedulerKind,
     *,
     poly_total_iters: int | None,
     poly_power: float,
@@ -171,19 +143,8 @@ def build_scheduler_config(
     plateau_mode: str,
     plateau_factor: float,
     plateau_patience: int,
-    custom_scheduler_kwargs: dict[str, Any] | None = None,
 ) -> SchedulerConfig:
-    if isinstance(scheduler_kind, SchedulerKind):
-        scheduler_name = scheduler_kind.value
-    else:
-        scheduler_name = str(scheduler_kind).strip()
-
-    try:
-        known_scheduler = SchedulerKind(scheduler_name)
-    except ValueError:
-        known_scheduler = None
-
-    if known_scheduler is SchedulerKind.POLY:
+    if scheduler_kind is SchedulerKind.POLY:
         if poly_total_iters is None:
             raise typer.BadParameter(
                 "--poly-total-iters is required for poly",
@@ -197,7 +158,7 @@ def build_scheduler_config(
             },
         )
 
-    if known_scheduler is SchedulerKind.COSINE:
+    if scheduler_kind is SchedulerKind.COSINE:
         if cosine_t_max is None:
             raise typer.BadParameter(
                 "--cosine-t-max is required for cosine",
@@ -211,7 +172,7 @@ def build_scheduler_config(
             },
         )
 
-    if known_scheduler is SchedulerKind.STEP:
+    if scheduler_kind is SchedulerKind.STEP:
         if step_step_size is None:
             raise typer.BadParameter(
                 "--step-step-size is required for step",
@@ -225,7 +186,7 @@ def build_scheduler_config(
             },
         )
 
-    if known_scheduler is SchedulerKind.MULTISTEP:
+    if scheduler_kind is SchedulerKind.MULTISTEP:
         if not multistep_milestones:
             raise typer.BadParameter(
                 "--multistep-milestones is required for multistep",
@@ -239,7 +200,7 @@ def build_scheduler_config(
             },
         )
 
-    if known_scheduler is SchedulerKind.PLATEAU:
+    if scheduler_kind is SchedulerKind.PLATEAU:
         return SchedulerConfig(
             scheduler_class=SCHEDULER_DICT[SchedulerKind.PLATEAU],
             kwargs={
@@ -249,10 +210,9 @@ def build_scheduler_config(
             },
         )
 
-    scheduler_class = _resolve_custom_scheduler(custom_scheduling, scheduler_name)
-    return SchedulerConfig(
-        scheduler_class=scheduler_class,
-        kwargs=custom_scheduler_kwargs or {},
+    raise typer.BadParameter(
+        f"Unsupported scheduler: {scheduler_kind}",
+        param_hint="--scheduler",
     )
 
 

@@ -1,0 +1,82 @@
+# Combined IMFuse reference config for BraTS 2023.
+# This mirrors legacy IMFuse defaults as closely as possible under the current
+# BrainchMark CLI/config API.
+#
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
+
+# preprocess
+input_dir: /storage/datasets/BraTS-GLI-2023-train/
+output_dir: /storage/datasets/imfuse-preprocessed/
+dataset_type: brats23
+
+crop_mode: non_empty
+crop_size: null
+crop_min_size: [128, 128, 128]
+
+clamp_mode: none
+clamp_percentile: null
+clamp_min: null
+clamp_max: null
+
+norm_mode: subject_zscore
+norm_min_max_range: null
+norm_mean: null
+norm_std: null
+
+yes: false
+
+# training
+data_dir: /storage/datasets/imfuse-preprocessed
+art_dir: /storage/runs/imfuse
+
+trainer: imfuse
+model: imfuse
+loss: imfuse
+
+custom_model_kwargs:
+  interleaved_tokenization: false
+  mamba_skip: false
+  num_cls: 4
+
+custom_loss_kwargs: {}
+
+custom_trainer_kwargs:
+  iter_per_epoch: null
+  region_fusion_start_epoch: 0
+  patch_size: 128
+  debug: false
+
+optimizer: radam
+betas: [0.9, 0.999]
+momentum: 0.9
+
+scheduler: poly
+poly_total_iters: 1000
+poly_power: 0.9
+cosine_t_max: null
+cosine_eta_min: null
+step_step_size: null
+step_gamma: null
+multistep_milestones: null
+multistep_gamma: null
+plateau_mode: null
+plateau_factor: null
+plateau_patience: null
+
+train_transforms: "Compose([RandCrop3D((128,128,128)), RandomRotion(10), RandomIntensityChange((0.1,0.1)), RandomFlip(0), NumpyType((np.float32, np.int64)),])"
+test_transforms: "Compose([NumpyType((np.float32, np.int64)),])"
+
+lr: 0.0002
+num_epochs: 1000
+batch_size: 1
+weight_decay: 0.00003
+num_workers: 8
+
+resume: false
+pretrain: null
+seed: 999
+
+wandb_project: SegmentationMM
+wandb_mode: online

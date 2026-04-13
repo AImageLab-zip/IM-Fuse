@@ -15,7 +15,7 @@ from typer.models import OptionInfo
 # Internal modules
 from brainchmark.cli import app
 from brainchmark.preprocessing.config import ClampMode, CropMode, NormMode
-from brainchmark.utils.cli_utils import parse_clamp, parse_crop_size, parse_percentile
+
 
 
 APP_TITLE = "BrainchMark GUI"
