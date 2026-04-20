@@ -1,37 +1,27 @@
 # BrainchMark
 
-BrainchMark is a research framework for brain tumor segmentation under missing-modality conditions.
+BrainchMark is the active benchmark package in this repository for brain tumor segmentation under missing-modality conditions.
 
-The repository is organized as a benchmark-oriented workspace with multiple model directories and a Python package under `src/brainchmark` that currently provides:
+The operational code lives under `src/brainchmark`. The rest of the repository also contains legacy model directories and experiment workspaces, but `brainchmark` is the maintained CLI/package surface.
 
-- a preprocessing pipeline for BraTS-style datasets
-- a Typer-based CLI
-- a small GUI built on top of the CLI
-- configuration-driven execution through YAML files
+## What Exists Today
 
-## Current Scope
+BrainchMark currently provides:
 
-The `brainchmark` package is the operational core of the project.
+- dataset-aware preprocessing for BraTS-style datasets
+- a Typer CLI with `preprocess`, `train`, and `test`
+- YAML-driven execution with CLI overrides
+- a small GUI generated from the CLI surface
+- active model integrations for `imfuse` and `mmformer`
 
-Implemented or partially implemented components include:
+Supported dataset types:
 
-- dataset-aware preprocessing for `brats18` and `brats23`
-- cropping, clamping, and normalization configuration/validation
-- command-line entrypoints:
-  - `brainchmark`
-  - `brainchmark-gui`
-- a training command scaffold intended for config-driven training setup
-
-The repository also contains several model folders at the project root. Those are part of the broader experimentation workspace, but they are not documented here as a unified public API.
+- `brats18`
+- `brats23`
 
 ## Installation
 
-BrainchMark targets Python `>=3.13`.
-
-## System Requirements
-
-- CUDA Toolkit with `nvcc` available in `PATH`
-- compatible NVIDIA driver
+The package metadata currently pins Python to `3.12.13`.
 
 Recommended setup with `uv`:
 
@@ -40,93 +30,129 @@ uv sync
 source .venv/bin/activate
 ```
 
-That installs the project and the locked dependency set from `uv.lock`.
-
-If you want the development tools too:
+For development tools too:
 
 ```bash
 uv sync --extra dev
 source .venv/bin/activate
 ```
 
-If you prefer a manual fallback:
+Manual fallback:
 
 ```bash
-python3.13 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-## CLI
+## Entry Points
 
-After installation, the main entrypoint is:
+After installation:
 
 ```bash
 brainchmark --help
+brainchmark-gui
 ```
 
-Currently exposed commands include:
+CLI commands:
 
-- `hello`
 - `preprocess`
 - `train`
+- `test`
+- `self-destruct`
 
-The most mature command is `preprocess`.
+`self-destruct` is obviously not part of the serious workflow...but that’s exactly what I want you to believe… so why not try it, hehehe.
 
 ## Preprocessing Quick Start
 
-This is the part of the framework that currently has the clearest story and the least drama.
-
-Run preprocessing from a YAML file:
+Run preprocessing from YAML:
 
 ```bash
 brainchmark preprocess --config src/brainchmark/data/configs/preprocessing.yaml
 ```
 
-Run preprocessing from CLI flags:
+Run preprocessing from flags:
 
 ```bash
 brainchmark preprocess \
   --input-dir /path/to/brats23 \
   --output-dir /path/to/preprocessed \
   --dataset-type brats23 \
-  --crop-mode center \
-  --crop-size 128 128 128 \
-  --clamp-mode subject \
-  --clamp-percentile 0.5 99.5 \
-  --norm-mode min_max \
-  --norm-min-max-range 0.0 1.0
+  --crop-mode non_empty \
+  --crop-min-size 128 128 128 \
+  --norm-mode subject_zscore
 ```
 
-Preprocessing writes one compressed `.npz` file per case containing:
+The preprocessing output is one compressed `.npz` file per case containing:
 
 - `images`
 - `seg`
 
-For the full option reference and valid parameter combinations, see [docs/preprocessing.md](/home/ocarpentiero/PycharmProjects/IM-Fuse/docs/preprocessing.md).
+More detail: [docs/preprocessing.md](docs/preprocessing.md)
 
-## Configuration
+## Training Quick Start
 
-BrainchMark supports YAML-driven execution for reproducible runs.
-
-Typical pattern:
-
-- put the boring stable stuff in YAML
-- override the spicy bits from the CLI when needed
-
-Example:
+Example with a reference config:
 
 ```bash
-brainchmark preprocess \
-  --config src/brainchmark/data/configs/preprocessing.yaml \
-  --output-dir /tmp/brainchmark-run
+brainchmark train --config src/brainchmark/data/configs/imfuse_23.yaml
 ```
 
-Current example configs live in [src/brainchmark/data/configs](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/data/configs).
+Override selected values from the CLI:
+
+```bash
+brainchmark train \
+  --config src/brainchmark/data/configs/mmformer_23.yaml \
+  --batch-size 2 \
+  --wandb-run-name mmformer-debug
+```
+
+The current reference configs are:
+
+- `src/brainchmark/data/configs/imfuse_18.yaml`
+- `src/brainchmark/data/configs/imfuse_23.yaml`
+- `src/brainchmark/data/configs/mmformer_18.yaml`
+- `src/brainchmark/data/configs/mmformer_23.yaml`
+
+More detail: [docs/training.md](docs/training.md)
+
+## Testing Quick Start
+
+Evaluate a checkpoint across the standard 15 mask patterns:
+
+```bash
+brainchmark test --config src/brainchmark/data/configs/imfuse_23.yaml
+```
+
+Or directly:
+
+```bash
+brainchmark test \
+  --data-dir /path/to/preprocessed \
+  --checkpoint-path /path/to/checkpoint.pth \
+  --output-path /path/to/results.txt \
+  --dataset-type brats23 \
+  --model imfuse
+```
+
+The test command writes the text report at `output_path` and also creates a sibling Excel summary with the same stem and `.xlsx` suffix.
+
+More detail: [docs/testing.md](docs/testing.md)
+
+## Configuration Model
+
+The common pattern is:
+
+- keep stable experiment settings in YAML
+- override a few values from the CLI
+
+CLI values override YAML values when both are present.
+
+Reference configs live in [src/brainchmark/data/configs](src/brainchmark/data/configs).
 
 ## GUI
 
-The GUI is generated from the Typer command signatures and can be launched with:
+Launch the GUI with:
 
 ```bash
 brainchmark-gui
@@ -135,21 +161,27 @@ brainchmark-gui
 It is useful for:
 
 - browsing command options
-- filling preprocessing parameters interactively
-- running CLI-backed workflows without typing long commands
-
-If you do not feel like remembering twenty flags before coffee, this is the button-heavy path.
+- filling config/CLI parameters interactively
+- launching CLI-backed workflows without typing long commands
 
 ## Project Layout
 
-Key package files:
+Key package areas:
 
-- [src/brainchmark/cli.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/cli.py): CLI entrypoints
-- [src/brainchmark/gui.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/gui.py): Tk/ttkbootstrap GUI
-- [src/brainchmark/preprocessing/config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/preprocessing/config.py): preprocessing validation and config builders
-- [src/brainchmark/preprocessing/pipeline.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/preprocessing/pipeline.py): preprocessing execution pipeline
-- [src/brainchmark/datasets/config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/datasets/config.py): dataset enums
-- [docs/preprocessing.md](/home/ocarpentiero/PycharmProjects/IM-Fuse/docs/preprocessing.md): preprocessing documentation
+- [src/brainchmark/cli.py](src/brainchmark/cli.py): CLI entrypoints
+- [src/brainchmark/gui.py](src/brainchmark/gui.py): GUI launcher
+- [src/brainchmark/preprocessing/](src/brainchmark/preprocessing): preprocessing config and pipeline
+- [src/brainchmark/models/](src/brainchmark/models): active model integrations
+- [src/brainchmark/datasets/](src/brainchmark/datasets): dataset abstractions and masking logic
+- [src/brainchmark/training/](src/brainchmark/training): trainer/runtime/config code
+- [src/brainchmark/testing/](src/brainchmark/testing): evaluation pipeline
+
+Documentation:
+
+- [docs/preprocessing.md](docs/preprocessing.md)
+- [docs/training.md](docs/training.md)
+- [docs/testing.md](docs/testing.md)
+- [docs/extending.md](docs/extending.md)
 
 ## Development
 
@@ -159,6 +191,7 @@ Basic checks:
 python -m py_compile src/brainchmark/cli.py
 python -m py_compile src/brainchmark/gui.py
 python -m py_compile src/brainchmark/preprocessing/config.py
+python -m py_compile src/brainchmark/training/trainers/base_trainer.py
 ```
 
 Lint and type-check:
@@ -174,18 +207,12 @@ Run tests:
 pytest
 ```
 
-## Status
+## Current Status
 
-This repository is under active development.
+The current state is:
 
-Right now:
-
-- preprocessing is the most solid workflow
-- the GUI is useful for exploring and launching commands
-- the training command is still more scaffold than battle-tested pipeline
-
-So the current vibe is:
-
-- good for structured preprocessing
-- promising for benchmark orchestration
-- not done pretending to be finished
+- preprocessing is solid and actively usable
+- training is implemented and config-driven
+- testing is implemented for mask-sweep evaluation
+- the active trainer stack is centered on the IMFuse-style trainer/runtime, which is also currently reused for mmFormer
+- the docs and configs are intended to reflect the active `brainchmark` package, not the legacy folders

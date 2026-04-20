@@ -87,6 +87,28 @@ These values are required for preprocessing:
 - `brats18`
 - `brats23`
 
+## Output Format
+
+Preprocessing writes one compressed `.npz` file per case.
+
+Each file contains:
+
+- `images`
+- `seg`
+
+The active training and testing paths both consume this format.
+
+## Current UX Notes
+
+The preprocessing command now prints Rich panels for:
+
+- launch summary
+- destructive output-directory confirmation
+- output reset
+- completion
+
+Managed preprocessing failures are surfaced as CLI-style errors rather than raw runtime exceptions where applicable.
+
 ## Crop Options
 
 ### `crop_mode`

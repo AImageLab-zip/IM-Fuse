@@ -7,7 +7,7 @@ name = "BrainchMark"
 version = "0.1.0"
 description = "This repository provides a unified benchmark for brain tumor segmentation under missing modality conditions, built on the BraTS 2023 dataset. It offers a standardized framework to fairly reproduce, evaluate, and compare state-of-the-art methods designed for incomplete multimodal medical imaging."
 readme = "README.md"
-requires-python = "==3.12.3"
+requires-python = "==3.12.13"
 license = { text = "MIT" }
 authors = [
   { name = "Omar Carpentiero", email = "omar.carpentiero@unimore.it" },
@@ -23,11 +23,12 @@ dependencies = [
     "pandas>=3.0.2",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
-    "torch==2.7.1",
+    "torch==2.9.1",
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",
     "wandb>=0.25.1",
+    "wheel>=0.46.3",
 ]
 
 [project.optional-dependencies]
