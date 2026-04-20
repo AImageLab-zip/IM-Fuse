@@ -1,14 +1,11 @@
 from dataclasses import dataclass, field
-from enum import StrEnum
 import importlib
 from pathlib import Path
 from typing import Any
 
 import typer
 
-
-class ModelKind(StrEnum):
-    IMFUSE = "imfuse"
+from brainchmark.enums import ModelKind
 
 
 @dataclass(frozen=True)

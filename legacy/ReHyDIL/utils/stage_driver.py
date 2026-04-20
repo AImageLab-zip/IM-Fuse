@@ -199,8 +199,8 @@ def run_stage(cfg: StageConfig):
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(fh)
 
-    train_ds = BaseDataSets(cfg.data_path /'dataset', "train", cfg.img_mode, cfg.train_list, cfg.images_rate)
-    val_ds   = BaseDataSets(cfg.data_path / 'dataset', "val",   cfg.img_mode, cfg.val_list)
+    train_ds = BaseDataSets(cfg.data_path, "train", cfg.img_mode, cfg.train_list, cfg.images_rate)
+    val_ds   = BaseDataSets(cfg.data_path , "val",   cfg.img_mode, cfg.val_list)
 
     train_sampler = PatientBatchSampler(cfg.train_list, cfg.batch_size)
     
@@ -523,8 +523,8 @@ def run_stage(cfg: StageConfig):
         sel_losses = losses[sel_idx]
 
 
-        img_dir = Path(cfg.data_path) /'dataset'/ f"imgs_{cfg.img_mode}"
-        mask_dir = Path(cfg.data_path) /'dataset'/ "masks_all"
+        img_dir = Path(cfg.data_path) / f"imgs_{cfg.img_mode}"
+        mask_dir = Path(cfg.data_path) / "masks_all"
 
         def _to_chw(a: np.ndarray):
             if a.ndim == 2:

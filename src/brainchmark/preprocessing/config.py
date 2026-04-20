@@ -5,7 +5,7 @@ from typing import Callable
 
 import typer
 
-from brainchmark.utils.cli_overrides import CONFIG_NONE
+from brainchmark.enums import CropMode, ClampMode, NormMode
 
 
 def _mode_value(mode: StrEnum | str) -> str:
@@ -57,12 +57,6 @@ def _require_tuple(
             param_hint=param_hint,
         )
     return value
-
-
-class CropMode(StrEnum):
-    NONE = CONFIG_NONE
-    CENTER = "center"
-    NON_EMPTY = "non_empty"
 
 
 @dataclass(frozen=True)
@@ -125,12 +119,6 @@ class ClampConfig:
     percentile: tuple[float, float] | None = None
     min: tuple[float, float, float, float] | None = None
     max: tuple[float, float, float, float] | None = None
-
-
-class ClampMode(StrEnum):
-    NONE = CONFIG_NONE
-    SUBJECT = "subject"
-    DATASET = "dataset"
 
 
 def build_clamp_config(
@@ -217,13 +205,6 @@ def build_clamp_config(
                 )
 
     return ClampConfig(fn=fn, percentile=clamp_percentile, min=clamp_min, max=clamp_max)
-
-
-class NormMode(StrEnum):
-    NONE = CONFIG_NONE
-    MIN_MAX = "min_max"
-    SUBJECT_ZSCORE = "subject_zscore"
-    DATASET_ZSCORE = "dataset_zscore"
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Type, Any
 import ast
+
+from brainchmark.enums import OptimizerKind, SchedulerKind, TrainerKind
 
 import typer
 
@@ -14,20 +15,6 @@ from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
     StepLR,
 )
-
-DEFAULT_TRAIN_TRANSFORMS = (
-    "Compose([RandCrop3D((128,128,128)), RandomRotion(10), "
-    "RandomIntensityChange((0.1,0.1)), RandomFlip(0), "
-    "NumpyType((np.float32, np.int64)),])"
-)
-DEFAULT_TEST_TRANSFORMS = "Compose([NumpyType((np.float32, np.int64)),])"
-
-class OptimizerKind(StrEnum):
-    RADAM = "radam"
-    ADAMW = "adamw"
-    SGD = "sgd"
-    ADAM = "adam"
-
 
 OPTIMIZER_DICT = {
     OptimizerKind.RADAM: RAdam,
@@ -85,14 +72,6 @@ def build_optimizer_config(
         f"Unsupported optimizer: {optimizer_kind}",
         param_hint="--optimizer",
     )
-
-
-class SchedulerKind(StrEnum):
-    POLY = "poly"
-    COSINE = "cosine"
-    STEP = "step"
-    MULTISTEP = "multistep"
-    PLATEAU = "plateau"
 
 
 @dataclass(frozen=True)
@@ -214,12 +193,6 @@ def build_scheduler_config(
         f"Unsupported scheduler: {scheduler_kind}",
         param_hint="--scheduler",
     )
-
-
-class TrainerKind(StrEnum):
-    IMFUSE = "imfuse"
-
-
 
 
 @dataclass(frozen=True)

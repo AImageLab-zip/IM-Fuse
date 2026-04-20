@@ -24,6 +24,7 @@ parser.add_argument('--datapath', required=True, type=str)
 parser.add_argument('--savepath', required=True, type=str)
 parser.add_argument('--resume', required=True, type=str)
 parser.add_argument('--num-workers', default=8, type=int)
+parser.add_argument('--version', default='brats23', type=str)
 path = os.path.dirname(__file__)
 
 
@@ -37,7 +38,13 @@ ordered_names = ['t1c', 't1n','t2w','t2f']
 mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask in masks]
 test_modals_list = [[ordered_names[i] for i in range(4) if mask[i]]for mask in masks]
 datapath = args.datapath
-test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+if args.version == 'brats23':
+    test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+elif args.version == 'brats18':
+    test_file = Path(__file__).parent / 'datalist' / 'test_18.txt'
+else:
+    raise RuntimeError('Invalid version provided')
+    
 save_path = args.savepath
 
 model = RsInOut_U_Hemis3D(in_channels=1, out_channels=4,

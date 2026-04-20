@@ -7,9 +7,9 @@
 # both commands can consume directly.
 
 # preprocess
-input_dir: /storage/datasets/BraTS-GLI-2023-train/
-output_dir: /storage/datasets/imfuse-preprocessed/
-dataset_type: brats23
+input_dir: /work/grana_neuro/MICCAI_BraTS_2018_Data_Training
+output_dir: /work/grana_neuro/brainchmark/imfuse18-preprocessed/
+dataset_type: brats18
 
 crop_mode: non_empty
 crop_size: null
@@ -28,8 +28,8 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /storage/datasets/imfuse-preprocessed
-art_dir: /storage/runs/imfuse
+data_dir: /work/grana_neuro/brainchmark/imfuse18-preprocessed
+art_dir: /work/grana_neuro/brainchmark/runs/imfuse18
 
 trainer: imfuse
 model: imfuse
@@ -40,13 +40,20 @@ custom_model_kwargs:
   mamba_skip: false
   num_cls: 4
 
-custom_loss_kwargs: {}
+#custom_loss_kwargs: {}
+loss_num_classes: null
+fuse_weight: 1.0
+sep_weight: 1.0
+prm_weight: 1.0
+loss_eps: 0.0000001
+log_clamp_min: 0.005
 
 custom_trainer_kwargs:
   iter_per_epoch: null
   region_fusion_start_epoch: 0
   patch_size: 128
   debug: false
+  transform_kind: imfuse
 
 optimizer: radam
 betas: [0.9, 0.999]
@@ -65,14 +72,12 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-train_transforms: "Compose([RandCrop3D((128,128,128)), RandomRotion(10), RandomIntensityChange((0.1,0.1)), RandomFlip(0), NumpyType((np.float32, np.int64)),])"
-test_transforms: "Compose([NumpyType((np.float32, np.int64)),])"
-
-lr: 0.0002
+lr: 0.0008
 num_epochs: 1000
-batch_size: 1
+batch_size: 4
 weight_decay: 0.00003
-num_workers: 8
+num_workers: 16
+fp16: true
 
 resume: false
 pretrain: null
@@ -80,3 +85,7 @@ seed: 999
 
 wandb_project: SegmentationMM
 wandb_mode: online
+wandb_run_name: imfuse18_training
+# testing
+checkpoint_path: /work/grana_neuro/brainchmark/runs/imfuse18/checkpoints/model_last.pth
+output_path: /work/grana_neuro/brainchmark/runs/imfuse18/results.txt

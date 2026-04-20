@@ -1,25 +1,51 @@
 from __future__ import annotations
 
+from functools import partial
 import logging
 from pathlib import Path
 from typing import Any
 
 import torch
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 
 from brainchmark.datasets import DatasetType, IMFuseDataset, MaskingMode
+from brainchmark.enums import TransformKind
 from brainchmark.losses.config import LossConfig
 from brainchmark.models.config import ModelConfig
 from brainchmark.training.config import OptimizerConfig, SchedulerConfig
 from brainchmark.training.trainers.base_trainer import BaseTrainer
+from brainchmark.training.transforms import build_transform_manager
 
-
-LOGGER = logging.getLogger(__name__)
 DEFAULT_PATCH_SIZE = 128
 
 
 class IMFuseTrainer(BaseTrainer):
+    @staticmethod
+    def _format_gib(value_bytes: int) -> str:
+        return f"{value_bytes / (1024 ** 3):.1f}GiB"
+
+    def _vram_text(self) -> str:
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            return "cpu"
+
+        device_index = self.device.index
+        if device_index is None:
+            device_index = torch.cuda.current_device()
+
+        used_bytes = torch.cuda.max_memory_allocated(device_index)
+        total_bytes = torch.cuda.get_device_properties(device_index).total_memory
+        return f"{self._format_gib(used_bytes)}/{self._format_gib(total_bytes)}"
+
     def __init__(
         self,
         input_dir: Path,
@@ -29,16 +55,16 @@ class IMFuseTrainer(BaseTrainer):
         loss_config: LossConfig | None = None,
         optimizer_config: OptimizerConfig | None = None,
         scheduler_config: SchedulerConfig | None = None,
-        train_transforms: str | None = None,
-        test_transforms: str | None = None,
         num_epochs: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
+        fp16: bool = False,
         resume: bool = False,
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
         wandb_mode: str | None = None,
+        wandb_run_name: str | None = None,
         dataset_type:str|None = None
     ) -> None:
         trainer_kwargs = dict(custom_trainer_kwargs or {})
@@ -61,6 +87,15 @@ class IMFuseTrainer(BaseTrainer):
         )
         self.patch_size = int(trainer_kwargs.get("patch_size", DEFAULT_PATCH_SIZE))
         self.debug = bool(trainer_kwargs.get("debug", False))
+        self.transform_kind = TransformKind(
+            trainer_kwargs.get("transform_kind", TransformKind.IMFUSE)
+        )
+        self.train_masking_mode = MaskingMode(
+            trainer_kwargs.get("train_masking_mode", MaskingMode.RANDOM)
+        )
+        self.val_masking_mode = MaskingMode(
+            trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION)
+        )
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -75,16 +110,16 @@ class IMFuseTrainer(BaseTrainer):
             loss_config=loss_config,
             optimizer_config=optimizer_config,
             scheduler_config=scheduler_config,
-            train_transforms=train_transforms,
-            test_transforms=test_transforms,
             num_epochs=num_epochs,
             batch_size=effective_batch_size,
             num_workers=effective_num_workers,
+            fp16=fp16,
             resume=resume,
             seed=seed,
             pretrain=pretrain,
             wandb_project=wandb_project,
             wandb_mode=wandb_mode,
+            wandb_run_name=wandb_run_name,
             dataset_type=dataset_type
         )
 
@@ -105,7 +140,7 @@ class IMFuseTrainer(BaseTrainer):
 
         self.model.train()
         self._set_aux_training_flag(True)
-        steps = self.iter_per_epoch or len(self.train_loader)
+        steps = len(self.train_loader)
         totals = {
             "loss": 0.0,
             "fusecross": 0.0,
@@ -117,29 +152,31 @@ class IMFuseTrainer(BaseTrainer):
         }
 
         iterations = 0
-        for step in range(steps):
-            batch = self._next_train_batch()
-            metrics = self._train_step(batch, epoch)
-            iterations += 1
-            for key, value in metrics.items():
-                totals[key] += value
-            LOGGER.info(
-                "Epoch %s/%s Iter %s/%s Loss %.4f fusecross:%.4f fusedice:%.4f "
-                "sepcross:%.4f sepdice:%.4f prmcross:%.4f prmdice:%.4f",
-                epoch + 1,
-                self.num_epochs,
-                step + 1,
-                steps,
-                metrics["loss"],
-                metrics["fusecross"],
-                metrics["fusedice"],
-                metrics["sepcross"],
-                metrics["sepdice"],
-                metrics["prmcross"],
-                metrics["prmdice"],
+        with self._progress(disable=not self.is_main_process) as progress:
+            task_id = progress.add_task(
+                f"Train {epoch + 1}/{self.num_epochs}",
+                total=steps,
+                metrics="",
+                vram=self._vram_text(),
             )
-            if self.debug:
-                break
+            for _ in range(steps):
+                batch = self._next_train_batch()
+                metrics = self._train_step(batch, epoch)
+                iterations += 1
+                for key, value in metrics.items():
+                    totals[key] += value
+                progress.update(
+                    task_id,
+                    advance=1,
+                    vram=self._vram_text(),
+                    metrics=(
+                        f"loss {metrics['loss']:.4f}  "
+                        f"avg {totals['loss'] / iterations:.4f}"
+                    ),
+                )
+
+                if self.debug:
+                    break
 
         return {
             key: value / max(iterations, 1)
@@ -160,26 +197,43 @@ class IMFuseTrainer(BaseTrainer):
         sample_count = 0
 
         with torch.no_grad():
-            for batch in self.val_loader:
-                images = batch["images"].to(self.device, non_blocking=True)
-                seg = batch["seg"].to(self.device, non_blocking=True).long()
-                mask = batch["mask"].to(self.device, non_blocking=True).bool()
+            with self._progress(disable=not self.is_main_process) as progress:
+                task_id = progress.add_task(
+                    f"Val {epoch + 1}/{self.num_epochs}",
+                    total=len(self.val_loader),
+                    metrics="",
+                    vram=self._vram_text(),
+                )
+                for batch in self.val_loader:
+                    images = batch["images"].to(self.device, non_blocking=True)
+                    seg = batch["seg"].to(self.device, non_blocking=True).long()
+                    mask = batch["mask"].to(self.device, non_blocking=True).bool()
 
-                pred = self._predict_volume(images, mask)
-                target = self._seg_to_one_hot(seg)
-                seg_loss = self._segmentation_loss(pred, target)
-                wt, tc, et, etpp = self._evaluate_scores(pred.argmax(dim=1), seg.squeeze(1))
+                    with self._autocast_context():
+                        pred = self._predict_volume(images, mask)
+                        target = self._seg_to_one_hot(seg)
+                        seg_loss = self._segmentation_loss(pred, target)
+                    wt, tc, et, etpp = self._evaluate_scores(pred.argmax(dim=1), seg.squeeze(1))
 
-                batch_size = images.shape[0]
-                sample_count += batch_size
-                loss_sum += float(seg_loss.item()) * batch_size
-                wt_sum += float(wt.sum().item())
-                tc_sum += float(tc.sum().item())
-                et_sum += float(et.sum().item())
-                etpp_sum += float(etpp.sum().item())
+                    batch_size = images.shape[0]
+                    sample_count += batch_size
+                    loss_sum += float(seg_loss.item()) * batch_size
+                    wt_sum += float(wt.sum().item())
+                    tc_sum += float(tc.sum().item())
+                    et_sum += float(et.sum().item())
+                    etpp_sum += float(etpp.sum().item())
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        vram=self._vram_text(),
+                        metrics=(
+                            f"loss {float(seg_loss.item()):.4f}  "
+                            f"avg {loss_sum / max(sample_count, 1):.4f}"
+                        ),
+                    )
 
-                if self.debug:
-                    break
+                    if self.debug:
+                        break
 
         self.model.train()
         self._set_aux_training_flag(True)
@@ -198,19 +252,36 @@ class IMFuseTrainer(BaseTrainer):
             "dice": dice_score,
         }
 
+    def _progress(self, *, disable: bool) -> Progress:
+        return Progress(
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=None),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("VRAM {task.fields[vram]}", style="yellow"),
+            TextColumn("{task.fields[metrics]}", style="magenta"),
+            transient=True,
+            disable=disable,
+        )
+
     def build_datasets(self) -> tuple[Dataset, Dataset]:
         if self.train_split is None or self.val_split is None:
             raise RuntimeError("train_split and val_split must be loaded before building datasets")
 
+        transform_manager = build_transform_manager(self.transform_kind)
         train_set = IMFuseDataset(
             root=self.input_dir,
-            masking_mode=MaskingMode.RANDOM,
+            masking_mode=self.train_masking_mode,
             split=self.train_split,
+            sample_transform=partial(transform_manager, mode="train"),
         )
         val_set = IMFuseDataset(
             root=self.input_dir,
-            masking_mode=MaskingMode.VALIDATION,
+            masking_mode=self.val_masking_mode,
             split=self.val_split,
+            sample_transform=partial(transform_manager, mode="test"),
         )
         return train_set, val_set
 
@@ -298,7 +369,6 @@ class IMFuseTrainer(BaseTrainer):
         )
         self.best_val_loss = float(checkpoint.get("best_val_loss", self.best_val_loss))
         epoch = int(checkpoint.get("epoch", -1)) + 1
-        LOGGER.info("resumed from %s at epoch %s", checkpoint_path, epoch)
         return epoch
 
     def save_checkpoint(self, epoch: int, is_best: bool = False) -> Path:
@@ -346,6 +416,8 @@ class IMFuseTrainer(BaseTrainer):
                 "region_fusion_start_epoch": self.region_fusion_start_epoch,
                 "patch_size": self.patch_size,
                 "debug": self.debug,
+                "train_masking_mode": self.train_masking_mode,
+                "val_masking_mode": self.val_masking_mode,
                 "split_file": str(self.split_file),
             }
         )
@@ -366,7 +438,6 @@ class IMFuseTrainer(BaseTrainer):
         if model is None:
             raise RuntimeError("model must be initialized before loading pretrained weights")
         model.load_state_dict(state_dict, strict=False)
-        LOGGER.info("loaded pretrained weights from %s", self.pretrain)
 
     def _next_train_batch(self) -> dict[str, Any]:
         if self._train_iterator is None:
@@ -383,21 +454,19 @@ class IMFuseTrainer(BaseTrainer):
         seg = batch["seg"].to(self.device, non_blocking=True).long()
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
         images, seg = self._crop_pair(images, seg, random_crop=True)
-        target = self._seg_to_one_hot(seg)
+        with self._autocast_context():
+            target = self._seg_to_one_hot(seg)
+            fuse_pred, sep_preds, prm_preds = self.model(images, mask)
+            metrics = self._loss_impl().training_loss(
+                fuse_pred,
+                sep_preds,
+                prm_preds,
+                target,
+                include_fuse=epoch >= self.region_fusion_start_epoch,
+            )
+            loss = metrics["loss"]
 
-        fuse_pred, sep_preds, prm_preds = self.model(images, mask)
-        metrics = self._loss_impl().training_loss(
-            fuse_pred,
-            sep_preds,
-            prm_preds,
-            target,
-            include_fuse=epoch >= self.region_fusion_start_epoch,
-        )
-        loss = metrics["loss"]
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        self._backward_step(loss)
         return {
             "loss": float(loss.item()),
             "fusecross": float(metrics["fusecross"].item()),
@@ -413,56 +482,11 @@ class IMFuseTrainer(BaseTrainer):
         images: torch.Tensor,
         mask: torch.Tensor,
     ) -> torch.Tensor:
-        _, _, height, width, depth = images.shape
-        if (height, width, depth) == (self.patch_size, self.patch_size, self.patch_size):
-            return self.model(images, mask)
-
-        h_starts = self._window_starts(height)
-        w_starts = self._window_starts(width)
-        d_starts = self._window_starts(depth)
-        prediction = torch.zeros(
-            images.size(0),
-            self.num_classes,
-            height,
-            width,
-            depth,
-            device=self.device,
-        )
-        weight = torch.zeros(
-            images.size(0),
-            1,
-            height,
-            width,
-            depth,
-            device=self.device,
-        )
-
-        for h in h_starts:
-            for w in w_starts:
-                for d in d_starts:
-                    patch = images[
-                        :,
-                        :,
-                        h : h + self.patch_size,
-                        w : w + self.patch_size,
-                        d : d + self.patch_size,
-                    ]
-                    patch_pred = self.model(patch, mask)
-                    prediction[
-                        :,
-                        :,
-                        h : h + self.patch_size,
-                        w : w + self.patch_size,
-                        d : d + self.patch_size,
-                    ] += patch_pred
-                    weight[
-                        :,
-                        :,
-                        h : h + self.patch_size,
-                        w : w + self.patch_size,
-                        d : d + self.patch_size,
-                    ] += 1
-        return prediction / weight
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before prediction")
+        with self._autocast_context():
+            return model.predict(images, mask)
 
     def _crop_pair(
         self,

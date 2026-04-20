@@ -5,6 +5,7 @@ import sys
 import torch
 import argparse
 import logging
+import hashlib
 from utils.stage_driver import StageConfig, run_stage
 from pathlib import Path
 import wandb
@@ -18,6 +19,12 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+
+def build_wandb_run_id(checkpoint_path: Path, stage: str, version: str) -> str:
+    key = f"{checkpoint_path.resolve()}::{stage}::{version}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"rehydil-{stage}-{digest}"
 
 def parse_args():
     p = argparse.ArgumentParser(description="ReHyDIL stage-by-stage trainer")
@@ -75,7 +82,9 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--num-epochs", type=int, default=80)
     p.add_argument("--wandb-project-name",type=str,default=None)
+    p.add_argument("--wandb-run-id", type=str, default=None)
     p.add_argument("--resume",action='store_true')
+    p.add_argument("--version",type=str,default='brats23')
     return p.parse_args()
 
 
@@ -88,9 +97,16 @@ def main():
 
     stages = [s.strip() for s in args.stages.split(",") if s.strip()]
     assert len(stages) >= 1, "Please provide at least one stage (modality)."
+    if args.version == 'brats23':
+        train_lists = Path(__file__).parent / 'datalist' / 'train.txt'
+        val_lists = Path(__file__).parent / 'datalist' / 'val15splits.csv'
+        
+    elif args.version == 'brats18':
+        train_lists = Path(__file__).parent / 'datalist' / 'train_18.txt'
+        val_lists = Path(__file__).parent / 'datalist' / 'val_18.txt'
+    else:
+        raise RuntimeError('Invalid dataset version')
 
-    train_lists = Path(__file__).parent / 'datalist' / 'train.txt'
-    val_lists = Path(__file__).parent / 'datalist' / 'val.txt'
 
 
     os.makedirs(args.datapath / 'out', exist_ok=True)
@@ -98,9 +114,12 @@ def main():
     seen = []
     prev_base_dir = None
     if args.wandb_project_name is not None:
+        run_id = args.wandb_run_id or build_wandb_run_id(args.checkpoint_path, args.current_stage, args.version)
         wandb.init(
             project=args.wandb_project_name,
-            name = f'training: {args.current_stage}'
+            name=f"training: {args.current_stage}",
+            id=run_id,
+            resume="allow"
         )
     for i, mod in enumerate(stages):
         base_dir = args.datapath / 'out'/ f"res-{mod}"

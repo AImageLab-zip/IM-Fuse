@@ -18,6 +18,7 @@ from tqdm import tqdm
 import argparse
 from pathlib import Path
 import wandb
+import hashlib
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 import numpy as np
@@ -41,6 +42,7 @@ def parse_option():
     
     parser.add_argument('--datapath', type=Path, required=True)
     parser.add_argument('--wandb-project-name',type=str,default=None)
+    parser.add_argument('--wandb-run-id', type=str, default=None)
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--checkpoint-path',type=Path,required=True)
     parser.add_argument('--num-epochs', type=int, default=1200)
@@ -48,6 +50,7 @@ def parse_option():
     parser.add_argument('--resume',action='store_true')
     parser.add_argument('--train_transforms', type=str, default='Compose([ RandCrop3D((128,128,128)), RandomRotion(10),RandomFlip(0), NumpyType((np.float32, np.int64)), ])')
     parser.add_argument('--val_transforms', type=str, default='Compose([Pad((0, 0, 0, 5, 0)),NumpyType((np.float32, np.int64)),])')
+    parser.add_argument('--version',type=str,default='brats23')
     opt = parser.parse_args()
     return opt
 
@@ -57,11 +60,22 @@ def adjust_lr(init_lr,optimizer, epoch,total_epo):
     for param_group in optimizer.param_groups:
         param_group['lr'] = cur_lr 
 
+
+def build_wandb_run_id(checkpoint_path: Path, version: str) -> str:
+    key = f"{checkpoint_path.resolve()}::{version}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"unet-mfi-{version}-{digest}"
+
 def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=None,num_epochs=1200,
                 deepSupvision=False,wandb_project_name=None,checkpoint_path=None,lr=5e-5,
-                start_epoch = 0):
+                start_epoch = 0, wandb_run_id=None):
     if wandb_project_name is not None:
-        wandb.init(project=wandb_project_name,name='training')
+        wandb.init(
+            project=wandb_project_name,
+            name='training',
+            id=wandb_run_id,
+            resume="allow"
+        )
 
     #use_amp = torch.cuda.get_device_capability(0)[0]>=7
     use_amp = False
@@ -229,6 +243,7 @@ def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=
                 'epoch': epoch,
                 'scaler':scaler.state_dict()
             }
+            os.makedirs(checkpoint_path,exist_ok=True)
             torch.save(state, checkpoint_path / f'chk_{epoch}.pth')
             torch.save(state, checkpoint_path / f'last.pth')
         if sche:
@@ -240,8 +255,15 @@ def train_model(model, criterion, optimizer, dataload, val_loader, scaler, sche=
 # train the model
 def train():
     opt = parse_option()
-    train_list = Path(__file__).parent / 'datalist' / 'train.txt'
-    val_list = Path(__file__).parent / 'datalist' / 'val15splits.csv'
+    if opt.version == 'brats23':
+        train_list = Path(__file__).parent / 'datalist' / 'train.txt'
+        val_list = Path(__file__).parent / 'datalist' / 'val15splits.csv'
+        
+    elif opt.version == 'brats18':
+        train_list = Path(__file__).parent / 'datalist' / 'train_18.txt'
+        val_list = Path(__file__).parent / 'datalist' / 'val_18.csv'
+    else:
+        raise RuntimeError('Invalid dataset version')
     model = no_share_unet(in_channel=1, out_channel=3, diff=True,deepSupvision=True).cuda()
     criterion = BCEDiceLoss()
     optimizer = optim.Adam(model.parameters(),lr=opt.learning_rate * np.sqrt(opt.batch_size),weight_decay=opt.weight_decay)
@@ -272,7 +294,8 @@ def train():
 
     train_model(model, criterion, optimizer, train_loader,val_loader,scaler = scaler,sche=None,num_epochs=opt.num_epochs,
                 deepSupvision=True,wandb_project_name=opt.wandb_project_name,checkpoint_path=opt.checkpoint_path,
-                lr=opt.learning_rate,start_epoch=start_epoch)
+                lr=opt.learning_rate,start_epoch=start_epoch,
+                wandb_run_id=opt.wandb_run_id or build_wandb_run_id(opt.checkpoint_path, opt.version))
     if opt.wandb_project_name is not None:
         wandb.finish()
 
@@ -281,6 +304,4 @@ def train():
 if __name__ == '__main__':
     set_seed(0)
     train()
-
-
 

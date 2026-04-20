@@ -3,8 +3,8 @@ from typing import Any, Callable
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 
+from brainchmark.datasets.base import BaseDataset
 from brainchmark.datasets.config import MaskingMode
 
 
@@ -30,70 +30,58 @@ MASK_PATTERNS = torch.tensor(
 )
 
 
-class IMFuseDataset(Dataset):
+class IMFuseDataset(BaseDataset):
     def __init__(
         self,
         root: str | Path,
         masking_mode: MaskingMode,
         split: list[dict[str, Any]],
+        sample_transform: Callable[[torch.Tensor, torch.Tensor], tuple[Any, Any]] | None = None,
         image_transforms: Callable[[torch.Tensor], Any] | None = None,
         target_transforms: Callable[[torch.Tensor], Any] | None = None
 
     ) -> None:
-        self.root = Path(root)
-        if not self.root.is_dir():
-            raise ValueError(f"Dataset directory not found: {self.root}")
+        super().__init__(
+            root=root,
+            split=split,
+            masking_mode=masking_mode,
+            mask_patterns=MASK_PATTERNS,
+            sample_transform=sample_transform,
+            image_transforms=image_transforms,
+            target_transforms=target_transforms,
+        )
 
-        self.image_transform = image_transforms
-        self.target_transform = target_transforms
-        self.masking_mode = masking_mode
-        self.samples = self._load_samples(split)
-
-        if not self.samples:
-            raise ValueError(f"No samples found in {self.root}")
-
-    def _load_samples(self, split: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        samples: list[dict[str, Any]] = []
-        for sample in split:
-            subject_name = str(sample["sub"])
-            subject_path = self.root / f"{subject_name}.npz"
-            if not subject_path.is_file():
-                raise ValueError(f"Sample file not found: {subject_path}")
-            samples.append(
-                {
-                    "sub": subject_path,
-                    "mask": sample.get("mask"),
-                }
-            )
-        return samples
-
-    def _resolve_mask(self, raw_mask: Any) -> torch.Tensor:
-        if raw_mask is None:
-            if self.masking_mode is MaskingMode.RANDOM:
-                index = int(torch.randint(len(MASK_PATTERNS), size=(1,)).item())
-                return MASK_PATTERNS[index].clone()
-            return torch.ones(4, dtype=torch.bool)
-
-        return torch.as_tensor(raw_mask, dtype=torch.bool)
-
-    def __len__(self) -> int:
-        return len(self.samples)
+    def build_sample(self, sample: dict[str, Any]) -> dict[str, Any]:
+        subject_name = str(sample["sub"])
+        subject_path = self.root / f"{subject_name}.npz"
+        if not subject_path.is_file():
+            raise FileNotFoundError(f"Sample file not found: {subject_path}")
+        return {
+            "sub": subject_path,
+            "mask": sample.get("mask"),
+        }
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         sample = self.samples[index]
         with np.load(sample["sub"]) as data:
-            images = torch.from_numpy(data["images"]).float()
-            seg = torch.from_numpy(data["seg"]).float()
+            images = torch.from_numpy(data["images"]).clone().float()
+            seg = self._normalize_seg_shape(torch.from_numpy(data["seg"]).clone().float())
 
-        if self.image_transform is not None:
-            images = self.image_transform(images)
-        if self.target_transform is not None:
-            seg = self.target_transform(seg)
+        images, seg = self.apply_transforms(images, seg)
+        seg = self._normalize_seg_shape(seg)
 
         item: dict[str, Any] = {
             "sub": sample["sub"].stem,
             "images": images,
             "seg": seg,
-            "mask": self._resolve_mask(sample["mask"]),
+            "mask": self.resolve_mask(sample["mask"]),
         }
         return item
+
+    @staticmethod
+    def _normalize_seg_shape(seg: torch.Tensor) -> torch.Tensor:
+        if seg.ndim == 3:
+            return seg.unsqueeze(0)
+        if seg.ndim == 4 and seg.shape[0] == 1:
+            return seg
+        raise ValueError(f"IMFuseDataset expects seg shape [H, W, D] or [1, H, W, D], got {tuple(seg.shape)}")

@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--num-workers', default=8, type=int)
     parser.add_argument('--micro-bs', default=8, type=int, help='number of patches per forward')
     parser.add_argument('--use-compile', action='store_true')
+    parser.add_argument('--version', type=str,default='brats23')
     args = parser.parse_args()
 
     torch.backends.cudnn.benchmark = True
@@ -59,7 +60,12 @@ def main():
     mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask in masks]
 
     datapath = args.datapath
-    test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+    if args.version == 'brats23':
+        test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+    elif args.version == 'brats18':
+        test_file = Path(__file__).parent / 'datalist' / 'test_18.txt'
+    else:
+        raise RuntimeError('Invalid version provided')
 
     model = no_share_unet(in_channel=1, out_channel=3, diff=True, deepSupvision=True).to(DEVICE)
     model.eval()

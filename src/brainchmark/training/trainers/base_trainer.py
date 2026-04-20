@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import json
 import logging
 import os
@@ -11,20 +11,27 @@ from typing import Any
 import click
 import torch
 import torch.distributed as dist
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from torch.nn.parallel import DistributedDataParallel
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from brainchmark.losses.config import LossConfig
-from brainchmark.models.config import ModelConfig
 from brainchmark.training.config import OptimizerConfig, SchedulerConfig
+from brainchmark.training.trainers.abstract_trainer import AbstractTrainer
+from brainchmark.losses.config import LossConfig
+from brainchmark.models.abstract_model import AbstractModel
+from brainchmark.models.config import ModelConfig
 
 
 LOGGER = logging.getLogger(__name__)
+CONSOLE = Console()
 
 
-class BaseTrainer(ABC):
+class BaseTrainer(AbstractTrainer):
     def __init__(
         self,
         input_dir: Path,
@@ -37,62 +44,47 @@ class BaseTrainer(ABC):
         optimizer_config: OptimizerConfig | None = None,
         scheduler_config: SchedulerConfig | None = None,
 
-        train_transforms: str | None = None,
-        test_transforms: str | None = None,
-
         num_epochs: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
+        fp16: bool = False,
         resume: bool = False,
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
         wandb_mode: str | None = None,
+        wandb_run_name: str | None = None,
         dataset_type:str|None = None,
     ) -> None:
-        self.input_dir = Path(input_dir)
-        self.output_dir = Path(output_dir)
-
-        self.model_config = model_config
-        self.loss_config = loss_config
-        self.custom_trainer_kwargs = custom_trainer_kwargs or {}
-        self.optimizer_config = optimizer_config
-        self.scheduler_config = scheduler_config
-
-        self.train_transforms = train_transforms
-        self.test_transforms = test_transforms
-        self.num_epochs = int(num_epochs)
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-
-        self.seed = seed
-        self.pretrain = Path(pretrain) if pretrain is not None else None
-        self.wandb_project = wandb_project
-        self.wandb_mode = wandb_mode
-        self.split_file: Path | None = None
-        self.train_split: list[dict[str, Any]] | None = None
-        self.val_split: list[dict[str, Any]] | None = None
-        self.test_split: list[dict[str, Any]] | None = None
+        super().__init__(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            custom_trainer_kwargs=custom_trainer_kwargs,
+            model_config=model_config,
+            loss_config=loss_config,
+            optimizer_config=optimizer_config,
+            scheduler_config=scheduler_config,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            fp16=fp16,
+            resume=resume,
+            seed=seed,
+            pretrain=pretrain,
+            wandb_project=wandb_project,
+            wandb_mode=wandb_mode,
+            wandb_run_name=wandb_run_name,
+            dataset_type=dataset_type,
+        )
 
         self.distributed = self._should_use_distributed()
         self.rank = int(os.environ.get("RANK", "0"))
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
         self.local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         self.device = self._resolve_device()
-        self.dataset_type = dataset_type
-
-        self.model: torch.nn.Module | None = None
-        self.loss_fn: Any | None = None
-        self.optimizer: torch.optim.Optimizer | None = None
-        self.scheduler: Any | None = None
-        self.wandb_run: Any | None = None
-
-        self.current_epoch = 0
-        self.best_val_loss = float("inf")
-
-        self.checkpoint_dir = self.output_dir / "checkpoints"
-        self.resume = self._resolve_resume_path(resume)
-        self._owns_process_group = False
+        self.amp_enabled = self.fp16 and self.device.type == "cuda"
+        self.grad_scaler = GradScaler("cuda", enabled=self.amp_enabled)
+        self.resume = self._resolve_resume_path(self.resume_requested)
         self._setup_distributed()
         self.model = self._build_model()
         self.wrap_model_for_distributed()
@@ -109,6 +101,7 @@ class BaseTrainer(ABC):
         if self.is_main_process:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            self._print_launch_summary()
         self._barrier()
 
         start_epoch = 0
@@ -118,17 +111,23 @@ class BaseTrainer(ABC):
         self._init_wandb()
 
         try:
-            for epoch in range(start_epoch, self.num_epochs):
-                self.current_epoch = epoch
-                self._set_loader_epoch(self.train_loader, epoch)
-                self._set_loader_epoch(self.val_loader, epoch)
+            try:
+                for epoch in range(start_epoch, self.num_epochs):
+                    self.current_epoch = epoch
+                    self._set_loader_epoch(self.train_loader, epoch)
+                    self._set_loader_epoch(self.val_loader, epoch)
 
-                train_metrics = self._reduce_metrics(self.train_epoch(epoch))
+                    train_metrics = self._reduce_metrics(self.train_epoch(epoch))
 
-                val_metrics = self._reduce_metrics(self.val_epoch(epoch))
-                self._step_scheduler(val_metrics)
-                self._log_wandb_epoch(epoch, train_metrics, val_metrics)
-                self.save_checkpoint(epoch, is_best=self._is_best_checkpoint(val_metrics))
+                    val_metrics = self._reduce_metrics(self.val_epoch(epoch))
+                    self._step_scheduler(val_metrics)
+                    self._log_wandb_epoch(epoch, train_metrics, val_metrics)
+                    self.save_checkpoint(epoch, is_best=self._is_best_checkpoint(val_metrics))
+                self.save_final_checkpoint()
+            except Exception as exc:
+                if self._is_cuda_oom_error(exc):
+                    self._handle_cuda_oom()
+                raise
         finally:
             self._finish_wandb()
             self._cleanup_distributed()
@@ -191,11 +190,34 @@ class BaseTrainer(ABC):
 
         return last_path
 
+    def save_final_checkpoint(self) -> Path:
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before saving a checkpoint")
+        if not self.is_main_process:
+            return self.checkpoint_dir / "final.pth"
+
+        checkpoint = {
+            "epoch": self.current_epoch,
+            "state_dict": model.state_dict(),
+            "optim_dict": self.optimizer.state_dict() if self.optimizer is not None else None,
+            "scheduler_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "best_val_loss": self.best_val_loss,
+        }
+
+        final_path = self.checkpoint_dir / "final.pth"
+        torch.save(checkpoint, final_path)
+        return final_path
+
     def _build_model(self) -> torch.nn.Module:
         if self.model_config is None:
             raise RuntimeError("model_config must be set before building a model")
 
         model = self.model_config.model_class(**self.model_config.kwargs)
+        if not isinstance(model, AbstractModel):
+            raise RuntimeError(
+                f"{self.model_config.model_class.__name__} must inherit from AbstractModel"
+            )
         return model.to(self.device)
 
     def _build_optimizer(
@@ -306,6 +328,7 @@ class BaseTrainer(ABC):
             self.model,
             device_ids=[self.local_rank],
             output_device=self.local_rank,
+            find_unused_parameters=True,
         )
 
         return self.model
@@ -367,7 +390,7 @@ class BaseTrainer(ABC):
 
     def _resolve_device(self) -> torch.device:
         if not torch.cuda.is_available():
-            click.ClickException("Torch couldn't find any cuda device!")
+            raise click.ClickException("Torch couldn't find any cuda device!")
         if self.distributed and torch.cuda.is_available():
             return torch.device("cuda", self.local_rank)
         return torch.device("cuda")
@@ -398,12 +421,50 @@ class BaseTrainer(ABC):
                 "wandb logging requested but the 'wandb' package is not installed"
             ) from exc
 
+        run_id = self._load_saved_wandb_run_id()
+        wandb_init_kwargs: dict[str, Any] = {
+            "project": self.wandb_project,
+            "dir": str(self.output_dir),
+            "mode": self.wandb_mode or "online",
+            "config": self._wandb_config_payload(),
+        }
+        wandb_init_kwargs["name"] = self.wandb_run_name
+        if self.resume is not None and run_id is not None:
+            wandb_init_kwargs["id"] = run_id
+            wandb_init_kwargs["resume"] = "must"
+
         self.wandb_run = wandb.init(
-            project=self.wandb_project,
-            dir=str(self.output_dir),
-            mode=self.wandb_mode or "online",
-            config=self._wandb_config_payload(),
+            **wandb_init_kwargs,
         )
+        self._persist_wandb_run_id()
+
+    @staticmethod
+    def _is_cuda_oom_error(exc: Exception) -> bool:
+        if isinstance(exc, torch.cuda.OutOfMemoryError):
+            return True
+        if isinstance(exc, RuntimeError):
+            message = str(exc).lower()
+            return "out of memory" in message and "cuda" in message
+        return False
+
+    def _handle_cuda_oom(self) -> None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        suggestions = [
+            "reduce --batch-size",
+            "reduce patch/crop size in the trainer or preprocessing",
+            "enable --fp16 if your model/path supports it",
+            "use a smaller model or fewer workers if host memory pressure contributes",
+        ]
+        message = (
+            "CUDA out of memory during training.\n\n"
+            f"Device: {self.device}\n"
+            f"Epoch: {self.current_epoch + 1}/{self.num_epochs}\n"
+            "Suggested fixes:\n"
+            + "\n".join(f"- {suggestion}" for suggestion in suggestions)
+        )
+        raise click.ClickException(message)
 
     def _finish_wandb(self) -> None:
         if self.wandb_run is not None:
@@ -432,8 +493,8 @@ class BaseTrainer(ABC):
     def _wandb_config_payload(self) -> dict[str, Any]:
         config: dict[str, Any] = {"input_dir": str(self.input_dir), "output_dir": str(self.output_dir),
                                   "num_epochs": self.num_epochs, "batch_size": self.batch_size,
-                                  "num_workers": self.num_workers, "seed": self.seed,
-                                  "train_transforms": self.train_transforms, "test_transforms": self.test_transforms,
+                                  "num_workers": self.num_workers, "fp16": self.fp16, "seed": self.seed,
+                                  "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
                                   "model_class": self.model_config.model_class.__name__,
                                   "model_kwargs": dict(self.model_config.kwargs)}
         if self.optimizer_config is not None:
@@ -457,10 +518,90 @@ class BaseTrainer(ABC):
             config["custom_trainer_kwargs"] = dict(self.custom_trainer_kwargs)
         return config
 
+    def _wandb_run_id_path(self) -> Path:
+        return self.output_dir / "wandb_run_id.txt"
+
+    def _load_saved_wandb_run_id(self) -> str | None:
+        run_id_path = self._wandb_run_id_path()
+        if not run_id_path.is_file():
+            return None
+
+        run_id = run_id_path.read_text().strip()
+        return run_id or None
+
+    def _persist_wandb_run_id(self) -> None:
+        if self.wandb_run is None:
+            return
+        if getattr(self.wandb_run, "id", None) is None:
+            return
+
+        self._wandb_run_id_path().write_text(f"{self.wandb_run.id}\n")
+
     def _current_lr(self) -> float | None:
         if self.optimizer is None or not self.optimizer.param_groups:
             return None
         return float(self.optimizer.param_groups[0]["lr"])
+
+    def _print_launch_summary(self) -> None:
+        per_rank_batch = self.batch_size if self.batch_size is not None else "?"
+        global_batch = (
+            self.batch_size * self.world_size
+            if self.batch_size is not None
+            else "?"
+        )
+        distribution = (
+            f"ddp(world_size={self.world_size}, local_rank={self.local_rank})"
+            if self.distributed
+            else "single-process"
+        )
+        model_name = (
+            self.model_config.model_class.__name__
+            if self.model_config is not None
+            else "unknown"
+        )
+        loss_name = (
+            self.loss_config.loss_class.__name__
+            if self.loss_config is not None
+            else "none"
+        )
+        optimizer_name = (
+            self.optimizer_config.optim_class.__name__
+            if self.optimizer_config is not None
+            else "none"
+        )
+        scheduler_name = (
+            self.scheduler_config.scheduler_class.__name__
+            if self.scheduler_config is not None
+            else "none"
+        )
+        resume_text = str(self.resume) if self.resume is not None else "no"
+        wandb_text = (
+            f"{self.wandb_project} ({self.wandb_mode or 'online'})"
+            if self.wandb_project is not None
+            else "off"
+        )
+        table = Table.grid(padding=(0, 2))
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(style="white")
+        table.add_row("Model", f"{model_name}  [dim]({loss_name})[/dim]")
+        table.add_row("Runtime", f"{distribution} on {self.device}  [dim]fp16={self.fp16}[/dim]")
+        table.add_row("Schedule", f"{self.num_epochs} epochs  [dim]{optimizer_name} / {scheduler_name}[/dim]")
+        table.add_row("Batch", f"per-rank {per_rank_batch}  [dim]global {global_batch}[/dim]")
+        table.add_row("Workers", str(self.num_workers))
+        table.add_row("Resume", resume_text)
+        table.add_row("W&B", wandb_text)
+        table.add_row("Run Name", self.wandb_run_name)
+        table.add_row("Data", str(self.input_dir))
+        table.add_row("Output", str(self.output_dir))
+
+        CONSOLE.print(
+            Panel(
+                table,
+                title="[bold green]Training Start[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
 
     def _is_best_checkpoint(self, val_metrics: dict[str, float]) -> bool:
         if "loss" not in val_metrics:
@@ -481,7 +622,11 @@ class BaseTrainer(ABC):
         backend = "nccl"
         if self.device.type == "cuda":
             torch.cuda.set_device(self.local_rank)
-        dist.init_process_group(backend=backend, init_method="env://")
+        dist.init_process_group(
+            backend=backend,
+            init_method="env://",
+            device_id=self.device,
+        )
         self._owns_process_group = True
 
     def _cleanup_distributed(self) -> None:
@@ -532,3 +677,24 @@ class BaseTrainer(ABC):
         nested_sampler = getattr(batch_sampler, "sampler", None)
         if nested_sampler is not None and hasattr(nested_sampler, "set_epoch"):
             nested_sampler.set_epoch(epoch)
+
+    def _autocast_context(self) -> Any:
+        return autocast(
+            device_type=self.device.type,
+            dtype=torch.float16,
+            enabled=self.amp_enabled,
+        )
+
+    def _backward_step(self, loss: torch.Tensor) -> None:
+        if self.optimizer is None:
+            raise RuntimeError("optimizer must be initialized before backward/step")
+
+        self.optimizer.zero_grad()
+        if self.amp_enabled:
+            self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+            return
+
+        loss.backward()
+        self.optimizer.step()

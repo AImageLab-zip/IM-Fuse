@@ -3,15 +3,31 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
 from pathlib import Path
 import shutil
+import click
 
 # External dependencies
 import medpy.io as medio
+from medpy.core import ImageLoadingError
 import numpy as np
-from tqdm import tqdm
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.prompt import Confirm
+from rich.table import Table
 
 # Internal modules
 from brainchmark.preprocessing.config import CropConfig, ClampConfig, NormConfig
 from brainchmark.datasets.config import DatasetType
+
+CONSOLE = Console()
 
 def preprocess_case(
     file: dict[str, Path | str],
@@ -55,64 +71,124 @@ def run_preprocessing(
     """Run the preprocessing pipeline with the selected crop configuration."""
     if output_dir.exists():
         if not output_dir.is_dir():
-            raise ValueError(f"'{output_dir}' is not a valid directory.")
+            raise click.BadParameter(
+                f"'{output_dir}' is not a valid directory.",
+                param_hint="output_dir",
+            )
 
         if not yes:
-            answer = input(
-                f"Do you wish to permanently delete the folder '{output_dir}'? [y/N]: "
-            ).strip().lower()
-            if answer not in ("y", "yes"):
-                raise RuntimeError("Operation cancelled by user.")
+            table = Table.grid(padding=(0, 2))
+            table.add_column(style="bold yellow", no_wrap=True)
+            table.add_column(style="white")
+            table.add_row("Action", "Delete existing preprocessing output")
+            table.add_row("Target", str(output_dir))
+            table.add_row("Effect", "This folder will be removed before preprocessing starts")
+            CONSOLE.print(
+                Panel(
+                    table,
+                    title="[bold yellow]Confirmation Required[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+            confirmed = Confirm.ask(
+                "[bold yellow]Delete the existing output directory?[/bold yellow]",
+                default=False,
+                console=CONSOLE,
+            )
+            if not confirmed:
+                raise click.Abort()
 
         shutil.rmtree(output_dir)
-        print(f"Folder '{output_dir}' has been deleted.")
+        table = Table.grid(padding=(0, 2))
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(style="white")
+        table.add_row("Deleted", str(output_dir))
+        CONSOLE.print(
+            Panel(
+                table,
+                title="[bold green]Preprocessing Output Reset[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
 
     output_dir.mkdir(parents=True)
 
     # Getting the file list:
     input_files = []
-    if dataset_type == DatasetType.BRATS18:
-        for folder in ['HGG','LGG']:
-            for sub in (input_dir / folder).iterdir():
-                input_files.append({
-                    'name':sub.name,
-                    't1c':sub/f'{sub.name}_t1ce.nii',
-                    't1n':sub/f'{sub.name}_t1.nii',
-                    't2f':sub/f'{sub.name}_flair.nii',
-                    't2w':sub/f'{sub.name}_t2.nii',
-                    'seg':sub/f'{sub.name}_seg.nii'
-                })
-    elif dataset_type == DatasetType.BRATS23:
-        for sub in input_dir.iterdir():
-            if sub.is_dir():
-                input_files.append({
-                    'name':sub.name,
-                    't1c':sub/f'{sub.name}-t1c.nii.gz',
-                    't1n':sub/f'{sub.name}-t1n.nii.gz',
-                    't2f':sub/f'{sub.name}-t2f.nii.gz',
-                    't2w':sub/f'{sub.name}-t2w.nii.gz',
-                    'seg':sub/f'{sub.name}-seg.nii.gz'
-                })
-    else:
-        raise ValueError(f"Unsupported dataset type: {dataset_type}")
+    try:
+        if dataset_type == DatasetType.BRATS18:
+            for folder in ['HGG','LGG']:
+                for sub in (input_dir / folder).iterdir():
+                    input_files.append({
+                        'name':sub.name,
+                        't1c':sub/f'{sub.name}_t1ce.nii',
+                        't1n':sub/f'{sub.name}_t1.nii',
+                        't2f':sub/f'{sub.name}_flair.nii',
+                        't2w':sub/f'{sub.name}_t2.nii',
+                        'seg':sub/f'{sub.name}_seg.nii'
+                    })
+        elif dataset_type == DatasetType.BRATS23:
+            for sub in input_dir.iterdir():
+                if sub.is_dir():
+                    input_files.append({
+                        'name':sub.name,
+                        't1c':sub/f'{sub.name}-t1c.nii.gz',
+                        't1n':sub/f'{sub.name}-t1n.nii.gz',
+                        't2f':sub/f'{sub.name}-t2f.nii.gz',
+                        't2w':sub/f'{sub.name}-t2w.nii.gz',
+                        'seg':sub/f'{sub.name}-seg.nii.gz'
+                    })
+        else:
+            raise click.BadParameter(
+                f"Unsupported dataset type: {dataset_type}",
+                param_hint="dataset_type",
+            )
 
-    num_workers = os.cpu_count() or 1
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [
-            executor.submit(preprocess_case, file, output_dir, crop_config,clamp_config,norm_config,dataset_type)
-            for file in input_files
-        ]
+        num_workers = len(os.sched_getaffinity(0))
 
-        for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc=f"Preprocessing {len(input_files)} files into {output_dir} using {num_workers} workers",
-        ):
-            future.result()
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = [
+                executor.submit(preprocess_case, file, output_dir, crop_config,clamp_config,norm_config,dataset_type)
+                for file in input_files
+            ]
 
-    print('Preprocessing complete!')
+            with Progress(
+                TextColumn("[bold cyan]{task.description}"),
+                BarColumn(bar_width=None),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                transient=True,
+            ) as progress:
+                task_id = progress.add_task(
+                    f"Preprocess {len(input_files)} cases",
+                    total=len(futures),
+                )
+                for future in as_completed(futures):
+                    future.result()
+                    progress.update(task_id, advance=1)
 
+        table = Table.grid(padding=(0, 2))
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(style="white")
+        table.add_row("Cases", str(len(input_files)))
+        table.add_row("Output", str(output_dir))
+        CONSOLE.print(
+            Panel(
+                table,
+                title="[bold green]Preprocessing Complete[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+    except FileNotFoundError as e:
+        raise click.FileError(e.filename, hint="File not found")
+    except ImageLoadingError as e:
+        raise click.ClickException(str(e))
 
     
     

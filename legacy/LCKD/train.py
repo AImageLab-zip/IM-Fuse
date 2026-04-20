@@ -20,11 +20,18 @@ from math import ceil
 from pathlib import Path
 from DualNet import conv3x3x3
 import wandb
+import hashlib
 import traceback
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 start = timeit.default_timer()
 kd_wt = 0.1
+
+
+def build_wandb_run_id(checkpoint_path: Path, mode: str, train_list: Path) -> str:
+    key = f"{checkpoint_path.resolve()}::{mode}::{train_list.resolve()}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"lckd-{digest}"
 
 def log_wandb_slice(images, masks):
     """
@@ -93,6 +100,7 @@ def get_arguments():
     parser.add_argument("--random-scale", type=str2bool, default=True,required=False)
     parser.add_argument("--random-seed", type=int, default=999)
     parser.add_argument("--wandb-project-name",type=str,default=None)
+    parser.add_argument("--wandb-run-id", type=str, default=None)
     parser.add_argument("--norm-cfg", type=str, default='IN')  # normalization
     parser.add_argument("--activation-cfg", type=str, default='LeakyReLU')  # activation
     parser.add_argument("--train-only", action="store_true")
@@ -234,8 +242,16 @@ def main():
         with Engine(custom_parser=parser) as engine:
             args = parser.parse_args()
             args.learning_rate = args.learning_rate * np.sqrt(args.batch_size/2)
+            args.checkpoint_path = Path(args.checkpoint_path)
+            args.train_list = Path(args.train_list)
+            args.val_list = Path(args.val_list)
             if args.wandb_project_name is not None:
-                wandb.init(project=args.wandb_project_name,name='training')
+                wandb.init(
+                    project=args.wandb_project_name,
+                    name='training',
+                    id=args.wandb_run_id or build_wandb_run_id(args.checkpoint_path, args.mode, args.train_list),
+                    resume="allow"
+                )
             args.datapath = Path(args.datapath)
             if args.num_gpus > 1:
                 torch.cuda.set_device(args.local_rank)

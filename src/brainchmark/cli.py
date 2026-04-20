@@ -1,5 +1,5 @@
 # Standard library
-from enum import StrEnum
+import os
 from pathlib import Path
 import sys
 import time
@@ -7,8 +7,22 @@ import time
 # External dependencies
 from click.shell_completion import CompletionItem
 import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 # Internal modules
+from brainchmark.enums import (
+    ClampMode,
+    CropMode,
+    DatasetType,
+    ModelKind,
+    NormMode,
+    OptimizerKind,
+    SchedulerKind,
+    TransformKind,
+    TrainerKind,
+)
 from brainchmark.utils.cli_overrides import (
     CONFIGS_DIR,
     SPLITS_DIR,
@@ -18,54 +32,11 @@ from brainchmark.utils.cli_overrides import (
 )
 from brainchmark.utils.cli_utils import require_preprocess_values
 
-class DatasetType(StrEnum):
-    BRATS18 = "brats18"
-    BRATS23 = "brats23"
-
-
-class CropMode(StrEnum):
-    NONE = "none"
-    CENTER = "center"
-    NON_EMPTY = "non_empty"
-
-
-class ClampMode(StrEnum):
-    NONE = "none"
-    SUBJECT = "subject"
-    DATASET = "dataset"
-
-
-class NormMode(StrEnum):
-    NONE = "none"
-    MIN_MAX = "min_max"
-    SUBJECT_ZSCORE = "subject_zscore"
-    DATASET_ZSCORE = "dataset_zscore"
-
-
-class TrainerKind(StrEnum):
-    IMFUSE = "imfuse"
-
-
-class ModelKind(StrEnum):
-    IMFUSE = "imfuse"
-
-
-class OptimizerKind(StrEnum):
-    RADAM = "radam"
-    ADAMW = "adamw"
-    SGD = "sgd"
-    ADAM = "adam"
-
-
-class SchedulerKind(StrEnum):
-    POLY = "poly"
-    COSINE = "cosine"
-    STEP = "step"
-    MULTISTEP = "multistep"
-    PLATEAU = "plateau"
-
+# Environment variables
+os.environ["WANDB_SILENT"] = "true"
 
 app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
+CONSOLE = Console()
 
 
 def _config_shell_complete(
@@ -136,6 +107,10 @@ def _require_train_values(merged: dict[str, object], *required_keys: str) -> Non
             )
 
 
+def _require_values(merged: dict[str, object], *required_keys: str) -> None:
+    _require_train_values(merged, *required_keys)
+
+
 def _merged_value(
     merged: dict[str, object],
     key: str,
@@ -164,6 +139,36 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
             param_hint="--output-dir",
         )
     return checkpoint_path
+
+
+def _distributed_launch_active() -> bool:
+    return "LOCAL_RANK" in os.environ or int(os.environ.get("WORLD_SIZE", "1")) > 1
+
+
+def _infer_nproc_per_node() -> int:
+    import torch
+
+    num_devices = torch.cuda.device_count()
+    if num_devices <= 0:
+        raise typer.BadParameter(
+            "unable to infer --nproc-per-node because no CUDA devices are visible",
+            param_hint="--nproc-per-node",
+        )
+    return num_devices
+
+
+def _relaunch_with_torchrun(nproc_per_node: int) -> None:
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    command = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--nproc-per-node",
+        str(nproc_per_node),
+        sys.argv[0],
+        *sys.argv[1:],
+    ]
+    raise typer.Exit(os.spawnvp(os.P_WAIT, sys.executable, command))
 
 
 def _resolve_trainer_class(trainer_kind: TrainerKind):
@@ -408,14 +413,25 @@ def preprocess(
         norm_mean=merged.get("norm_mean"),
         norm_std=merged.get("norm_std"),
     )
-    typer.echo(
-        "Preprocessing data "
-        f"from {merged.get('input_dir')} to {merged.get('output_dir')} "
-        f"assuming a '{merged.get('dataset_type')}' configuration "
-        f"with crop mode '{crop_config.fn.__name__}', "
-        f"clamp mode '{clamp_config.fn.__name__}', "
-        f"normalization mode '{norm_config.fn.__name__}'."
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("Dataset", str(merged.get("dataset_type")))
+    table.add_row("Crop", crop_config.fn.__name__)
+    table.add_row("Clamp", clamp_config.fn.__name__)
+    table.add_row("Normalize", norm_config.fn.__name__)
+    table.add_row("Input", str(merged.get("input_dir")))
+    table.add_row("Output", str(merged.get("output_dir")))
+
+    CONSOLE.print(
+        Panel(
+            table,
+            title="[bold green]Preprocessing Start[/bold green]",
+            border_style="green",
+            expand=False,
+        )
     )
+
     run_preprocessing(
         input_dir=Path(merged.get("input_dir")),
         output_dir=Path(merged.get("output_dir")),
@@ -484,6 +500,42 @@ def train(
         None,
         "--custom-loss-kwargs",
         help="Additional loss kwargs in key=value form.",
+        rich_help_panel="Loss",
+    ),
+    loss_num_classes: int | None = typer.Option(
+        None,
+        "--loss-num-classes",
+        help="Override the number of classes used by the loss.",
+        rich_help_panel="Loss",
+    ),
+    fuse_weight: float | None = typer.Option(
+        None,
+        "--fuse-weight",
+        help="Weight for the fused branch loss.",
+        rich_help_panel="Loss",
+    ),
+    sep_weight: float | None = typer.Option(
+        None,
+        "--sep-weight",
+        help="Weight for the separate branch loss.",
+        rich_help_panel="Loss",
+    ),
+    prm_weight: float | None = typer.Option(
+        None,
+        "--prm-weight",
+        help="Weight for the PRM branch loss.",
+        rich_help_panel="Loss",
+    ),
+    loss_eps: float | None = typer.Option(
+        None,
+        "--loss-eps",
+        help="Numerical stability epsilon used inside the loss.",
+        rich_help_panel="Loss",
+    ),
+    log_clamp_min: float | None = typer.Option(
+        None,
+        "--log-clamp-min",
+        help="Minimum probability clamp used before log in the weighted cross-entropy term.",
         rich_help_panel="Loss",
     ),
     custom_trainer_kwargs: list[str] | None = typer.Option(
@@ -593,16 +645,10 @@ def train(
         help="Patience for ReduceLROnPlateau.",
         rich_help_panel="Scheduler",
     ),
-    train_transforms: str | None = typer.Option(
+    transform_kind: TransformKind | None = typer.Option(
         None,
-        "--train-transforms",
-        help="Training transform pipeline expression.",
-        rich_help_panel="Data Pipeline",
-    ),
-    test_transforms: str | None = typer.Option(
-        None,
-        "--test-transforms",
-        help="Validation/test transform pipeline expression.",
+        "--transform-kind",
+        help="Transform manager implementation to use.",
         rich_help_panel="Data Pipeline",
     ),
     lr: float | None = typer.Option(
@@ -634,6 +680,26 @@ def train(
         "--num-workers",
         help="Number of dataloader workers.",
         rich_help_panel="Runtime",
+    ),
+    distributed: bool = typer.Option(
+        False,
+        "--distributed",
+        help="Relaunch training through torchrun for DDP.",
+        rich_help_panel="Runtime",
+        is_flag=True,
+    ),
+    nproc_per_node: int | None = typer.Option(
+        None,
+        "--nproc-per-node",
+        help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
+        rich_help_panel="Runtime",
+    ),
+    fp16: bool | None = typer.Option(
+        None,
+        "--fp16",
+        help="Enable float16 mixed precision training on CUDA.",
+        rich_help_panel="Runtime",
+        is_flag=True,
     ),
     resume: bool = typer.Option(
         False,
@@ -668,6 +734,12 @@ def train(
         help="Weights & Biases mode, for example online, offline, or disabled.",
         rich_help_panel="Logging",
     ),
+    wandb_run_name: str | None = typer.Option(
+        None,
+        "--wandb-run-name",
+        help="Optional Weights & Biases run name. Defaults to 'training'.",
+        rich_help_panel="Logging",
+    ),
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
@@ -676,6 +748,17 @@ def train(
     ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
+
+    if distributed and not _distributed_launch_active():
+        resolved_nproc_per_node = nproc_per_node
+        if resolved_nproc_per_node is None:
+            resolved_nproc_per_node = _infer_nproc_per_node()
+        if resolved_nproc_per_node <= 0:
+            raise typer.BadParameter(
+                "--nproc-per-node must be > 0",
+                param_hint="--nproc-per-node",
+            )
+        _relaunch_with_torchrun(resolved_nproc_per_node)
 
     from brainchmark.training.config import (
         OptimizerKind as TrainingOptimizerKind,
@@ -690,7 +773,7 @@ def train(
     ModelKind as TrainingModelKind,
     build_model_config
     )
-
+    
     yaml_config = load_yaml_config(config)
     trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
     merged = merge_cli_overrides(
@@ -702,6 +785,12 @@ def train(
         loss=loss,
         custom_model_kwargs=parse_kv_list(custom_model_kwargs),
         custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
+        loss_num_classes=loss_num_classes,
+        fuse_weight=fuse_weight,
+        sep_weight=sep_weight,
+        prm_weight=prm_weight,
+        loss_eps=loss_eps,
+        log_clamp_min=log_clamp_min,
         custom_trainer_kwargs=trainer_kwargs,
         split_file=split_file,
         optimizer=optimizer,
@@ -719,26 +808,42 @@ def train(
         plateau_mode=plateau_mode,
         plateau_factor=plateau_factor,
         plateau_patience=plateau_patience,
-        train_transforms=train_transforms,
-        test_transforms=test_transforms,
+        transform_kind=transform_kind,
         lr=lr,
         num_epochs=num_epochs,
         batch_size=batch_size,
         weight_decay=weight_decay,
         num_workers=num_workers,
+        fp16=fp16,
         resume=resume,
         pretrain=pretrain,
         seed=seed,
         wandb_project=wandb_project,
         wandb_mode=wandb_mode,
+        wandb_run_name=wandb_run_name,
         dataset_type=dataset_type,
     )
+    merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
+    explicit_loss_kwargs = {
+        "num_classes": merged.get("loss_num_classes"),
+        "fuse_weight": merged.get("fuse_weight"),
+        "sep_weight": merged.get("sep_weight"),
+        "prm_weight": merged.get("prm_weight"),
+        "eps": merged.get("loss_eps"),
+        "log_clamp_min": merged.get("log_clamp_min"),
+    }
+    for key, value in explicit_loss_kwargs.items():
+        if value is not None:
+            merged_loss_kwargs[key] = value
+    merged["custom_loss_kwargs"] = merged_loss_kwargs
     merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
     split_file_value = merged.get("split_file")
     if split_file_value is None:
         split_file_value = merged_trainer_kwargs.get("split_file")
     resolved_split_file = resolve_split_path(split_file_value)
     merged_trainer_kwargs["split_file"] = str(resolved_split_file)
+    if merged.get("transform_kind") is not None:
+        merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
     merged["custom_trainer_kwargs"] = merged_trainer_kwargs
     merged["split_file"] = str(resolved_split_file)
     _require_train_values(
@@ -796,16 +901,146 @@ def train(
         loss_config=loss_config,
         optimizer_config=optimizer_config,
         scheduler_config=scheduler_config,
-        train_transforms=merged.get("train_transforms"),
-        test_transforms=merged.get("test_transforms"),
         num_epochs=resolved_num_epochs,
         batch_size=int(merged.get("batch_size", 1)),
         num_workers=int(merged.get("num_workers", 8)),
+        fp16=bool(merged.get("fp16", False)),
         resume=bool(merged.get("resume", False)),
         seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
         pretrain=merged.get("pretrain"),
         wandb_project=merged.get("wandb_project"),
         wandb_mode=merged.get("wandb_mode"),
+        wandb_run_name=merged.get("wandb_run_name"),
         dataset_type=merged.get("dataset_type")
     )
     trainer_instance.fit()
+
+
+@app.command()
+def test(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=_config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        file_okay=False,
+        dir_okay=True,
+        exists=True,
+        readable=True,
+        help="Directory containing the preprocessed test data.",
+        rich_help_panel="Input/Output",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help="Text file where mask-sweep test results will be written.",
+        rich_help_panel="Input/Output",
+    ),
+    checkpoint_path: Path | None = typer.Option(
+        None,
+        "--checkpoint-path",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Checkpoint path to evaluate.",
+        rich_help_panel="Checkpointing",
+    ),
+    model: ModelKind | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=_split_shell_complete,
+        help="Split file path. Relative paths are resolved under brainchmark/data/splits.",
+        rich_help_panel="Data Pipeline",
+        show_default="split.json",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Number of dataloader workers.",
+        rich_help_panel="Runtime",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
+    ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Input dataset type. Choose either brats18 or brats23",
+        rich_help_panel="Input/Output",
+    ),
+) -> None:
+    """Run mask-sweep testing from CLI overrides and YAML configuration."""
+    from brainchmark.models.config import (
+        ModelKind as TestingModelKind,
+        build_model_config,
+    )
+    from brainchmark.testing import run_testing
+    from brainchmark.training.config import parse_kv_list
+
+    yaml_config = load_yaml_config(config)
+    merged = merge_cli_overrides(
+        yaml_config,
+        data_dir=data_dir,
+        output_path=output_path,
+        checkpoint_path=checkpoint_path,
+        model=model,
+        custom_model_kwargs=parse_kv_list(custom_model_kwargs),
+        split_file=split_file,
+        num_workers=num_workers,
+        seed=seed,
+        dataset_type=dataset_type,
+    )
+    resolved_split_file = resolve_split_path(merged.get("split_file"))
+    merged["split_file"] = str(resolved_split_file)
+    _require_values(
+        merged,
+        "data_dir",
+        "output_path",
+        "checkpoint_path",
+        "dataset_type",
+    )
+
+    model_kind = TestingModelKind(merged.get("model", TestingModelKind.IMFUSE))
+    model_config = build_model_config(
+        model_kind=model_kind,
+        model_kwargs=merged.get("custom_model_kwargs"),
+    )
+    output_file = run_testing(
+        data_dir=Path(merged["data_dir"]),
+        output_path=Path(merged["output_path"]),
+        checkpoint_path=Path(merged["checkpoint_path"]),
+        dataset_type=DatasetType(merged["dataset_type"]),
+        model_class=model_config.model_class,
+        model_kwargs=model_config.kwargs,
+        split_file=resolved_split_file,
+        num_workers=int(merged.get("num_workers", 8)),
+        seed=int(merged.get("seed", 42)),
+    )
+    typer.echo(f"Test report written to {output_file}")
