@@ -20,10 +20,10 @@ For a very detailed extension guide for this part of the stack, see [docs/compon
 
 ## Basic Usage
 
-Run from YAML:
+Run from YAML (recommended):
 
 ```bash
-brainchmark preprocess --config src/brainchmark/data/configs/imfuse_23.yaml
+brainchmark preprocess --config imfuse_23.yaml
 ```
 
 Run from CLI:
