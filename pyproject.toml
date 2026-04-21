@@ -20,7 +20,9 @@ authors = [
 dependencies = [
     "medpy>=0.5.2",
     "numpy>=2.4.3",
+    "openpyxl>=3.1.5",
     "pandas>=3.0.2",
+    "prompt-toolkit>=3.0.52",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
     "torch==2.9.1",
@@ -61,4 +63,3 @@ strict = true
 [project.scripts]
 brainchmark = "brainchmark.cli:app"
 brainchmark-gui = "brainchmark.gui:launch"
-

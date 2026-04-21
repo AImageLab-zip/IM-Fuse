@@ -8,8 +8,8 @@
 # scheduler, and default optimization hyperparameters.
 
 # preprocess
-input_dir: /work/grana_neuro/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData
-output_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
+input_dir: /path/to/brats23
+output_dir: /path/to/preprocessed/mmformer23-preprocessed/
 dataset_type: brats23
 
 crop_mode: non_empty
@@ -29,8 +29,8 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
-art_dir: /work/grana_neuro/brainchmark/runs/mmformer23
+data_dir: /path/to/preprocessed/mmformer23-preprocessed
+art_dir: /path/to/artifacts/mmformer23
 
 trainer: imfuse
 model: mmformer
@@ -89,5 +89,5 @@ wandb_mode: online
 wandb_run_name: mmformer23_training
 
 # testing
-checkpoint_path: /work/grana_neuro/brainchmark/runs/mmformer23/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/mmformer23/results.txt
+checkpoint_path: /path/to/artifacts/mmformer23/checkpoints/model_last.pth
+output_path: /path/to/artifacts/mmformer23/results.txt

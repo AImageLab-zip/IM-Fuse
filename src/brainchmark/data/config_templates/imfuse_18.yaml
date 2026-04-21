@@ -1,16 +1,15 @@
-# Combined mmFormer reference config for BraTS 2023.
-# This mirrors legacy mmFormer defaults as closely as possible under the current
+# Combined IMFuse reference config for BraTS 2023.
+# This mirrors legacy IMFuse defaults as closely as possible under the current
 # BrainchMark CLI/config API.
 #
-# Note: BrainchMark currently reuses the IMFuse-style trainer/loss/data pipeline
-# for mmFormer because the legacy training loop and loss decomposition are the
-# same. The key legacy differences reflected here are model selection, optimizer,
-# scheduler, and default optimization hyperparameters.
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
 
 # preprocess
-input_dir: /work/grana_neuro/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData
-output_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
-dataset_type: brats23
+input_dir: /path/to/brats18
+output_dir: /path/to/preprocessed/imfuse18-preprocessed/
+dataset_type: brats18
 
 crop_mode: non_empty
 crop_size: null
@@ -29,14 +28,16 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
-art_dir: /work/grana_neuro/brainchmark/runs/mmformer23
+data_dir: /path/to/preprocessed/imfuse18-preprocessed
+art_dir: /path/to/artifacts/imfuse18
 
 trainer: imfuse
-model: mmformer
+model: imfuse
 loss: imfuse
 
 custom_model_kwargs:
+  interleaved_tokenization: false
+  mamba_skip: false
   num_cls: 4
 
 #custom_loss_kwargs: {}
@@ -53,10 +54,8 @@ custom_trainer_kwargs:
   patch_size: 128
   debug: false
   transform_kind: imfuse
-  train_masking_mode: random
-  val_masking_mode: validation
 
-optimizer: adam
+optimizer: radam
 betas: [0.9, 0.999]
 momentum: 0.9
 
@@ -76,8 +75,8 @@ plateau_patience: null
 lr: 0.0008
 num_epochs: 1000
 batch_size: 4
-weight_decay: 0.0001
-num_workers: 8
+weight_decay: 0.00003
+num_workers: 16
 fp16: true
 
 resume: false
@@ -86,8 +85,7 @@ seed: 999
 
 wandb_project: SegmentationMM
 wandb_mode: online
-wandb_run_name: mmformer23_training
-
+wandb_run_name: imfuse18_training
 # testing
-checkpoint_path: /work/grana_neuro/brainchmark/runs/mmformer23/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/mmformer23/results.txt
+checkpoint_path: /path/to/artifacts/imfuse18/checkpoints/model_last.pth
+output_path: /path/to/artifacts/imfuse18/results.txt

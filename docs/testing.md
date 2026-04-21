@@ -24,7 +24,7 @@ brainchmark test \
   --checkpoint-path /path/to/checkpoint.pth \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
-  --model mmformer
+  --model dcseg
 ```
 
 ## Required Inputs
@@ -37,6 +37,15 @@ The test command requires:
 - `dataset_type`
 
 `model` is optional in the CLI because it defaults to `imfuse`, but for a real run you should set it explicitly unless the config already does.
+
+For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For a very detailed extension guide for the testing path, see [docs/components/testing.md](components/testing.md).
+
+Active tested model choices currently include:
+
+- `imfuse`
+- `mmformer`
+- `dcseg`
 
 ## What It Produces
 
@@ -86,12 +95,13 @@ The test command reads these fields from the combined config files:
 ## Example
 
 ```yaml
-data_dir: /work/grana_neuro/brainchmark/mmformer-preprocessed
-checkpoint_path: /work/grana_neuro/brainchmark/runs/mmformer/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/mmformer/results.txt
-model: mmformer
+data_dir: /work/grana_neuro/brainchmark/dcseg23-preprocessed
+checkpoint_path: /work/grana_neuro/brainchmark/runs/dcseg23/checkpoints/model_last.pth
+output_path: /work/grana_neuro/brainchmark/runs/dcseg23/results.txt
+model: dcseg
 custom_model_kwargs:
   num_cls: 4
+  fusion_type: RFM
 dataset_type: brats23
 num_workers: 8
 seed: 42
@@ -100,4 +110,5 @@ seed: 42
 ## Related Docs
 
 - [README.md](../README.md)
+- [docs/yaml-config.md](yaml-config.md)
 - [docs/training.md](training.md)

@@ -9,7 +9,7 @@
 
 # preprocess
 input_dir: /work/grana_neuro/MICCAI_BraTS_2018_Data_Training
-output_dir: /work/grana_neuro/brainchmark/mmformer18-preprocessed/
+output_dir: /work/grana_neuro/brainchmark/mmformer18-preprocessed
 dataset_type: brats18
 
 crop_mode: non_empty

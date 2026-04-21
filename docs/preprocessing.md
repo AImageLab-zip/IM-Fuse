@@ -15,12 +15,15 @@ You can configure preprocessing in two places:
 
 If the same parameter is provided in both places, the CLI value should override the YAML value.
 
+For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For a very detailed extension guide for this part of the stack, see [docs/components/preprocessing.md](components/preprocessing.md).
+
 ## Basic Usage
 
 Run from YAML:
 
 ```bash
-brainchmark preprocess --config src/brainchmark/data/configs/preprocessing.yaml
+brainchmark preprocess --config src/brainchmark/data/configs/imfuse_23.yaml
 ```
 
 Run from CLI:
@@ -73,6 +76,8 @@ norm_std: null
 
 yes: false
 ```
+
+For the shared config structure used across commands, see [docs/yaml-config.md](yaml-config.md).
 
 ## Required Inputs
 

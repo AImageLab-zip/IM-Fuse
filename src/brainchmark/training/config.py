@@ -59,7 +59,7 @@ def build_optimizer_config(
             lr=lr,
             weight_decay=weight_decay,
             betas=betas,
-            eps=1e-6,
+            eps=1e-8,
         )
     if optimizer_kind is OptimizerKind.SGD:
         return OptimizerConfig(

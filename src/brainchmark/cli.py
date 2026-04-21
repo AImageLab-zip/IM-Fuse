@@ -1,14 +1,19 @@
 # Standard library
 import os
 from pathlib import Path
+import re
+import shutil
 import sys
 import time
 
 # External dependencies
 from click.shell_completion import CompletionItem
 import typer
+from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.completion import PathCompleter
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm
 from rich.table import Table
 
 # Internal modules
@@ -37,6 +42,8 @@ os.environ["WANDB_SILENT"] = "true"
 
 app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
 CONSOLE = Console()
+PATH_COMPLETER = PathCompleter(expanduser=True)
+CONFIG_TEMPLATES_DIR = CONFIGS_DIR.parent / "config_templates"
 
 
 def _config_shell_complete(
@@ -172,10 +179,11 @@ def _relaunch_with_torchrun(nproc_per_node: int) -> None:
 
 
 def _resolve_trainer_class(trainer_kind: TrainerKind):
-    from brainchmark.training.trainers import IMFuseTrainer
+    from brainchmark.training.trainers import DCSegTrainer, IMFuseTrainer
 
     trainer_map = {
         TrainerKind.IMFUSE: IMFuseTrainer,
+        TrainerKind.DCSEG: DCSegTrainer,
     }
     try:
         return trainer_map[trainer_kind]
@@ -184,6 +192,152 @@ def _resolve_trainer_class(trainer_kind: TrainerKind):
             f"Unsupported trainer: {trainer_kind}",
             param_hint="--trainer",
         ) from exc
+
+
+def _expand_user_path(raw_value: str) -> Path:
+    return Path(raw_value).expanduser().resolve(strict=False)
+
+
+def _prompt_path(prompt: str) -> str:
+    return pt_prompt(
+        f"{prompt}: ",
+        completer=PATH_COMPLETER,
+        complete_while_typing=True,
+    ).strip()
+
+
+def _prompt_optional_existing_directory(
+    *,
+    label: str,
+    prompt: str,
+) -> Path | None:
+    while True:
+        raw_value = _prompt_path(prompt)
+        if not raw_value:
+            return None
+
+        candidate = _expand_user_path(raw_value)
+        if candidate.is_dir():
+            return candidate
+
+        CONSOLE.print(
+            Panel(
+                f"[bold red]{label}[/bold red]\n{candidate} is not an existing directory.",
+                title="[bold red]Invalid Directory[/bold red]",
+                border_style="red",
+                expand=False,
+            )
+        )
+
+
+def _prompt_required_directory(
+    *,
+    label: str,
+    prompt: str,
+) -> Path:
+    while True:
+        raw_value = _prompt_path(prompt)
+        if not raw_value:
+            CONSOLE.print(
+                Panel(
+                    f"[bold red]{label}[/bold red] is required.",
+                    title="[bold red]Missing Value[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            continue
+
+        return _expand_user_path(raw_value)
+
+
+def _config_run_tag(config_path: Path) -> str:
+    return config_path.stem.replace("_", "")
+
+
+def _dataset_input_dir_for_config(
+    config_name: str,
+    *,
+    brats18_dir: Path | None,
+    brats23_dir: Path | None,
+) -> str | None:
+    if config_name.endswith("_18.yaml"):
+        return str(brats18_dir) if brats18_dir is not None else None
+    if config_name.endswith("_23.yaml"):
+        return str(brats23_dir) if brats23_dir is not None else None
+    return None
+
+
+def _replace_yaml_line(
+    content: str,
+    *,
+    key: str,
+    value: str | None,
+) -> str:
+    replacement = f"{key}: {'null' if value is None else value}"
+    pattern = re.compile(rf"^{re.escape(key)}:\s*.*$", re.MULTILINE)
+    updated, count = pattern.subn(replacement, content, count=1)
+    if count != 1:
+        raise typer.BadParameter(
+            f"Could not update '{key}' in config content",
+            param_hint="brainchmark setup",
+        )
+    return updated
+
+
+def _update_setup_config(
+    *,
+    config_path: Path,
+    brats18_dir: Path | None,
+    brats23_dir: Path | None,
+    preprocessed_root_dir: Path,
+    artifacts_root_dir: Path,
+) -> None:
+    content = config_path.read_text(encoding="utf-8")
+    run_tag = _config_run_tag(config_path)
+    preprocessed_dir = preprocessed_root_dir / f"{run_tag}-preprocessed"
+    artifacts_dir = artifacts_root_dir / run_tag
+    content = _replace_yaml_line(
+        content,
+        key="input_dir",
+        value=_dataset_input_dir_for_config(
+            config_path.name,
+            brats18_dir=brats18_dir,
+            brats23_dir=brats23_dir,
+        ),
+    )
+    content = _replace_yaml_line(content, key="output_dir", value=str(preprocessed_dir))
+    if config_path.name != "preprocessing.yaml":
+        content = _replace_yaml_line(content, key="data_dir", value=str(preprocessed_dir))
+        content = _replace_yaml_line(content, key="art_dir", value=str(artifacts_dir))
+        content = _replace_yaml_line(
+            content,
+            key="checkpoint_path",
+            value=str(artifacts_dir / "checkpoints" / "model_last.pth"),
+        )
+        content = _replace_yaml_line(
+            content,
+            key="output_path",
+            value=str(artifacts_dir / "results.txt"),
+        )
+    config_path.write_text(content, encoding="utf-8")
+
+
+def _copy_config_templates() -> list[Path]:
+    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    template_paths = sorted(CONFIG_TEMPLATES_DIR.glob("*.y*ml"))
+    if not template_paths:
+        raise typer.BadParameter(
+            f"No config templates found under {CONFIG_TEMPLATES_DIR}",
+            param_hint="brainchmark setup",
+        )
+
+    copied_paths: list[Path] = []
+    for template_path in template_paths:
+        destination = CONFIGS_DIR / template_path.name
+        shutil.copyfile(template_path, destination)
+        copied_paths.append(destination)
+    return copied_paths
 
 
 @app.callback()
@@ -248,7 +402,104 @@ def self_destruct(
     """
     typer.echo(text)
 
+
 @app.command()
+def setup() -> None:
+    """Copy template configs and patch only the local path fields."""
+    CONSOLE.print(
+        Panel(
+            "[bold white]Configure the packaged BrainchMark YAML files.[/bold white]\n"
+            "Leave a BraTS dataset path empty if you do not want to configure that dataset yet.",
+            title="[bold green]BrainchMark Setup[/bold green]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+    brats23_dir = _prompt_optional_existing_directory(
+        label="BraTS23",
+        prompt="Directory containing BraTS23",
+    )
+    brats18_dir = _prompt_optional_existing_directory(
+        label="BraTS18",
+        prompt="Directory containing BraTS18",
+    )
+    if brats23_dir is None and brats18_dir is None:
+        raise typer.BadParameter(
+            "at least one dataset directory must be provided",
+            param_hint="brainchmark setup",
+        )
+
+    preprocessed_root_dir = _prompt_required_directory(
+        label="Preprocessed Root",
+        prompt="Root directory for preprocessed datasets",
+    )
+    artifacts_root_dir = _prompt_required_directory(
+        label="Artifacts Root",
+        prompt="Root directory for training artifacts",
+    )
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("BraTS23", str(brats23_dir) if brats23_dir is not None else "null")
+    table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
+    table.add_row("Preprocessed Root", str(preprocessed_root_dir))
+    table.add_row("Artifacts Root", str(artifacts_root_dir))
+    table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
+    table.add_row("Configs", str(CONFIGS_DIR))
+    table.add_row("Checkpoint Path", "<art_dir>/checkpoints/model_last.pth")
+    table.add_row("Output Path", "<art_dir>/results.txt")
+
+    CONSOLE.print(
+        Panel(
+            table,
+            title="[bold green]Setup Plan[/bold green]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+    if not Confirm.ask("Copy templates and rewrite local BrainchMark configs?", default=True):
+        raise typer.Abort()
+
+    updated_files = _copy_config_templates()
+    for config_path in updated_files:
+        _update_setup_config(
+            config_path=config_path,
+            brats18_dir=brats18_dir,
+            brats23_dir=brats23_dir,
+            preprocessed_root_dir=preprocessed_root_dir,
+            artifacts_root_dir=artifacts_root_dir,
+        )
+
+    result_table = Table.grid(padding=(0, 2))
+    result_table.add_column(style="bold cyan", no_wrap=True)
+    result_table.add_column(style="white")
+    result_table.add_row("Updated", str(len(updated_files)))
+    result_table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
+    result_table.add_row("BraTS23", str(brats23_dir) if brats23_dir is not None else "null")
+    result_table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
+    result_table.add_row("Preprocessed Root", str(preprocessed_root_dir))
+    result_table.add_row("Artifacts Root", str(artifacts_root_dir))
+    result_table.add_row("Files", ", ".join(path.name for path in updated_files))
+
+    CONSOLE.print(
+        Panel(
+            result_table,
+            title="[bold green]Setup Complete[/bold green]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+@app.command(
+    help=(
+        "Preprocess a BraTS-style dataset into the compressed `.npz` format "
+        "used by BrainchMark training and testing."
+    ),
+    short_help="Preprocess a BraTS-style dataset.",
+)
 def preprocess(
     config: Path | None = typer.Option(
         None,
@@ -364,8 +615,8 @@ def preprocess(
         help="Normalization standard deviations as four floats, one for each modality.",
         rich_help_panel="Normalization",
     ),
-
 ) -> None:
+    """Preprocess a BraTS-style dataset into BrainchMark `.npz` artifacts."""
     from brainchmark.preprocessing.config import (
         build_clamp_config,
         build_crop_config,
@@ -395,7 +646,6 @@ def preprocess(
         yes=yes if yes else yaml_config.get("yes"),
     )
     require_preprocess_values(merged,"input_dir", "output_dir", "dataset_type")
-    """Run dataset preprocessing."""
     crop_config = build_crop_config(
         crop_mode=str(merged.get("crop_mode", CropMode.NONE.value)),
         crop_size=merged.get("crop_size"),
@@ -760,159 +1010,168 @@ def train(
             )
         _relaunch_with_torchrun(resolved_nproc_per_node)
 
-    from brainchmark.training.config import (
-        OptimizerKind as TrainingOptimizerKind,
-        SchedulerKind as TrainingSchedulerKind,
-        build_optimizer_config,
-        build_scheduler_config,
-        parse_kv_list,
-    )
-    from brainchmark.losses.config import build_loss_config
+    with CONSOLE.status("[bold cyan]Starting BrainchMark[/bold cyan]", spinner="dots") as status:
+        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]loading training modules[/dim]")
+        from brainchmark.training.config import (
+            OptimizerKind as TrainingOptimizerKind,
+            SchedulerKind as TrainingSchedulerKind,
+            build_optimizer_config,
+            build_scheduler_config,
+            parse_kv_list,
+        )
+        from brainchmark.losses.config import build_loss_config
+        from brainchmark.models.config import (
+            ModelKind as TrainingModelKind,
+            build_model_config,
+        )
 
-    from brainchmark.models.config import (
-    ModelKind as TrainingModelKind,
-    build_model_config
-    )
-    
-    yaml_config = load_yaml_config(config)
-    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
-    merged = merge_cli_overrides(
-        yaml_config,
-        data_dir=data_dir,
-        art_dir=art_dir,
-        trainer=trainer,
-        model=model,
-        loss=loss,
-        custom_model_kwargs=parse_kv_list(custom_model_kwargs),
-        custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
-        loss_num_classes=loss_num_classes,
-        fuse_weight=fuse_weight,
-        sep_weight=sep_weight,
-        prm_weight=prm_weight,
-        loss_eps=loss_eps,
-        log_clamp_min=log_clamp_min,
-        custom_trainer_kwargs=trainer_kwargs,
-        split_file=split_file,
-        optimizer=optimizer,
-        betas=betas,
-        momentum=momentum,
-        scheduler=scheduler,
-        poly_total_iters=poly_total_iters,
-        poly_power=poly_power,
-        cosine_t_max=cosine_t_max,
-        cosine_eta_min=cosine_eta_min,
-        step_step_size=step_step_size,
-        step_gamma=step_gamma,
-        multistep_milestones=multistep_milestones,
-        multistep_gamma=multistep_gamma,
-        plateau_mode=plateau_mode,
-        plateau_factor=plateau_factor,
-        plateau_patience=plateau_patience,
-        transform_kind=transform_kind,
-        lr=lr,
-        num_epochs=num_epochs,
-        batch_size=batch_size,
-        weight_decay=weight_decay,
-        num_workers=num_workers,
-        fp16=fp16,
-        resume=resume,
-        pretrain=pretrain,
-        seed=seed,
-        wandb_project=wandb_project,
-        wandb_mode=wandb_mode,
-        wandb_run_name=wandb_run_name,
-        dataset_type=dataset_type,
-    )
-    merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
-    explicit_loss_kwargs = {
-        "num_classes": merged.get("loss_num_classes"),
-        "fuse_weight": merged.get("fuse_weight"),
-        "sep_weight": merged.get("sep_weight"),
-        "prm_weight": merged.get("prm_weight"),
-        "eps": merged.get("loss_eps"),
-        "log_clamp_min": merged.get("log_clamp_min"),
-    }
-    for key, value in explicit_loss_kwargs.items():
-        if value is not None:
-            merged_loss_kwargs[key] = value
-    merged["custom_loss_kwargs"] = merged_loss_kwargs
-    merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
-    split_file_value = merged.get("split_file")
-    if split_file_value is None:
-        split_file_value = merged_trainer_kwargs.get("split_file")
-    resolved_split_file = resolve_split_path(split_file_value)
-    merged_trainer_kwargs["split_file"] = str(resolved_split_file)
-    if merged.get("transform_kind") is not None:
-        merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
-    merged["custom_trainer_kwargs"] = merged_trainer_kwargs
-    merged["split_file"] = str(resolved_split_file)
-    _require_train_values(
-        merged,
-        "data_dir",
-        "art_dir",
-        "trainer",
-        "optimizer",
-        "num_epochs",
-    )
-    model_kind = TrainingModelKind(merged.get("model", TrainingModelKind.IMFUSE))
-    optimizer_kind = TrainingOptimizerKind(
-        merged.get("optimizer", TrainingOptimizerKind.RADAM)
-    )
-    scheduler_kind = TrainingSchedulerKind(
-        merged.get("scheduler", TrainingSchedulerKind.POLY)
-    )
-    model_config = build_model_config(
-        model_kind=model_kind,
-        model_kwargs=merged.get("custom_model_kwargs"),
-    )
-    loss_config = build_loss_config(
-        loss_kind=merged.get("loss", "imfuse"),
-        loss_kwargs=merged.get("custom_loss_kwargs"),
-    )
-    resolved_num_epochs = int(merged["num_epochs"])
-    optimizer_config = build_optimizer_config(
-        optimizer_kind=optimizer_kind,
-        lr=float(_merged_value(merged, "lr", 2e-4)),
-        weight_decay=float(_merged_value(merged, "weight_decay", 3e-5)),
-        betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
-        momentum=float(_merged_value(merged, "momentum", 0.9)),
-    )
-    scheduler_config = build_scheduler_config(
-        scheduler_kind=scheduler_kind,
-        poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
-        poly_power=float(_merged_value(merged, "poly_power", 0.9)),
-        cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
-        cosine_eta_min=float(_merged_value(merged, "cosine_eta_min", 0.0)),
-        step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
-        step_gamma=float(_merged_value(merged, "step_gamma", 0.1)),
-        multistep_milestones=list(merged["multistep_milestones"]) if merged.get("multistep_milestones") is not None else None,
-        multistep_gamma=float(_merged_value(merged, "multistep_gamma", 0.1)),
-        plateau_mode=str(_merged_value(merged, "plateau_mode", "min")),
-        plateau_factor=float(_merged_value(merged, "plateau_factor", 0.1)),
-        plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
-    )
-    trainer_kind = TrainerKind(merged.get("trainer", TrainerKind.IMFUSE))
-    trainer_class = _resolve_trainer_class(trainer_kind)
-    trainer_instance = trainer_class(
-        input_dir=Path(merged["data_dir"]),
-        output_dir=Path(merged["art_dir"]),
-        custom_trainer_kwargs=merged_trainer_kwargs,
-        model_config=model_config,
-        loss_config=loss_config,
-        optimizer_config=optimizer_config,
-        scheduler_config=scheduler_config,
-        num_epochs=resolved_num_epochs,
-        batch_size=int(merged.get("batch_size", 1)),
-        num_workers=int(merged.get("num_workers", 8)),
-        fp16=bool(merged.get("fp16", False)),
-        resume=bool(merged.get("resume", False)),
-        seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
-        pretrain=merged.get("pretrain"),
-        wandb_project=merged.get("wandb_project"),
-        wandb_mode=merged.get("wandb_mode"),
-        wandb_run_name=merged.get("wandb_run_name"),
-        dataset_type=merged.get("dataset_type")
-    )
+        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]reading configuration[/dim]")
+        yaml_config = load_yaml_config(config)
+        trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
+        merged = merge_cli_overrides(
+            yaml_config,
+            data_dir=data_dir,
+            art_dir=art_dir,
+            trainer=trainer,
+            model=model,
+            loss=loss,
+            custom_model_kwargs=parse_kv_list(custom_model_kwargs),
+            custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
+            loss_num_classes=loss_num_classes,
+            fuse_weight=fuse_weight,
+            sep_weight=sep_weight,
+            prm_weight=prm_weight,
+            loss_eps=loss_eps,
+            log_clamp_min=log_clamp_min,
+            custom_trainer_kwargs=trainer_kwargs,
+            split_file=split_file,
+            optimizer=optimizer,
+            betas=betas,
+            momentum=momentum,
+            scheduler=scheduler,
+            poly_total_iters=poly_total_iters,
+            poly_power=poly_power,
+            cosine_t_max=cosine_t_max,
+            cosine_eta_min=cosine_eta_min,
+            step_step_size=step_step_size,
+            step_gamma=step_gamma,
+            multistep_milestones=multistep_milestones,
+            multistep_gamma=multistep_gamma,
+            plateau_mode=plateau_mode,
+            plateau_factor=plateau_factor,
+            plateau_patience=plateau_patience,
+            transform_kind=transform_kind,
+            lr=lr,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            weight_decay=weight_decay,
+            num_workers=num_workers,
+            fp16=fp16,
+            resume=resume,
+            pretrain=pretrain,
+            seed=seed,
+            wandb_project=wandb_project,
+            wandb_mode=wandb_mode,
+            wandb_run_name=wandb_run_name,
+            dataset_type=dataset_type,
+        )
+        merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
+        explicit_loss_kwargs = {
+            "num_classes": merged.get("loss_num_classes"),
+            "fuse_weight": merged.get("fuse_weight"),
+            "sep_weight": merged.get("sep_weight"),
+            "prm_weight": merged.get("prm_weight"),
+            "eps": merged.get("loss_eps"),
+            "log_clamp_min": merged.get("log_clamp_min"),
+        }
+        for key, value in explicit_loss_kwargs.items():
+            if value is not None:
+                merged_loss_kwargs[key] = value
+        merged["custom_loss_kwargs"] = merged_loss_kwargs
+        merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
+        split_file_value = merged.get("split_file")
+        if split_file_value is None:
+            split_file_value = merged_trainer_kwargs.get("split_file")
+        resolved_split_file = resolve_split_path(split_file_value)
+        merged_trainer_kwargs["split_file"] = str(resolved_split_file)
+        if merged.get("transform_kind") is not None:
+            merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
+        merged["custom_trainer_kwargs"] = merged_trainer_kwargs
+        merged["split_file"] = str(resolved_split_file)
+        _require_train_values(
+            merged,
+            "data_dir",
+            "art_dir",
+            "trainer",
+            "optimizer",
+            "num_epochs",
+        )
+
+        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]building training objects[/dim]")
+        trainer_kind = TrainerKind(merged.get("trainer", TrainerKind.IMFUSE))
+        default_model = TrainingModelKind.DCSEG if trainer_kind is TrainerKind.DCSEG else TrainingModelKind.IMFUSE
+        default_loss = "dcseg" if trainer_kind is TrainerKind.DCSEG else "imfuse"
+        model_kind = TrainingModelKind(merged.get("model", default_model))
+        optimizer_kind = TrainingOptimizerKind(
+            merged.get("optimizer", TrainingOptimizerKind.RADAM)
+        )
+        scheduler_kind = TrainingSchedulerKind(
+            merged.get("scheduler", TrainingSchedulerKind.POLY)
+        )
+        model_config = build_model_config(
+            model_kind=model_kind,
+            model_kwargs=merged.get("custom_model_kwargs"),
+        )
+        loss_config = build_loss_config(
+            loss_kind=merged.get("loss", default_loss),
+            loss_kwargs=merged.get("custom_loss_kwargs"),
+        )
+        resolved_num_epochs = int(merged["num_epochs"])
+        optimizer_config = build_optimizer_config(
+            optimizer_kind=optimizer_kind,
+            lr=float(_merged_value(merged, "lr", 2e-4)),
+            weight_decay=float(_merged_value(merged, "weight_decay", 3e-5)),
+            betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
+            momentum=float(_merged_value(merged, "momentum", 0.9)),
+        )
+        scheduler_config = build_scheduler_config(
+            scheduler_kind=scheduler_kind,
+            poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
+            poly_power=float(_merged_value(merged, "poly_power", 0.9)),
+            cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
+            cosine_eta_min=float(_merged_value(merged, "cosine_eta_min", 0.0)),
+            step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
+            step_gamma=float(_merged_value(merged, "step_gamma", 0.1)),
+            multistep_milestones=list(merged["multistep_milestones"]) if merged.get("multistep_milestones") is not None else None,
+            multistep_gamma=float(_merged_value(merged, "multistep_gamma", 0.1)),
+            plateau_mode=str(_merged_value(merged, "plateau_mode", "min")),
+            plateau_factor=float(_merged_value(merged, "plateau_factor", 0.1)),
+            plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
+        )
+        trainer_class = _resolve_trainer_class(trainer_kind)
+
+        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]initializing trainer[/dim]")
+        trainer_instance = trainer_class(
+            input_dir=Path(merged["data_dir"]),
+            output_dir=Path(merged["art_dir"]),
+            custom_trainer_kwargs=merged_trainer_kwargs,
+            model_config=model_config,
+            loss_config=loss_config,
+            optimizer_config=optimizer_config,
+            scheduler_config=scheduler_config,
+            num_epochs=resolved_num_epochs,
+            batch_size=int(merged.get("batch_size", 1)),
+            num_workers=int(merged.get("num_workers", 8)),
+            fp16=bool(merged.get("fp16", False)),
+            resume=bool(merged.get("resume", False)),
+            seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
+            pretrain=merged.get("pretrain"),
+            wandb_project=merged.get("wandb_project"),
+            wandb_mode=merged.get("wandb_mode"),
+            wandb_run_name=merged.get("wandb_run_name"),
+            dataset_type=merged.get("dataset_type")
+        )
+
     trainer_instance.fit()
 
 

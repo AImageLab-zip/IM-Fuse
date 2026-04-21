@@ -29,15 +29,18 @@ class NormMode(StrEnum):
 
 class TrainerKind(StrEnum):
     IMFUSE = "imfuse"
+    DCSEG = "dcseg"
 
 
 class ModelKind(StrEnum):
     IMFUSE = "imfuse"
     MMFORMER = "mmformer"
+    DCSEG = "dcseg"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
+    DCSEG = "dcseg"
 
 
 class OptimizerKind(StrEnum):
@@ -57,6 +60,7 @@ class SchedulerKind(StrEnum):
 
 class LossKind(StrEnum):
     IMFUSE = "imfuse"
+    DCSEG = "dcseg"
 
 
 class MaskingMode(StrEnum):

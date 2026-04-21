@@ -1,23 +1,8 @@
-# BrainchMark
+# BrainchMark🧠
 
-BrainchMark is the active benchmark package in this repository for brain tumor segmentation under missing-modality conditions.
+BrainchMark is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
 
-The operational code lives under `src/brainchmark`. The rest of the repository also contains legacy model directories and experiment workspaces, but `brainchmark` is the maintained CLI/package surface.
-
-## What Exists Today
-
-BrainchMark currently provides:
-
-- dataset-aware preprocessing for BraTS-style datasets
-- a Typer CLI with `preprocess`, `train`, and `test`
-- YAML-driven execution with CLI overrides
-- a small GUI generated from the CLI surface
-- active model integrations for `imfuse` and `mmformer`
-
-Supported dataset types:
-
-- `brats18`
-- `brats23`
+The code you should actually use lives in `src/brainchmark`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `brainchmark`.
 
 ## Installation
 
@@ -26,24 +11,23 @@ The package metadata currently pins Python to `3.12.13`.
 Recommended setup with `uv`:
 
 ```bash
-uv sync
-source .venv/bin/activate
+git clone https://github.com/AImageLab-zip/IM-Fuse
+cd IM-Fuse
+bash install.sh
 ```
 
-For development tools too:
+The installation step can take a while the first time. Some dependencies, including the local Mamba build path, may need to compile native code before the environment is ready.
 
-```bash
-uv sync --extra dev
-source .venv/bin/activate
-```
+## Supported Hardware and Software
 
-Manual fallback:
+BrainchMark is currently supported on:
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-```
+- Linux
+- NVIDIA GPUs based on the Turing architecture or newer
+
+In practice, this means GPUs such as the NVIDIA RTX 2000 series and later are supported.
+
+Linux is the only supported operating system for now.
 
 ## Entry Points
 
@@ -56,19 +40,43 @@ brainchmark-gui
 
 CLI commands:
 
+- `setup`
 - `preprocess`
 - `train`
 - `test`
 - `self-destruct`
 
-`self-destruct` is obviously not part of the serious workflow...but that’s exactly what I want you to believe… so why not try it, hehehe.
+`self-destruct` is obviously part of the serious workflow.
 
+## What Exists Today
+
+BrainchMark currently provides:
+
+- an interactive `setup` command for generating local configs from packaged templates
+- dataset-aware preprocessing for BraTS-style datasets
+- a Typer CLI with `preprocess`, `train`, and `test`
+- YAML-driven execution with CLI overrides
+- a small GUI generated from the CLI surface
+- active model integrations for `imfuse`, `mmformer`, and `dcseg`
+
+Supported dataset types:
+
+- `brats18`
+- `brats23`
 ## Preprocessing Quick Start
+
+If you want to rewrite the packaged reference configs first:
+
+```bash
+brainchmark setup
+```
+
+This copies the packaged templates from `src/brainchmark/data/config_templates` into `src/brainchmark/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.
 
 Run preprocessing from YAML:
 
 ```bash
-brainchmark preprocess --config src/brainchmark/data/configs/preprocessing.yaml
+brainchmark preprocess --config src/brainchmark/data/configs/imfuse_23.yaml
 ```
 
 Run preprocessing from flags:
@@ -95,7 +103,7 @@ More detail: [docs/preprocessing.md](docs/preprocessing.md)
 Example with a reference config:
 
 ```bash
-brainchmark train --config src/brainchmark/data/configs/imfuse_23.yaml
+brainchmark train --config imfuse_23.yaml
 ```
 
 Override selected values from the CLI:
@@ -113,6 +121,8 @@ The current reference configs are:
 - `src/brainchmark/data/configs/imfuse_23.yaml`
 - `src/brainchmark/data/configs/mmformer_18.yaml`
 - `src/brainchmark/data/configs/mmformer_23.yaml`
+- `src/brainchmark/data/configs/dcseg_18.yaml`
+- `src/brainchmark/data/configs/dcseg_23.yaml`
 
 More detail: [docs/training.md](docs/training.md)
 
@@ -121,7 +131,7 @@ More detail: [docs/training.md](docs/training.md)
 Evaluate a checkpoint across the standard 15 mask patterns:
 
 ```bash
-brainchmark test --config src/brainchmark/data/configs/imfuse_23.yaml
+brainchmark test --config imfuse_23.yaml
 ```
 
 Or directly:
@@ -150,6 +160,10 @@ CLI values override YAML values when both are present.
 
 Reference configs live in [src/brainchmark/data/configs](src/brainchmark/data/configs).
 
+For a dedicated guide to writing configs, see [docs/yaml-config.md](docs/yaml-config.md).
+
+For training startup, the CLI now shows a Rich `dots` status immediately while it loads training modules, resolves config, and initializes the trainer. This is expected before the full launch summary panel appears.
+
 ## GUI
 
 Launch the GUI with:
@@ -163,6 +177,12 @@ It is useful for:
 - browsing command options
 - filling config/CLI parameters interactively
 - launching CLI-backed workflows without typing long commands
+
+## Contributing
+
+Contributions are welcome and will be evaluated quickly.
+
+If you want to add your own model, trainer, dataset integration, runtime component, or other custom extension, follow [docs/extending.md](docs/extending.md).
 
 ## Project Layout
 
@@ -178,41 +198,11 @@ Key package areas:
 
 Documentation:
 
+- [docs/yaml-config.md](docs/yaml-config.md)
 - [docs/preprocessing.md](docs/preprocessing.md)
 - [docs/training.md](docs/training.md)
 - [docs/testing.md](docs/testing.md)
 - [docs/extending.md](docs/extending.md)
+- [docs/components/README.md](docs/components/README.md)
 
-## Development
-
-Basic checks:
-
-```bash
-python -m py_compile src/brainchmark/cli.py
-python -m py_compile src/brainchmark/gui.py
-python -m py_compile src/brainchmark/preprocessing/config.py
-python -m py_compile src/brainchmark/training/trainers/base_trainer.py
-```
-
-Lint and type-check:
-
-```bash
-ruff check .
-mypy src
-```
-
-Run tests:
-
-```bash
-pytest
-```
-
-## Current Status
-
-The current state is:
-
-- preprocessing is solid and actively usable
-- training is implemented and config-driven
-- testing is implemented for mask-sweep evaluation
-- the active trainer stack is centered on the IMFuse-style trainer/runtime, which is also currently reused for mmFormer
-- the docs and configs are intended to reflect the active `brainchmark` package, not the legacy folders
+If you need very detailed, component-by-component extension notes, start with [docs/components/README.md](docs/components/README.md).

@@ -2,55 +2,45 @@
 
 `brainchmark train` launches config-driven training for the active BrainchMark package.
 
-At the moment, the implemented training stack is centered on `IMFuseTrainer`, which is used for both:
+The active training stack currently includes:
 
-- `imfuse`
-- `mmformer`
+- `IMFuseTrainer` for:
+  - `imfuse`
+  - `mmformer`
+- `DCSegTrainer` for:
+  - `dcseg`
 
-The legacy model logic differs, but the active BrainchMark runtime currently shares the same dataset, loss, checkpointing, and trainer infrastructure across those models.
+The runtime still shares common checkpointing, DDP, WandB, and Rich progress infrastructure across trainers, but the DC-Seg path now has its own trainer and transform wiring.
 
 ## Basic Usage
 
 Run from YAML:
 
 ```bash
-brainchmark train --config src/brainchmark/data/configs/imfuse_23.yaml
+brainchmark train --config imfuse_23.yaml
 ```
-
+The CLI automatically resolves and autocompletes config files found in src/brainchmark/data/config. Absolute or relative paths for custom yaml files are supported too.
 Run from CLI:
 
 ```bash
 brainchmark train \
   --data-dir /path/to/preprocessed \
-  --art-dir /path/to/run \
-  --trainer imfuse \
-  --model mmformer \
-  --loss imfuse \
+  --art-dir /path/to/artifacts_dir \
+  --trainer dcseg \
+  --model dcseg \
+  --loss dcseg \
   --optimizer adam \
   --scheduler poly \
   --lr 2e-4 \
-  --num-epochs 1000 \
+  --num-epochs 500 \
   --dataset-type brats23
 ```
 
 CLI values override YAML values when both are provided.
 
-## Required Inputs
+For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For very detailed extension notes on trainers, models, and runtime wiring, see [docs/components/README.md](components/README.md).
 
-The training command currently requires:
-
-- `data_dir`
-- `art_dir`
-- `trainer`
-- `optimizer`
-- `num_epochs`
-
-In practice, you should also set these explicitly for a real run, even though some have defaults:
-
-- `model`
-- `dataset_type`
-
-`split_file` is not strictly required on the CLI because it resolves to the packaged default split file when omitted.
 
 ## Reference Configs
 
@@ -60,6 +50,8 @@ The repo currently ships these reference training configs:
 - `src/brainchmark/data/configs/imfuse_23.yaml`
 - `src/brainchmark/data/configs/mmformer_18.yaml`
 - `src/brainchmark/data/configs/mmformer_23.yaml`
+- `src/brainchmark/data/configs/dcseg_18.yaml`
+- `src/brainchmark/data/configs/dcseg_23.yaml`
 
 They are combined reference files that include preprocess, train, and test sections/fields. The train command reads the training-relevant keys and ignores the rest.
 
@@ -99,15 +91,18 @@ Structured extension points:
 Trainer values:
 
 - `imfuse`
+- `dcseg`
 
 Model values:
 
 - `imfuse`
 - `mmformer`
+- `dcseg`
 
 Loss values:
 
 - `imfuse`
+- `dcseg`
 
 Optimizer values:
 
@@ -127,10 +122,13 @@ Scheduler values:
 Transform manager values:
 
 - `imfuse`
+- `dcseg`
 
 ## Trainer-Specific Runtime Options
 
-The active IMFuse-style trainer currently consumes trainer kwargs such as:
+The active trainers consume overlapping but not identical trainer kwargs.
+
+Common examples:
 
 - `iter_per_epoch`
 - `region_fusion_start_epoch`
@@ -159,6 +157,26 @@ Current masking defaults:
 - training: `random`
 - validation: `validation`
 
+### DC-Seg-specific notes
+
+The packaged DC-Seg configs are tuned to follow the maintained DC-Seg port rather than the earlier generic IMFuse defaults.
+
+Current defaults in the shipped DC-Seg configs include:
+
+- `trainer: dcseg`
+- `model: dcseg`
+- `loss: dcseg`
+- `transform_kind: dcseg`
+- `patch_size: 112`
+- `poly_total_iters: 500`
+- `fp16: false`
+- `use_recon_loss: true`
+- `use_reg_loss: true`
+- `use_ana_contrastive: true`
+- `use_mod_contrastive: true`
+
+The DC-Seg inference path uses its own sliding-window `predict(...)` implementation inside the model, so training crop size and inference window size are not the same thing.
+
 ## Model Kwargs
 
 `custom_model_kwargs` are passed directly to the selected model class.
@@ -179,6 +197,14 @@ For `mmformer`:
 ```yaml
 custom_model_kwargs:
   num_cls: 4
+```
+
+For `dcseg`:
+
+```yaml
+custom_model_kwargs:
+  num_cls: 4
+  fusion_type: RFM
 ```
 
 You can also override these from the CLI:
@@ -210,6 +236,8 @@ brainchmark train \
 
 The training launch panel also prints the resolved run name.
 
+If W&B logging is enabled but there is no active login in the terminal, BrainchMark now fails with a clean CLI message telling you to run `wandb login` or disable W&B with `--wandb-mode disabled`.
+
 ## Distributed Training
 
 The CLI supports DDP relaunch through:
@@ -219,67 +247,41 @@ The CLI supports DDP relaunch through:
 
 When `--distributed` is used outside an existing `torchrun` launch, BrainchMark relaunches itself through `torchrun`.
 
-## Runtime Behavior
-
-The active trainer currently provides:
-
-- launch summary panel
-- checkpoint directory setup
-- checkpoint save/load
-- optional pretrain loading
-- WandB initialization/logging
-- DDP wrapping
-- Rich progress bars for train and validation
-- VRAM progress-bar field
-- CUDA OOM normalization into a clean CLI error
-
-## Legacy Alignment Notes
-
-The current configs try to mirror legacy defaults where they materially differ.
-
-Examples:
-
-- `imfuse_23.yaml`
-  - `model: imfuse`
-  - `optimizer: radam`
-- `mmformer_23.yaml`
-  - `model: mmformer`
-  - `optimizer: adam`
-  - `scheduler: poly`
-  - `lr: 2e-4`
-  - `weight_decay: 1e-4`
-
-The loss implementation is shared because the legacy IMFuse and mmFormer loss files are effectively identical.
 
 ## Example YAML
 
 ```yaml
 data_dir: /path/to/preprocessed
 art_dir: /path/to/run
-trainer: imfuse
-model: mmformer
-loss: imfuse
+trainer: dcseg
+model: dcseg
+loss: dcseg
 
 custom_model_kwargs:
   num_cls: 4
+  fusion_type: RFM
 
 custom_trainer_kwargs:
-  patch_size: 128
-  transform_kind: imfuse
+  patch_size: 112
+  transform_kind: dcseg
   train_masking_mode: random
   val_masking_mode: validation
+  use_recon_loss: true
+  use_reg_loss: true
+  use_ana_contrastive: true
+  use_mod_contrastive: true
 
 optimizer: adam
 betas: [0.9, 0.999]
 
 scheduler: poly
-poly_total_iters: 1000
+poly_total_iters: 500
 poly_power: 0.9
 
 lr: 0.0002
 weight_decay: 0.0001
 batch_size: 1
-num_epochs: 1000
+num_epochs: 500
 num_workers: 8
 fp16: false
 resume: false

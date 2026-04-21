@@ -17,6 +17,7 @@ depth = 1
 num_modals = 4
 patch_size = 8
 input_patch_size = 128
+DATASET_MODALITY_ORDER = (2, 0, 1, 3)
 
 
 def normalization(planes: int, norm: str = "bn") -> nn.Module:
@@ -582,6 +583,7 @@ class MMFormer(AbstractModel):
         x: torch.Tensor,
         mask: torch.Tensor,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]:
+        x, mask = self._remap_input_order(x, mask)
         flair_x1, flair_x2, flair_x3, flair_x4, flair_x5 = self.flair_encoder(x[:, 0:1, :, :, :])
         t1ce_x1, t1ce_x2, t1ce_x3, t1ce_x4, t1ce_x5 = self.t1ce_encoder(x[:, 1:2, :, :, :])
         t1_x1, t1_x2, t1_x3, t1_x4, t1_x5 = self.t1_encoder(x[:, 2:3, :, :, :])
@@ -729,6 +731,24 @@ class MMFormer(AbstractModel):
         if starts[-1] != last_start:
             starts.append(last_start)
         return starts
+
+    @staticmethod
+    def _remap_input_order(
+        images: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if images.size(1) != num_modals:
+            raise RuntimeError(
+                f"MMFormer expects {num_modals} input modalities, got {images.size(1)}"
+            )
+        if mask.ndim != 2 or mask.size(1) != num_modals:
+            raise RuntimeError(
+                f"MMFormer expects mask shape [B, {num_modals}], got {tuple(mask.shape)}"
+            )
+
+        # External pipeline uses [t1c, t1n, t2f, t2w]; the model internals expect
+        # [flair, t1ce, t1, t2], so remap both tensors at the boundary.
+        return images[:, DATASET_MODALITY_ORDER, ...], mask[:, DATASET_MODALITY_ORDER]
 
 
 Model = MMFormer

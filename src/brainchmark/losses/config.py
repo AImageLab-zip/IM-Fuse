@@ -68,7 +68,7 @@ def _normalize_loss_kwargs(loss_name: str, loss_kwargs: dict[str, Any]) -> dict[
     target_name = _normalize_name(loss_name)
     kwargs = dict(loss_kwargs)
 
-    if target_name == "imfuse":
+    if target_name in {"imfuse", "dcseg"}:
         if kwargs.get("num_classes") is not None:
             num_classes = int(kwargs["num_classes"])
             if num_classes <= 0:

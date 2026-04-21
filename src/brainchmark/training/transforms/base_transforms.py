@@ -2,9 +2,13 @@ from abc import ABC, abstractmethod
 from typing import Callable, Any
 import torch
 
+
 class TransformManager(ABC):
     def __init__(self):
-        # Subclasses set self.train_transforms and self.test_transforms as callables
+        # Subclasses set self.train_transforms and self.test_transforms.
+        # Supported layouts:
+        # - {"paired": callable(images, labels) -> (images, labels)}
+        # - {"images": callable, "labels": callable, ...}
         self.train_transforms: dict[str, Callable] = {}
         self.test_transforms: dict[str, Callable] = {}
         self._setup_transforms()
@@ -17,13 +21,20 @@ class TransformManager(ABC):
     def __call__(self, images: torch.Tensor, labels: torch.Tensor, mode: str = 'train', *extra_tensors: torch.Tensor) -> tuple[torch.Tensor, ...]:
         if mode not in ['train', 'test']:
             raise ValueError("Mode must be 'train' or 'test'")
-        
+
         transforms = self.train_transforms if mode == 'train' else self.test_transforms
-        
-        # Apply to images and labels (required)
-        transformed_images = transforms['images'](images)
-        transformed_labels = transforms['labels'](labels)
-        # Apply to extras if defined (e.g., 'extra_0' key)
+
+        if 'paired' in transforms:
+            transformed_images, transformed_labels = transforms['paired'](images, labels)
+        else:
+            if 'images' not in transforms or 'labels' not in transforms:
+                raise KeyError(
+                    "TransformManager requires either a 'paired' transform or both "
+                    "'images' and 'labels' transforms"
+                )
+            transformed_images = transforms['images'](images)
+            transformed_labels = transforms['labels'](labels)
+
         transformed_extras = []
         for i, extra in enumerate(extra_tensors):
             key = f'extra_{i}'

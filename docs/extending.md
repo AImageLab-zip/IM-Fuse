@@ -1,278 +1,254 @@
 # Extending BrainchMark
 
-This document covers the active `brainchmark` package under `src/brainchmark`.
+This document gives a high-level map of how to extend the active `brainchmark` package under `src/brainchmark`.
 
-It intentionally does not treat `legacy/` as the extension surface. Legacy code is reference material; the maintained package API is under `src/brainchmark`.
+The maintained extension surface is `src/brainchmark`. The `legacy/` directories are useful for reference and comparison, but they are not the package API you should extend.
 
-## Active Extension Surface
+If you need field-by-field or component-by-component instructions, use the detailed guides in [docs/components/README.md](components/README.md).
 
-Relevant areas:
+## Extension Flow
 
-- `src/brainchmark/cli.py`
-- `src/brainchmark/preprocessing/`
-- `src/brainchmark/models/`
-- `src/brainchmark/datasets/`
-- `src/brainchmark/training/`
-- `src/brainchmark/testing/`
-- `src/brainchmark/gui.py`
+Most changes follow the same path:
 
-Typical flow:
+1. add or modify the implementation in `src/brainchmark/...`
+2. wire the new behavior into config/build logic
+3. expose it through CLI and YAML if users need to select it
+4. update reference configs under `src/brainchmark/data/configs/`
+5. update the relevant docs
 
-1. Add the implementation in the correct package area.
-2. Wire config/build logic if needed.
-3. Expose it through the CLI or config resolver.
-4. Update docs and example configs.
+If your change introduces or changes YAML fields, start with [docs/yaml-config.md](yaml-config.md).
 
-## Repo Reality
+## Repo Areas
 
-Current practical facts:
+These are the main places you will touch:
 
-- preprocessing is mature and easy to extend
-- the active trainer stack is usable, not just scaffold
-- the model resolver is dynamic and discovers modules under `src/brainchmark/models`
-- GUI behavior is driven by the Typer CLI, so simple CLI option changes usually surface there automatically
-- testing is implemented and depends on models exposing `predict(images, mask)`
+- [src/brainchmark/cli.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/cli.py): CLI entrypoints, option definitions, command wiring
+- [src/brainchmark/gui.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/gui.py): GUI surface generated from the CLI
+- [src/brainchmark/enums.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/enums.py): shared enum choices exposed across config and CLI
+- [src/brainchmark/utils/cli_overrides.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/utils/cli_overrides.py): CLI-over-YAML merge behavior
+- [src/brainchmark/data/config_templates/](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/config_templates): shipped config templates copied by `brainchmark setup`
+- [src/brainchmark/data/configs/](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/configs): local reference configs used by the package
+- [src/brainchmark/data/splits/split.json](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/splits/split.json): packaged dataset split definition
 
 ## Preprocessing
 
-Relevant files:
+The preprocessing stack lives in:
 
-- `src/brainchmark/preprocessing/config.py`
-- `src/brainchmark/preprocessing/cropping.py`
-- `src/brainchmark/preprocessing/clamping.py`
-- `src/brainchmark/preprocessing/normalization.py`
-- `src/brainchmark/preprocessing/pipeline.py`
+- [src/brainchmark/preprocessing/config.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/preprocessing/config.py)
+- [src/brainchmark/preprocessing/cropping.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/preprocessing/cropping.py)
+- [src/brainchmark/preprocessing/clamping.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/preprocessing/clamping.py)
+- [src/brainchmark/preprocessing/normalization.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/preprocessing/normalization.py)
+- [src/brainchmark/preprocessing/pipeline.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/preprocessing/pipeline.py)
 
-### How it works
+This is where you extend:
 
-`build_crop_config`, `build_clamp_config`, and `build_norm_config` resolve callables by name.
+- crop/clamp/normalization modes
+- dataset discovery for preprocessing
+- per-case pipeline behavior
 
-Built-in names are backed by enums:
+Typical file route:
 
-- `CropMode`
-- `ClampMode`
-- `NormMode`
+1. add the implementation in one of `cropping.py`, `clamping.py`, or `normalization.py`
+2. validate and resolve it in `config.py`
+3. make sure `pipeline.py` can call it correctly
+4. expose new options from `cli.py` if needed
 
-Custom callable names are also allowed when they match functions in the relevant preprocessing module.
-
-### Add a custom preprocessing function
-
-Example for normalization:
-
-1. Add a function to `src/brainchmark/preprocessing/normalization.py`.
-2. Match the expected signature:
-
-```python
-def my_norm(images: np.ndarray, config: NormConfig) -> np.ndarray:
-    ...
-```
-
-3. Use it from the CLI:
-
-```bash
-brainchmark preprocess --norm-mode my_norm
-```
-
-Expected signatures:
-
-- `cropping.py`: `fn(images, seg, config) -> tuple[images, seg]`
-- `clamping.py`: `fn(images, config) -> images`
-- `normalization.py`: `fn(images, config) -> images`
-
-### If you need new preprocessing parameters
-
-1. Add the option to `brainchmark preprocess` in `src/brainchmark/cli.py`.
-2. Merge it through `merge_cli_overrides(...)`.
-3. Extend the relevant config dataclass in `src/brainchmark/preprocessing/config.py`.
-4. Validate it in the corresponding `build_*_config(...)`.
-5. Use it in the implementation.
-6. Update `docs/preprocessing.md`.
+Detailed guide: [docs/components/preprocessing.md](components/preprocessing.md)
 
 ## Models
 
-Relevant files:
+The model integration layer lives in:
 
-- `src/brainchmark/models/config.py`
-- `src/brainchmark/models/abstract_model.py`
-- `src/brainchmark/models/IMFuse.py`
-- `src/brainchmark/models/mmformer.py`
+- [src/brainchmark/models/abstract_model.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/abstract_model.py)
+- [src/brainchmark/models/config.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/config.py)
+- [src/brainchmark/models/IMFuse.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/IMFuse.py)
+- [src/brainchmark/models/mmformer.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/mmformer.py)
+- [src/brainchmark/models/dcseg.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/dcseg.py)
 
-### Current model resolution
+This is where you extend:
 
-Model selection is built from:
+- new model families
+- model selection logic
+- inference contract through `predict(images, mask)`
 
-- `ModelKind`
-- `ModelConfig`
-- `build_model_config(...)`
+Typical file route:
 
-The resolver scans Python modules under `src/brainchmark/models/` and matches callables by normalized name.
+1. add a new module under `src/brainchmark/models/`
+2. inherit from `AbstractModel`
+3. wire selection through `models/config.py`
+4. add enum support in `enums.py` if it should be a first-class built-in choice
+5. make sure the chosen trainer understands the model output structure
 
-### Add a new model
+Detailed guide: [docs/components/models.md](components/models.md)
 
-1. Create a new module under `src/brainchmark/models/`.
-2. Implement a model class there.
-3. Make sure it inherits from `AbstractModel`.
-4. Implement:
-   - `forward(...)`
-   - `predict(images, mask)`
-5. If you want the model to be a first-class CLI enum value, add it to `ModelKind`.
-6. Add or update a reference config under `src/brainchmark/data/configs/`.
+## Losses
 
-### Model contract
+The loss layer lives in:
 
-For the active trainer/runtime, a model should:
+- [src/brainchmark/losses/config.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/losses/config.py)
+- [src/brainchmark/losses/imfuse.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/losses/imfuse.py)
+- [src/brainchmark/losses/dcseg.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/losses/dcseg.py)
+- [src/brainchmark/losses/__init__.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/losses/__init__.py)
 
-- support training-time forward with `(images, mask)`
-- support inference-time `predict(images, mask)`
+This is where you extend:
 
-For the IMFuse-style trainer path specifically, the training forward is expected to return:
+- new loss classes
+- loss selection logic
+- loss kwargs exposed from YAML or CLI
 
-- `fuse_pred`
-- `sep_preds`
-- `prm_preds`
+Typical file route:
 
-That is why both active models currently conform to the IMFuse-style loss/trainer interface.
+1. implement the loss module under `src/brainchmark/losses/`
+2. wire it through `losses/config.py`
+3. add enum support in `enums.py` if needed
+4. make sure the trainer passes the right tensors to it
+
+The trainer/loss contract matters more than the loss file alone. If the model outputs or batch structure differ, you usually need trainer changes too.
 
 ## Datasets
 
-Relevant files:
+The dataset layer lives in:
 
-- `src/brainchmark/datasets/base.py`
-- `src/brainchmark/datasets/imfuse.py`
-- `src/brainchmark/datasets/config.py`
-- `src/brainchmark/data/splits/`
+- [src/brainchmark/datasets/base.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/datasets/base.py)
+- [src/brainchmark/datasets/imfuse.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/datasets/imfuse.py)
+- [src/brainchmark/datasets/config.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/datasets/config.py)
+- [src/brainchmark/data/splits/split.json](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/splits/split.json)
 
-### Add a new dataset type
+This is where you extend:
 
-1. Add the enum value to `DatasetType`.
-2. Extend dataset-specific path logic where needed:
-   - preprocessing discovery in `src/brainchmark/preprocessing/pipeline.py`
-   - split loading if needed
-3. Add split files under `src/brainchmark/data/splits/`.
-4. Add a new dataset loader module if the sample format differs.
+- sample loading
+- masking behavior
+- new dataset types
+- split handling
 
-### Masking support
+Typical file route:
 
-The active IMFuse dataset path already supports configurable masking behavior through:
+1. add enum support in `enums.py`
+2. update dataset config or dataset classes
+3. update preprocessing and testing pipeline assumptions if the sample format changes
+4. add or update split files under `src/brainchmark/data/splits/`
 
-- `MaskingMode`
-- predefined mask patterns
-- dataset-level mask resolution
+Detailed guide: [docs/components/datasets.md](components/datasets.md)
 
-If you extend missing-modality behavior, the relevant places are:
+## Training Runtime
 
-- `src/brainchmark/datasets/base.py`
-- `src/brainchmark/datasets/imfuse.py`
-- trainer kwargs that select train/val masking modes
+The shared runtime configuration lives in:
 
-## Optimizers and Schedulers
+- [src/brainchmark/training/config.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/config.py)
+- [src/brainchmark/enums.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/enums.py)
 
-Relevant file:
+This is where you extend:
 
-- `src/brainchmark/training/config.py`
+- optimizers
+- schedulers
+- runtime object builders
+- common train-time config validation
 
-This file contains the active pattern for configurable runtime objects:
+Typical file route:
 
-- `OptimizerKind` + `OptimizerConfig` + `build_optimizer_config(...)`
-- `SchedulerKind` + `SchedulerConfig` + `build_scheduler_config(...)`
+1. add the enum in `enums.py`
+2. register the implementation in `training/config.py`
+3. validate new kwargs there
+4. ensure the trainer stepping behavior matches the new scheduler or optimizer semantics
 
-### Add a new optimizer
+Detailed guide: [docs/components/runtime-config.md](components/runtime-config.md)
 
-1. Add a new enum value to `OptimizerKind`.
-2. Add the implementation to `OPTIMIZER_DICT`.
-3. Extend validation/config construction in `build_optimizer_config(...)`.
-4. Update docs and example configs.
+## Trainers and Transforms
 
-### Add a new scheduler
+The trainer stack lives in:
 
-1. Add a new enum value to `SchedulerKind` if it is a built-in.
-2. Extend `SCHEDULER_DICT`.
-3. Extend validation/config construction in `build_scheduler_config(...)`.
-4. Update docs and example configs.
+- [src/brainchmark/training/trainers/abstract_trainer.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/trainers/abstract_trainer.py)
+- [src/brainchmark/training/trainers/base_trainer.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/trainers/base_trainer.py)
+- [src/brainchmark/training/trainers/imfuse.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/trainers/imfuse.py)
+- [src/brainchmark/training/trainers/dcseg.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/trainers/dcseg.py)
+- [src/brainchmark/training/transforms/base_transforms.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/transforms/base_transforms.py)
+- [src/brainchmark/training/transforms/imfuse.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/transforms/imfuse.py)
+- [src/brainchmark/training/transforms/__init__.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/training/transforms/__init__.py)
 
-## Trainers
+This is where you extend:
 
-Relevant files:
+- training loops
+- validation behavior
+- data augmentation and paired transforms
+- family-specific runtime logic
 
-- `src/brainchmark/training/trainers/abstract_trainer.py`
-- `src/brainchmark/training/trainers/base_trainer.py`
-- `src/brainchmark/training/trainers/imfuse.py`
-- `src/brainchmark/cli.py`
+Typical file route:
 
-### Current trainer story
+1. add or modify a concrete trainer under `training/trainers/`
+2. wire trainer selection from `cli.py`
+3. update transform managers if the trainer needs a different augmentation path
+4. ensure the selected model and loss obey the trainer contract
 
-The active runtime is based on:
-
-- `BaseTrainer` for generic runtime behavior
-- `IMFuseTrainer` for the current concrete segmentation workflow
-
-`IMFuseTrainer` is also currently reused for `mmformer`, because the active loss/data/runtime path still follows the IMFuse-style interface.
-
-### Add a new trainer
-
-1. Create a file under `src/brainchmark/training/trainers/`.
-2. Subclass `BaseTrainer`.
-3. Implement:
-   - `train_epoch(self, epoch)`
-   - `val_epoch(self, epoch)`
-   - `build_datasets(self)`
-4. Expose the trainer through `_resolve_trainer_class(...)` in `src/brainchmark/cli.py`.
-5. Add a matching `TrainerKind` enum value if it should be a built-in choice.
-
-### What BaseTrainer already provides
-
-`BaseTrainer` currently handles:
-
-- output/checkpoint directory setup
-- checkpoint save/load
-- DDP setup/cleanup
-- rank-aware behavior
-- WandB init/logging
-- launch summary printing
-- OOM normalization into clean CLI errors
+Detailed guide: [docs/components/trainers.md](components/trainers.md)
 
 ## Testing
 
-Relevant files:
+The evaluation path lives in:
 
-- `src/brainchmark/testing/pipeline.py`
-- `src/brainchmark/cli.py`
+- [src/brainchmark/testing/pipeline.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/testing/pipeline.py)
+- [src/brainchmark/models/abstract_model.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/models/abstract_model.py)
+- [src/brainchmark/cli.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/cli.py)
 
-Testing currently assumes:
+This is where you extend:
 
-- CUDA is available
-- the selected model inherits from `AbstractModel`
-- the selected model implements `predict(images, mask)`
+- checkpoint evaluation behavior
+- result formatting
+- model-specific inference integration
 
-If you add a model and want `brainchmark test` to work, `predict(...)` is mandatory.
+The critical contract is that test-time models must support `predict(images, mask)`. If a model only works through `forward(...)`, `brainchmark test` will not be enough on its own.
+
+Detailed guide: [docs/components/testing.md](components/testing.md)
 
 ## CLI and GUI
 
-The GUI is generated from the Typer CLI signature surface.
+The user-facing entrypoints live in:
 
-That means:
+- [src/brainchmark/cli.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/cli.py)
+- [src/brainchmark/gui.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/gui.py)
+- [src/brainchmark/utils/cli_overrides.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/utils/cli_overrides.py)
+- [src/brainchmark/utils/cli_utils.py](/homes/ocarpentiero/IM-Fuse/src/brainchmark/utils/cli_utils.py)
 
-- new simple options in `cli.py` usually appear naturally in the GUI
-- exotic types or unsupported annotations may need GUI follow-up work in `src/brainchmark/gui.py`
+This is where you extend:
 
-When you add new CLI options:
+- new command options
+- command-level validation
+- startup UX
+- GUI exposure of CLI-backed features
 
-1. wire them into `merge_cli_overrides(...)`
-2. document them
-3. update example configs when appropriate
+Typical file route:
 
-## Reference Configs
+1. add the option or command in `cli.py`
+2. merge CLI-over-YAML behavior in `utils/cli_overrides.py`
+3. adjust helper formatting in `utils/cli_utils.py` if needed
+4. verify the GUI still renders the new option correctly in `gui.py`
 
-Reference configs live in:
+Detailed guide: [docs/components/cli-gui.md](components/cli-gui.md)
 
-- `src/brainchmark/data/configs/`
+## Configs and Templates
 
-Current examples include:
+The packaged reference configs live in:
 
-- `imfuse_18.yaml`
-- `imfuse_23.yaml`
-- `mmformer_18.yaml`
-- `mmformer_23.yaml`
-- `preprocessing.yaml`
+- [src/brainchmark/data/config_templates/](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/config_templates)
+- [src/brainchmark/data/configs/](/homes/ocarpentiero/IM-Fuse/src/brainchmark/data/configs)
 
-Whenever you add a meaningful built-in feature, update at least one reference config.
+When you add a new built-in model, trainer, loss, or workflow option, update the shipped configs too. Otherwise the code may be technically wired but still hard to discover or use correctly.
+
+## Practical Advice
+
+- Keep generic runtime logic in shared config or `BaseTrainer`; keep family-specific assumptions in concrete trainers.
+- Do not change only one layer. Most extension work crosses implementation, config, CLI, and docs.
+- If behavior is selected by string name, check `enums.py`, config builders, and YAML examples together.
+- If you are porting from `legacy/`, verify not only the model body but also transforms, scheduler semantics, losses, and trainer behavior.
+
+## Detailed Guides
+
+Use these when you need the exhaustive version:
+
+- [docs/components/README.md](components/README.md)
+- [docs/components/preprocessing.md](components/preprocessing.md)
+- [docs/components/models.md](components/models.md)
+- [docs/components/datasets.md](components/datasets.md)
+- [docs/components/runtime-config.md](components/runtime-config.md)
+- [docs/components/trainers.md](components/trainers.md)
+- [docs/components/testing.md](components/testing.md)
+- [docs/components/cli-gui.md](components/cli-gui.md)

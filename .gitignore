@@ -6,3 +6,4 @@
 .codex
 *wandb*
 *.vscode*
+src/brainchmark/data/configs_2

@@ -8,9 +8,9 @@
 # scheduler, and default optimization hyperparameters.
 
 # preprocess
-input_dir: /work/grana_neuro/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData
-output_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
-dataset_type: brats23
+input_dir: /path/to/brats18
+output_dir: /path/to/preprocessed/mmformer18-preprocessed/
+dataset_type: brats18
 
 crop_mode: non_empty
 crop_size: null
@@ -29,8 +29,8 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /work/grana_neuro/brainchmark/mmformer23-preprocessed
-art_dir: /work/grana_neuro/brainchmark/runs/mmformer23
+data_dir: /path/to/preprocessed/mmformer18-preprocessed
+art_dir: /path/to/artifacts/mmformer18
 
 trainer: imfuse
 model: mmformer
@@ -53,8 +53,6 @@ custom_trainer_kwargs:
   patch_size: 128
   debug: false
   transform_kind: imfuse
-  train_masking_mode: random
-  val_masking_mode: validation
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -75,7 +73,7 @@ plateau_patience: null
 
 lr: 0.0008
 num_epochs: 1000
-batch_size: 4
+batch_size: 8
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
@@ -86,8 +84,8 @@ seed: 999
 
 wandb_project: SegmentationMM
 wandb_mode: online
-wandb_run_name: mmformer23_training
+wandb_run_name: mmformer18_training
 
 # testing
-checkpoint_path: /work/grana_neuro/brainchmark/runs/mmformer23/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/mmformer23/results.txt
+checkpoint_path: /path/to/artifacts/mmformer18/checkpoints/model_last.pth
+output_path: /path/to/artifacts/mmformer18/results.txt
