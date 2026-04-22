@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
-results_path = Path('/homes/ocarpentiero/results/test_lckd_18.txt')
+results_path = Path('/homes/ocarpentiero/results/test_rehydil_18.txt')
 excel_path = results_path.with_suffix('.xlsx')
 def parse_line(s: str) -> dict:
     left, right = s.split("-->")

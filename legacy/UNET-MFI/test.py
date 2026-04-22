@@ -23,6 +23,7 @@ parser.add_argument('--datapath', required=True, type=Path)
 parser.add_argument('--savepath', required=True, type=Path)
 parser.add_argument('--resume', required=True, type=Path)
 parser.add_argument('--num-workers', default=8, type=int)
+parser.add_argument('--version', default='brats23', type=str)
 path = os.path.dirname(__file__)
 
 
@@ -37,7 +38,12 @@ mask_names = ['_'.join([ordered_names[i] for i in range(4) if mask[i]]) for mask
 masks_int = [np.array(mask).astype(np.int32)for mask in masks]
 
 datapath = args.datapath
-test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+if args.version == 'brats23':
+    test_file = Path(__file__).parent / 'datalist' / 'test.txt'
+elif args.version == 'brats18':
+    test_file = Path(__file__).parent / 'datalist' / 'test_18.txt'
+else:
+    raise RuntimeError('Invalid version provided')
 save_path = args.savepath
 
 model = no_share_unet(in_channel=1, out_channel=3, diff=True,deepSupvision=True).to(DEVICE)

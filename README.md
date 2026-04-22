@@ -46,6 +46,7 @@ After installation:
 ```bash
 brainchmark --help
 brainchmark-gui
+brainchmark --version
 ```
 
 CLI commands:
@@ -144,6 +145,44 @@ It is useful for:
 ## Contributing
 
 Contributions are welcome and will be evaluated quickly.
+
+## Versioning
+
+Use semantic versioning for releases:
+
+- `MAJOR`: breaking CLI, config, or package API changes
+- `MINOR`: backward-compatible features
+- `PATCH`: backward-compatible fixes
+
+This repository keeps the authoritative package version in `pyproject.toml`.
+
+To bump it consistently:
+
+```bash
+python scripts/release_version.py patch
+```
+
+You can also use `minor`, `major`, or an explicit version such as `1.2.0`.
+
+Recommended release flow:
+
+```bash
+python scripts/release_version.py patch
+uv lock
+git commit -am "Release vX.Y.Z"
+git tag vX.Y.Z
+git push
+git push --tags
+```
+
+The CLI exposes the installed version through:
+
+```bash
+brainchmark --version
+brainchmark version --check-update
+brainchmark update
+brainchmark update --branch ocarpentiero
+```
 
 If you want to add your own model, trainer, dataset integration, runtime component, or other custom extension, follow [docs/extending.md](docs/extending.md).
 

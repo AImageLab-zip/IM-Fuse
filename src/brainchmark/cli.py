@@ -17,6 +17,7 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 # Internal modules
+from brainchmark import __version__
 from brainchmark.enums import (
     ClampMode,
     CropMode,
@@ -28,6 +29,8 @@ from brainchmark.enums import (
     TransformKind,
     TrainerKind,
 )
+from brainchmark.updater import UpdateError, update_checkout
+from brainchmark.versioning import check_for_updates
 from brainchmark.utils.cli_overrides import (
     CONFIGS_DIR,
     SPLITS_DIR,
@@ -44,6 +47,14 @@ app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
 CONSOLE = Console()
 PATH_COMPLETER = PathCompleter(expanduser=True)
 CONFIG_TEMPLATES_DIR = CONFIGS_DIR.parent / "config_templates"
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+
+    typer.echo(f"BrainchMark {__version__}")
+    raise typer.Exit()
 
 
 def _config_shell_complete(
@@ -341,8 +352,102 @@ def _copy_config_templates() -> list[Path]:
 
 
 @app.callback()
-def main() -> None:
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show BrainchMark version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
     """BrainchMark command group."""
+
+
+@app.command()
+def version(
+    check_update: bool = typer.Option(
+        False,
+        "--check-update",
+        help="Check GitHub for a newer BrainchMark release.",
+    ),
+    force_refresh: bool = typer.Option(
+        False,
+        "--force-refresh",
+        help="Ignore the cached GitHub result for this check.",
+    ),
+) -> None:
+    """Show the installed BrainchMark version."""
+    typer.echo(f"BrainchMark {__version__}")
+
+    if not check_update:
+        return
+
+    result = check_for_updates(force_refresh=force_refresh)
+    if result.error is not None:
+        typer.echo("Could not check GitHub for updates.")
+        return
+
+    if result.latest_version is None:
+        typer.echo("No published BrainchMark release was found on GitHub.")
+        return
+
+    source_label = result.source or "GitHub"
+    if result.update_available:
+        typer.echo(
+            f"Update available from {source_label}: {result.latest_version} "
+            f"(current: {result.current_version})"
+        )
+        return
+
+    typer.echo(
+        f"Up to date with latest {source_label}: {result.latest_version}"
+    )
+
+
+@app.command()
+def update(
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Remote branch to update from. Defaults to the current branch.",
+    ),
+    remote: str = typer.Option(
+        "origin",
+        "--remote",
+        help="Git remote to pull from.",
+    ),
+    skip_install: bool = typer.Option(
+        False,
+        "--skip-install",
+        help="Skip running install.sh after pulling new commits.",
+    ),
+) -> None:
+    """Fast-forward the local checkout from Git and optionally refresh the environment."""
+    try:
+        result = update_checkout(
+            branch=branch,
+            remote=remote,
+            run_install=not skip_install,
+        )
+    except UpdateError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if result.switched_branch:
+        typer.echo(f"Switched to branch: {result.branch}")
+
+    if result.changed:
+        typer.echo(
+            f"Updated {result.branch}: {result.previous_commit[:12]} -> "
+            f"{result.current_commit[:12]}"
+        )
+        if result.install_ran:
+            typer.echo("Dependency refresh completed with install.sh.")
+        else:
+            typer.echo("Skipped dependency refresh.")
+        return
+
+    typer.echo(f"Already up to date on {result.branch} ({result.current_commit[:12]}).")
 
 
 '''@app.command()

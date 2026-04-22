@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name=unet_faster
+#SBATCH --partition=boost_usr_prod 
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=40G
+#SBATCH --time=24:00:00
+#SBATCH -e /homes/ocarpentiero/slurm/outerr/err_faster.txt
+#SBATCH -o /homes/ocarpentiero/slurm/outerr/out_faster.txt
+#SBATCH --gres=gpu:1
+#SBATCH --account=grana_neuro
+#_SBATCH --constraint=gpu_A40_45G|gpu_L40S_45G|gpu_RTX6000_24G|gpu_RTX_A5000_24G
+
+source /homes/ocarpentiero/IM-Fuse/UNET-MFI/unetmfi_venv/bin/activate
+
+python /homes/ocarpentiero/IM-Fuse/UNET-MFI/test_faster.py \
+  --datapath /work/grana_neuro/missing_modalities/UNET-MFI/dataset \
+  --resume /work/grana_neuro/missing_modalities/UNET-MFI/checkpoints/chk_1199.pth \
+  --savepath /homes/ocarpentiero/results/test_unet_mfi_FASTEER.txt \
