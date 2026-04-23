@@ -229,7 +229,7 @@ class BaseTrainer(AbstractTrainer):
         torch.save(checkpoint, last_path)
 
         epoch_path = self.checkpoint_dir / f"model_{epoch}.pth"
-        torch.save(checkpoint, epoch_path)
+        #torch.save(checkpoint, epoch_path)
         if is_best:
             best_path = self.checkpoint_dir / "best.pth"
             torch.save(checkpoint, best_path)

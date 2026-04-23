@@ -240,12 +240,20 @@ If W&B logging is enabled but there is no active login in the terminal, BrainchM
 
 ## Distributed Training
 
-The CLI supports DDP relaunch through:
+Distributed relaunch can be configured either in YAML or from the CLI.
+
+Runtime fields:
+
+- `distributed`
+- `nproc_per_node`
+
+CLI flags:
 
 - `--distributed`
+- `--no-distributed`
 - `--nproc-per-node`
 
-When `--distributed` is used outside an existing `torchrun` launch, BrainchMark relaunches itself through `torchrun`.
+When distributed mode is enabled outside an existing `torchrun` launch, BrainchMark relaunches itself through `torchrun`.
 
 
 ## Example YAML
@@ -277,6 +285,9 @@ betas: [0.9, 0.999]
 scheduler: poly
 poly_total_iters: 500
 poly_power: 0.9
+
+distributed: true
+nproc_per_node: 4
 
 lr: 0.0002
 weight_decay: 0.0001

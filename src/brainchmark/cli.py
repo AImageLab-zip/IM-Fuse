@@ -1,23 +1,35 @@
 # Standard library
 import os
 from pathlib import Path
-import re
-import shutil
 import sys
 import time
 
 # External dependencies
-from click.shell_completion import CompletionItem
 import typer
-from prompt_toolkit import prompt as pt_prompt
-from prompt_toolkit.completion import PathCompleter
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
 # Internal modules
 from brainchmark import __version__
+from brainchmark.cli_completion import config_shell_complete, split_shell_complete
+from brainchmark.cli_display import (
+    CONSOLE,
+    prompt_optional_existing_directory,
+    prompt_required_directory,
+)
+from brainchmark.cli_setup import (
+    CONFIG_TEMPLATES_DIR,
+    copy_config_templates,
+    update_setup_config,
+)
+from brainchmark.cli_workflows import (
+    build_preprocess_merged_config,
+    build_train_merged_config,
+    maybe_relaunch_distributed,
+    run_preprocess_from_merged,
+    run_train_from_merged,
+)
 from brainchmark.enums import (
     ClampMode,
     CropMode,
@@ -29,24 +41,12 @@ from brainchmark.enums import (
     TransformKind,
     TrainerKind,
 )
-from brainchmark.updater import UpdateError, update_checkout
-from brainchmark.versioning import check_for_updates
-from brainchmark.utils.cli_overrides import (
-    CONFIGS_DIR,
-    SPLITS_DIR,
-    load_yaml_config,
-    merge_cli_overrides,
-    resolve_split_path,
-)
-from brainchmark.utils.cli_utils import require_preprocess_values
+from brainchmark.utils.cli_overrides import CONFIGS_DIR, SPLITS_DIR, load_yaml_config, merge_cli_overrides, resolve_split_path
 
 # Environment variables
 os.environ["WANDB_SILENT"] = "true"
 
 app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
-CONSOLE = Console()
-PATH_COMPLETER = PathCompleter(expanduser=True)
-CONFIG_TEMPLATES_DIR = CONFIGS_DIR.parent / "config_templates"
 
 
 def _version_callback(value: bool) -> None:
@@ -57,85 +57,13 @@ def _version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
-def _config_shell_complete(
-    _ctx: typer.Context,
-    _param: typer.CallbackParam,
-    incomplete: str,
-) -> list[CompletionItem]:
-    suggestions: dict[str, CompletionItem] = {}
-
-    for config_path in sorted(CONFIGS_DIR.glob("*.y*ml")):
-        if config_path.name.startswith(incomplete):
-            suggestions[config_path.name] = CompletionItem(
-                config_path.name,
-                help=str(CONFIGS_DIR),
-            )
-
-    if incomplete.startswith("/") or "/" in incomplete or incomplete.startswith("."):
-        raw_path = Path(incomplete).expanduser()
-        parent = raw_path if incomplete.endswith("/") else raw_path.parent
-        prefix = "" if incomplete.endswith("/") else raw_path.name
-        if parent.exists() and parent.is_dir():
-            for candidate in sorted(parent.iterdir()):
-                if candidate.suffix not in {".yaml", ".yml"}:
-                    continue
-                if not candidate.name.startswith(prefix):
-                    continue
-                suggestions[str(candidate)] = CompletionItem(str(candidate))
-
-    return list(suggestions.values())
-
-
-def _split_shell_complete(
-    _ctx: typer.Context,
-    _param: typer.CallbackParam,
-    incomplete: str,
-) -> list[CompletionItem]:
-    suggestions: dict[str, CompletionItem] = {}
-
-    for split_path in sorted(path for path in SPLITS_DIR.rglob("*") if path.is_file()):
-        relative_name = split_path.relative_to(SPLITS_DIR).as_posix()
-        if relative_name.startswith(incomplete):
-            suggestions[relative_name] = CompletionItem(
-                relative_name,
-                help=str(SPLITS_DIR),
-            )
-
-    if incomplete.startswith("/") or "/" in incomplete or incomplete.startswith("."):
-        raw_path = Path(incomplete).expanduser()
-        parent = raw_path if incomplete.endswith("/") else raw_path.parent
-        prefix = "" if incomplete.endswith("/") else raw_path.name
-        if parent.exists() and parent.is_dir():
-            for candidate in sorted(parent.iterdir()):
-                if not candidate.is_file():
-                    continue
-                if not candidate.name.startswith(prefix):
-                    continue
-                suggestions[str(candidate)] = CompletionItem(str(candidate))
-
-    return list(suggestions.values())
-
-
-def _require_train_values(merged: dict[str, object], *required_keys: str) -> None:
+def _require_values(merged: dict[str, object], *required_keys: str) -> None:
     for key in required_keys:
         if merged.get(key) is None:
             raise typer.BadParameter(
                 "missing value; provide it in the CLI or in --config",
                 param_hint=f"--{key.replace('_', '-')}",
             )
-
-
-def _require_values(merged: dict[str, object], *required_keys: str) -> None:
-    _require_train_values(merged, *required_keys)
-
-
-def _merged_value(
-    merged: dict[str, object],
-    key: str,
-    default: object,
-) -> object:
-    value = merged.get(key)
-    return default if value is None else value
 
 
 def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
@@ -159,198 +87,6 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
     return checkpoint_path
 
 
-def _distributed_launch_active() -> bool:
-    return "LOCAL_RANK" in os.environ or int(os.environ.get("WORLD_SIZE", "1")) > 1
-
-
-def _infer_nproc_per_node() -> int:
-    import torch
-
-    num_devices = torch.cuda.device_count()
-    if num_devices <= 0:
-        raise typer.BadParameter(
-            "unable to infer --nproc-per-node because no CUDA devices are visible",
-            param_hint="--nproc-per-node",
-        )
-    return num_devices
-
-
-def _relaunch_with_torchrun(nproc_per_node: int) -> None:
-    os.environ.setdefault("OMP_NUM_THREADS", "1")
-    command = [
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        "--nproc-per-node",
-        str(nproc_per_node),
-        sys.argv[0],
-        *sys.argv[1:],
-    ]
-    raise typer.Exit(os.spawnvp(os.P_WAIT, sys.executable, command))
-
-
-def _resolve_trainer_class(trainer_kind: TrainerKind):
-    from brainchmark.training.trainers import DCSegTrainer, IMFuseTrainer
-
-    trainer_map = {
-        TrainerKind.IMFUSE: IMFuseTrainer,
-        TrainerKind.DCSEG: DCSegTrainer,
-    }
-    try:
-        return trainer_map[trainer_kind]
-    except KeyError as exc:
-        raise typer.BadParameter(
-            f"Unsupported trainer: {trainer_kind}",
-            param_hint="--trainer",
-        ) from exc
-
-
-def _expand_user_path(raw_value: str) -> Path:
-    return Path(raw_value).expanduser().resolve(strict=False)
-
-
-def _prompt_path(prompt: str) -> str:
-    return pt_prompt(
-        f"{prompt}: ",
-        completer=PATH_COMPLETER,
-        complete_while_typing=True,
-    ).strip()
-
-
-def _prompt_optional_existing_directory(
-    *,
-    label: str,
-    prompt: str,
-) -> Path | None:
-    while True:
-        raw_value = _prompt_path(prompt)
-        if not raw_value:
-            return None
-
-        candidate = _expand_user_path(raw_value)
-        if candidate.is_dir():
-            return candidate
-
-        CONSOLE.print(
-            Panel(
-                f"[bold red]{label}[/bold red]\n{candidate} is not an existing directory.",
-                title="[bold red]Invalid Directory[/bold red]",
-                border_style="red",
-                expand=False,
-            )
-        )
-
-
-def _prompt_required_directory(
-    *,
-    label: str,
-    prompt: str,
-) -> Path:
-    while True:
-        raw_value = _prompt_path(prompt)
-        if not raw_value:
-            CONSOLE.print(
-                Panel(
-                    f"[bold red]{label}[/bold red] is required.",
-                    title="[bold red]Missing Value[/bold red]",
-                    border_style="red",
-                    expand=False,
-                )
-            )
-            continue
-
-        return _expand_user_path(raw_value)
-
-
-def _config_run_tag(config_path: Path) -> str:
-    return config_path.stem.replace("_", "")
-
-
-def _dataset_input_dir_for_config(
-    config_name: str,
-    *,
-    brats18_dir: Path | None,
-    brats23_dir: Path | None,
-) -> str | None:
-    if config_name.endswith("_18.yaml"):
-        return str(brats18_dir) if brats18_dir is not None else None
-    if config_name.endswith("_23.yaml"):
-        return str(brats23_dir) if brats23_dir is not None else None
-    return None
-
-
-def _replace_yaml_line(
-    content: str,
-    *,
-    key: str,
-    value: str | None,
-) -> str:
-    replacement = f"{key}: {'null' if value is None else value}"
-    pattern = re.compile(rf"^{re.escape(key)}:\s*.*$", re.MULTILINE)
-    updated, count = pattern.subn(replacement, content, count=1)
-    if count != 1:
-        raise typer.BadParameter(
-            f"Could not update '{key}' in config content",
-            param_hint="brainchmark setup",
-        )
-    return updated
-
-
-def _update_setup_config(
-    *,
-    config_path: Path,
-    brats18_dir: Path | None,
-    brats23_dir: Path | None,
-    preprocessed_root_dir: Path,
-    artifacts_root_dir: Path,
-) -> None:
-    content = config_path.read_text(encoding="utf-8")
-    run_tag = _config_run_tag(config_path)
-    preprocessed_dir = preprocessed_root_dir / f"{run_tag}-preprocessed"
-    artifacts_dir = artifacts_root_dir / run_tag
-    content = _replace_yaml_line(
-        content,
-        key="input_dir",
-        value=_dataset_input_dir_for_config(
-            config_path.name,
-            brats18_dir=brats18_dir,
-            brats23_dir=brats23_dir,
-        ),
-    )
-    content = _replace_yaml_line(content, key="output_dir", value=str(preprocessed_dir))
-    if config_path.name != "preprocessing.yaml":
-        content = _replace_yaml_line(content, key="data_dir", value=str(preprocessed_dir))
-        content = _replace_yaml_line(content, key="art_dir", value=str(artifacts_dir))
-        content = _replace_yaml_line(
-            content,
-            key="checkpoint_path",
-            value=str(artifacts_dir / "checkpoints" / "model_last.pth"),
-        )
-        content = _replace_yaml_line(
-            content,
-            key="output_path",
-            value=str(artifacts_dir / "results.txt"),
-        )
-    config_path.write_text(content, encoding="utf-8")
-
-
-def _copy_config_templates() -> list[Path]:
-    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
-    template_paths = sorted(CONFIG_TEMPLATES_DIR.glob("*.y*ml"))
-    if not template_paths:
-        raise typer.BadParameter(
-            f"No config templates found under {CONFIG_TEMPLATES_DIR}",
-            param_hint="brainchmark setup",
-        )
-
-    copied_paths: list[Path] = []
-    for template_path in template_paths:
-        destination = CONFIGS_DIR / template_path.name
-        shutil.copyfile(template_path, destination)
-        copied_paths.append(destination)
-    return copied_paths
-
-
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -366,88 +102,9 @@ def main(
 
 @app.command()
 def version(
-    check_update: bool = typer.Option(
-        False,
-        "--check-update",
-        help="Check GitHub for a newer BrainchMark release.",
-    ),
-    force_refresh: bool = typer.Option(
-        False,
-        "--force-refresh",
-        help="Ignore the cached GitHub result for this check.",
-    ),
 ) -> None:
     """Show the installed BrainchMark version."""
     typer.echo(f"BrainchMark {__version__}")
-
-    if not check_update:
-        return
-
-    result = check_for_updates(force_refresh=force_refresh)
-    if result.error is not None:
-        typer.echo("Could not check GitHub for updates.")
-        return
-
-    if result.latest_version is None:
-        typer.echo("No published BrainchMark release was found on GitHub.")
-        return
-
-    source_label = result.source or "GitHub"
-    if result.update_available:
-        typer.echo(
-            f"Update available from {source_label}: {result.latest_version} "
-            f"(current: {result.current_version})"
-        )
-        return
-
-    typer.echo(
-        f"Up to date with latest {source_label}: {result.latest_version}"
-    )
-
-
-@app.command()
-def update(
-    branch: str | None = typer.Option(
-        None,
-        "--branch",
-        help="Remote branch to update from. Defaults to the current branch.",
-    ),
-    remote: str = typer.Option(
-        "origin",
-        "--remote",
-        help="Git remote to pull from.",
-    ),
-    skip_install: bool = typer.Option(
-        False,
-        "--skip-install",
-        help="Skip running install.sh after pulling new commits.",
-    ),
-) -> None:
-    """Fast-forward the local checkout from Git and optionally refresh the environment."""
-    try:
-        result = update_checkout(
-            branch=branch,
-            remote=remote,
-            run_install=not skip_install,
-        )
-    except UpdateError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    if result.switched_branch:
-        typer.echo(f"Switched to branch: {result.branch}")
-
-    if result.changed:
-        typer.echo(
-            f"Updated {result.branch}: {result.previous_commit[:12]} -> "
-            f"{result.current_commit[:12]}"
-        )
-        if result.install_ran:
-            typer.echo("Dependency refresh completed with install.sh.")
-        else:
-            typer.echo("Skipped dependency refresh.")
-        return
-
-    typer.echo(f"Already up to date on {result.branch} ({result.current_commit[:12]}).")
 
 
 '''@app.command()
@@ -521,11 +178,11 @@ def setup() -> None:
         )
     )
 
-    brats23_dir = _prompt_optional_existing_directory(
+    brats23_dir = prompt_optional_existing_directory(
         label="BraTS23",
         prompt="Directory containing BraTS23",
     )
-    brats18_dir = _prompt_optional_existing_directory(
+    brats18_dir = prompt_optional_existing_directory(
         label="BraTS18",
         prompt="Directory containing BraTS18",
     )
@@ -535,11 +192,11 @@ def setup() -> None:
             param_hint="brainchmark setup",
         )
 
-    preprocessed_root_dir = _prompt_required_directory(
+    preprocessed_root_dir = prompt_required_directory(
         label="Preprocessed Root",
         prompt="Root directory for preprocessed datasets",
     )
-    artifacts_root_dir = _prompt_required_directory(
+    artifacts_root_dir = prompt_required_directory(
         label="Artifacts Root",
         prompt="Root directory for training artifacts",
     )
@@ -568,9 +225,9 @@ def setup() -> None:
     if not Confirm.ask("Copy templates and rewrite local BrainchMark configs?", default=True):
         raise typer.Abort()
 
-    updated_files = _copy_config_templates()
+    updated_files = copy_config_templates()
     for config_path in updated_files:
-        _update_setup_config(
+        update_setup_config(
             config_path=config_path,
             brats18_dir=brats18_dir,
             brats23_dir=brats23_dir,
@@ -611,7 +268,7 @@ def preprocess(
         "--config",
         file_okay=True,
         dir_okay=False,
-        shell_complete=_config_shell_complete,
+        shell_complete=config_shell_complete,
         help="Path to a YAML config file.",
         rich_help_panel="Config",
     ),
@@ -722,18 +379,8 @@ def preprocess(
     ),
 ) -> None:
     """Preprocess a BraTS-style dataset into BrainchMark `.npz` artifacts."""
-    from brainchmark.preprocessing.config import (
-        build_clamp_config,
-        build_crop_config,
-        build_norm_config,
-    )
-    from brainchmark.preprocessing.pipeline import run_preprocessing
-    from brainchmark.datasets.config import DatasetType as PreprocessingDatasetType
-
-    #TODO COMPLETE THE OVERRIDES, REMEMBER TO CHANGE ALL THE CALLS UNDERNEATH
-    yaml_config = load_yaml_config(config)
-    merged = merge_cli_overrides(
-        yaml_config,
+    merged = build_preprocess_merged_config(
+        config=config,
         input_dir=input_dir,
         output_dir=output_dir,
         dataset_type=dataset_type,
@@ -748,54 +395,114 @@ def preprocess(
         norm_min_max_range=norm_min_max_range,
         norm_mean=norm_mean,
         norm_std=norm_std,
-        yes=yes if yes else yaml_config.get("yes"),
-    )
-    require_preprocess_values(merged,"input_dir", "output_dir", "dataset_type")
-    crop_config = build_crop_config(
-        crop_mode=str(merged.get("crop_mode", CropMode.NONE.value)),
-        crop_size=merged.get("crop_size"),
-        crop_min_size=merged.get("crop_min_size"),
-    )
-    clamp_config = build_clamp_config(
-        clamp_mode=str(merged.get("clamp_mode", ClampMode.NONE.value)),
-        clamp_percentile=merged.get("clamp_percentile"),
-        clamp_min=merged.get("clamp_min"),
-        clamp_max=merged.get("clamp_max"),
-    )
-    norm_config = build_norm_config(
-        norm_mode=str(merged.get("norm_mode", NormMode.NONE.value)),
-        norm_min_max_range=merged.get("norm_min_max_range"),
-        norm_mean=merged.get("norm_mean"),
-        norm_std=merged.get("norm_std"),
-    )
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style="bold cyan", no_wrap=True)
-    table.add_column(style="white")
-    table.add_row("Dataset", str(merged.get("dataset_type")))
-    table.add_row("Crop", crop_config.fn.__name__)
-    table.add_row("Clamp", clamp_config.fn.__name__)
-    table.add_row("Normalize", norm_config.fn.__name__)
-    table.add_row("Input", str(merged.get("input_dir")))
-    table.add_row("Output", str(merged.get("output_dir")))
-
-    CONSOLE.print(
-        Panel(
-            table,
-            title="[bold green]Preprocessing Start[/bold green]",
-            border_style="green",
-            expand=False,
-        )
-    )
-
-    run_preprocessing(
-        input_dir=Path(merged.get("input_dir")),
-        output_dir=Path(merged.get("output_dir")),
-        dataset_type=PreprocessingDatasetType(merged.get("dataset_type")),
-        crop_config=crop_config,
-        clamp_config=clamp_config,
-        norm_config = norm_config,
         yes=yes,
     )
+    run_preprocess_from_merged(merged, console=CONSOLE, yes=yes)
+
+
+@app.command()
+def preprocess_train(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Automatically answer yes to preprocessing prompts",
+        rich_help_panel="Execution",
+    ),
+    distributed: bool | None = typer.Option(
+        None,
+        "--distributed/--no-distributed",
+        help="Relaunch training through torchrun for DDP.",
+        rich_help_panel="Runtime",
+    ),
+    nproc_per_node: int | None = typer.Option(
+        None,
+        "--nproc-per-node",
+        help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
+        rich_help_panel="Runtime",
+    ),
+) -> None:
+    """Run preprocessing first and then launch training using the same config."""
+    preprocess_merged = build_preprocess_merged_config(
+        config=config,
+        input_dir=None,
+        output_dir=None,
+        dataset_type=None,
+        crop_mode=CropMode.NONE.value,
+        crop_size=None,
+        crop_min_size=None,
+        clamp_mode=ClampMode.NONE.value,
+        clamp_percentile=None,
+        clamp_min=None,
+        clamp_max=None,
+        norm_mode=NormMode.NONE.value,
+        norm_min_max_range=None,
+        norm_mean=None,
+        norm_std=None,
+        yes=yes,
+    )
+    run_preprocess_from_merged(preprocess_merged, console=CONSOLE, yes=yes)
+
+    train_merged = build_train_merged_config(
+        config=config,
+        data_dir=None,
+        art_dir=None,
+        trainer=None,
+        model=None,
+        loss=None,
+        custom_model_kwargs=None,
+        custom_loss_kwargs=None,
+        loss_num_classes=None,
+        fuse_weight=None,
+        sep_weight=None,
+        prm_weight=None,
+        loss_eps=None,
+        log_clamp_min=None,
+        custom_trainer_kwargs=None,
+        split_file=None,
+        optimizer=None,
+        betas=None,
+        momentum=None,
+        scheduler=None,
+        poly_total_iters=None,
+        poly_power=None,
+        cosine_t_max=None,
+        cosine_eta_min=None,
+        step_step_size=None,
+        step_gamma=None,
+        multistep_milestones=None,
+        multistep_gamma=None,
+        plateau_mode=None,
+        plateau_factor=None,
+        plateau_patience=None,
+        transform_kind=None,
+        lr=None,
+        num_epochs=None,
+        batch_size=None,
+        weight_decay=None,
+        num_workers=8,
+        distributed=distributed,
+        nproc_per_node=nproc_per_node,
+        fp16=None,
+        resume=False,
+        seed=69,
+        pretrain=None,
+        wandb_project=None,
+        wandb_mode=None,
+        wandb_run_name=None,
+        dataset_type=None,
+    )
+    maybe_relaunch_distributed(train_merged)
+    run_train_from_merged(train_merged)
 
 
 @app.command()
@@ -805,7 +512,7 @@ def train(
         "--config",
         file_okay=True,
         dir_okay=False,
-        shell_complete=_config_shell_complete,
+        shell_complete=config_shell_complete,
         help="Path to a YAML config file.",
         rich_help_panel="Config",
     ),
@@ -905,7 +612,7 @@ def train(
         "--split-file",
         file_okay=True,
         dir_okay=False,
-        shell_complete=_split_shell_complete,
+        shell_complete=split_shell_complete,
         help="Split file path. Relative paths are resolved under brainchmark/data/splits.",
         rich_help_panel="Trainer",
         show_default="split.json",
@@ -1036,12 +743,11 @@ def train(
         help="Number of dataloader workers.",
         rich_help_panel="Runtime",
     ),
-    distributed: bool = typer.Option(
-        False,
-        "--distributed",
+    distributed: bool | None = typer.Option(
+        None,
+        "--distributed/--no-distributed",
         help="Relaunch training through torchrun for DDP.",
         rich_help_panel="Runtime",
-        is_flag=True,
     ),
     nproc_per_node: int | None = typer.Option(
         None,
@@ -1103,38 +809,10 @@ def train(
     ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
-
-    if distributed and not _distributed_launch_active():
-        resolved_nproc_per_node = nproc_per_node
-        if resolved_nproc_per_node is None:
-            resolved_nproc_per_node = _infer_nproc_per_node()
-        if resolved_nproc_per_node <= 0:
-            raise typer.BadParameter(
-                "--nproc-per-node must be > 0",
-                param_hint="--nproc-per-node",
-            )
-        _relaunch_with_torchrun(resolved_nproc_per_node)
-
     with CONSOLE.status("[bold cyan]Starting BrainchMark[/bold cyan]", spinner="dots") as status:
-        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]loading training modules[/dim]")
-        from brainchmark.training.config import (
-            OptimizerKind as TrainingOptimizerKind,
-            SchedulerKind as TrainingSchedulerKind,
-            build_optimizer_config,
-            build_scheduler_config,
-            parse_kv_list,
-        )
-        from brainchmark.losses.config import build_loss_config
-        from brainchmark.models.config import (
-            ModelKind as TrainingModelKind,
-            build_model_config,
-        )
-
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]reading configuration[/dim]")
-        yaml_config = load_yaml_config(config)
-        trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
-        merged = merge_cli_overrides(
-            yaml_config,
+        merged = build_train_merged_config(
+            config=config,
             data_dir=data_dir,
             art_dir=art_dir,
             trainer=trainer,
@@ -1180,104 +858,11 @@ def train(
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
         )
-        merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
-        explicit_loss_kwargs = {
-            "num_classes": merged.get("loss_num_classes"),
-            "fuse_weight": merged.get("fuse_weight"),
-            "sep_weight": merged.get("sep_weight"),
-            "prm_weight": merged.get("prm_weight"),
-            "eps": merged.get("loss_eps"),
-            "log_clamp_min": merged.get("log_clamp_min"),
-        }
-        for key, value in explicit_loss_kwargs.items():
-            if value is not None:
-                merged_loss_kwargs[key] = value
-        merged["custom_loss_kwargs"] = merged_loss_kwargs
-        merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
-        split_file_value = merged.get("split_file")
-        if split_file_value is None:
-            split_file_value = merged_trainer_kwargs.get("split_file")
-        resolved_split_file = resolve_split_path(split_file_value)
-        merged_trainer_kwargs["split_file"] = str(resolved_split_file)
-        if merged.get("transform_kind") is not None:
-            merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
-        merged["custom_trainer_kwargs"] = merged_trainer_kwargs
-        merged["split_file"] = str(resolved_split_file)
-        _require_train_values(
-            merged,
-            "data_dir",
-            "art_dir",
-            "trainer",
-            "optimizer",
-            "num_epochs",
-        )
+        maybe_relaunch_distributed(merged)
 
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]building training objects[/dim]")
-        trainer_kind = TrainerKind(merged.get("trainer", TrainerKind.IMFUSE))
-        default_model = TrainingModelKind.DCSEG if trainer_kind is TrainerKind.DCSEG else TrainingModelKind.IMFUSE
-        default_loss = "dcseg" if trainer_kind is TrainerKind.DCSEG else "imfuse"
-        model_kind = TrainingModelKind(merged.get("model", default_model))
-        optimizer_kind = TrainingOptimizerKind(
-            merged.get("optimizer", TrainingOptimizerKind.RADAM)
-        )
-        scheduler_kind = TrainingSchedulerKind(
-            merged.get("scheduler", TrainingSchedulerKind.POLY)
-        )
-        model_config = build_model_config(
-            model_kind=model_kind,
-            model_kwargs=merged.get("custom_model_kwargs"),
-        )
-        loss_config = build_loss_config(
-            loss_kind=merged.get("loss", default_loss),
-            loss_kwargs=merged.get("custom_loss_kwargs"),
-        )
-        resolved_num_epochs = int(merged["num_epochs"])
-        optimizer_config = build_optimizer_config(
-            optimizer_kind=optimizer_kind,
-            lr=float(_merged_value(merged, "lr", 2e-4)),
-            weight_decay=float(_merged_value(merged, "weight_decay", 3e-5)),
-            betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
-            momentum=float(_merged_value(merged, "momentum", 0.9)),
-        )
-        scheduler_config = build_scheduler_config(
-            scheduler_kind=scheduler_kind,
-            poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
-            poly_power=float(_merged_value(merged, "poly_power", 0.9)),
-            cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
-            cosine_eta_min=float(_merged_value(merged, "cosine_eta_min", 0.0)),
-            step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
-            step_gamma=float(_merged_value(merged, "step_gamma", 0.1)),
-            multistep_milestones=list(merged["multistep_milestones"]) if merged.get("multistep_milestones") is not None else None,
-            multistep_gamma=float(_merged_value(merged, "multistep_gamma", 0.1)),
-            plateau_mode=str(_merged_value(merged, "plateau_mode", "min")),
-            plateau_factor=float(_merged_value(merged, "plateau_factor", 0.1)),
-            plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
-        )
-        trainer_class = _resolve_trainer_class(trainer_kind)
-
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]initializing trainer[/dim]")
-        trainer_instance = trainer_class(
-            input_dir=Path(merged["data_dir"]),
-            output_dir=Path(merged["art_dir"]),
-            custom_trainer_kwargs=merged_trainer_kwargs,
-            model_config=model_config,
-            loss_config=loss_config,
-            optimizer_config=optimizer_config,
-            scheduler_config=scheduler_config,
-            num_epochs=resolved_num_epochs,
-            batch_size=int(merged.get("batch_size", 1)),
-            num_workers=int(merged.get("num_workers", 8)),
-            fp16=bool(merged.get("fp16", False)),
-            resume=bool(merged.get("resume", False)),
-            seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
-            pretrain=merged.get("pretrain"),
-            wandb_project=merged.get("wandb_project"),
-            wandb_mode=merged.get("wandb_mode"),
-            wandb_run_name=merged.get("wandb_run_name"),
-            dataset_type=merged.get("dataset_type")
-        )
-
-    trainer_instance.fit()
+        run_train_from_merged(merged)
 
 
 @app.command()
@@ -1287,7 +872,7 @@ def test(
         "--config",
         file_okay=True,
         dir_okay=False,
-        shell_complete=_config_shell_complete,
+        shell_complete=config_shell_complete,
         help="Path to a YAML config file.",
         rich_help_panel="Config",
     ),
@@ -1336,7 +921,7 @@ def test(
         "--split-file",
         file_okay=True,
         dir_okay=False,
-        shell_complete=_split_shell_complete,
+        shell_complete=split_shell_complete,
         help="Split file path. Relative paths are resolved under brainchmark/data/splits.",
         rich_help_panel="Data Pipeline",
         show_default="split.json",
