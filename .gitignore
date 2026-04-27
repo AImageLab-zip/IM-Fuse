@@ -10,3 +10,4 @@ src/brainchmark/data/configs_2
 *venv*
 legacy
 ReHyDIL/outputs
+*wandb*
