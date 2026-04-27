@@ -37,6 +37,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pandas" },
     { name = "prompt-toolkit" },
+    { name = "ptflops" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "torch" },
@@ -69,6 +70,7 @@ requires-dist = [
     { name = "packaging", specifier = ">=26.0" },
     { name = "pandas", specifier = ">=3.0.2" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "ptflops", specifier = ">=0.7.5" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.3" },
@@ -664,6 +666,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
     { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
     { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
+]
+
+[[package]]
+name = "ptflops"
+version = "0.7.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/dc/e679036cc222a9995e37754aefeee4a2b6e92d1b4956bee27b48182efec2/ptflops-0.7.5.tar.gz", hash = "sha256:84e437a3ccad1bb050c14c599a76555b345533287767da87758e38c9101a40a7", size = 18949, upload-time = "2025-08-20T17:17:47.838Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/66/3eea7b5f6cc3f6ae7acb125ef82c083d9bb759c7e43fd333cb39eb1e1cfe/ptflops-0.7.5-py3-none-any.whl", hash = "sha256:c47543d5209a21e0805b39a50d452c8f8f6f5b648684777490db6f9459bdda07", size = 19500, upload-time = "2025-08-20T17:17:46.402Z" },
 ]
 
 [[package]]

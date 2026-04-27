@@ -7,6 +7,7 @@ The active training stack currently includes:
 - `IMFuseTrainer` for:
   - `imfuse`
   - `mmformer`
+  - `rfnet`
 - `DCSegTrainer` for:
   - `dcseg`
 
@@ -52,6 +53,8 @@ The repo currently ships these reference training configs:
 - `src/brainchmark/data/configs/mmformer_23.yaml`
 - `src/brainchmark/data/configs/dcseg_18.yaml`
 - `src/brainchmark/data/configs/dcseg_23.yaml`
+- `src/brainchmark/data/configs/rfnet_18.yaml`
+- `src/brainchmark/data/configs/rfnet_23.yaml`
 
 They are combined reference files that include preprocess, train, and test sections/fields. The train command reads the training-relevant keys and ignores the rest.
 
@@ -98,6 +101,7 @@ Model values:
 - `imfuse`
 - `mmformer`
 - `dcseg`
+- `rfnet`
 
 Loss values:
 
@@ -123,6 +127,7 @@ Transform manager values:
 
 - `imfuse`
 - `dcseg`
+- `rfnet`
 
 ## Trainer-Specific Runtime Options
 
@@ -177,6 +182,13 @@ Current defaults in the shipped DC-Seg configs include:
 
 The DC-Seg inference path uses its own sliding-window `predict(...)` implementation inside the model, so training crop size and inference window size are not the same thing.
 
+### RFNet-specific notes
+
+The packaged RFNet configs reuse `IMFuseTrainer` and `IMFuseLoss`, because RFNet
+returns the same fused, separate, and PRM prediction tuple during training.
+RFNet uses `transform_kind: rfnet` and `patch_size: 80`, matching the legacy
+RFNet crop and sliding-window size.
+
 ## Model Kwargs
 
 `custom_model_kwargs` are passed directly to the selected model class.
@@ -205,6 +217,13 @@ For `dcseg`:
 custom_model_kwargs:
   num_cls: 4
   fusion_type: RFM
+```
+
+For `rfnet`:
+
+```yaml
+custom_model_kwargs:
+  num_cls: 4
 ```
 
 You can also override these from the CLI:

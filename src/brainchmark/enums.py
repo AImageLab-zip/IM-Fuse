@@ -36,11 +36,13 @@ class ModelKind(StrEnum):
     IMFUSE = "imfuse"
     MMFORMER = "mmformer"
     DCSEG = "dcseg"
+    RFNET = "rfnet"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
     DCSEG = "dcseg"
+    RFNET = "rfnet"
 
 
 class OptimizerKind(StrEnum):

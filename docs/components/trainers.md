@@ -34,7 +34,8 @@ Provides generic runtime behavior:
 
 These implement model-family-specific behavior:
 
-- `IMFuseTrainer`
+- `IMFuseTrainer` for IMFuse-compatible models such as `imfuse`, `mmformer`,
+  and `rfnet`
 - `DCSegTrainer`
 
 ## Add a New Trainer

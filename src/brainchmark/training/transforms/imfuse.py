@@ -19,7 +19,11 @@ class IMFuseTransform:
         self.intensity_shift, self.intensity_scale = intensity_factors
         self.flip_probabilities = flip_probabilities
 
-    def __call__(self, images: torch.Tensor, labels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(
+        self,
+        images: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         images = images.to(dtype=torch.float32)
         labels_dtype = labels.dtype
 
@@ -41,17 +45,20 @@ class IMFuseTransform:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         spatial_shape = images.shape[1:]
         starts = []
-        for dim_size, crop_size in zip(spatial_shape, self.crop_size):
+        for dim_size, crop_size in zip(spatial_shape, self.crop_size, strict=True):
             if dim_size < crop_size:
                 raise ValueError(
-                    f"Crop size {self.crop_size} is larger than input spatial shape {spatial_shape}"
+                    f"Crop size {self.crop_size} is larger than input "
+                    f"spatial shape {spatial_shape}"
                 )
             max_start = dim_size - crop_size
             start = 0 if max_start == 0 else torch.randint(0, max_start + 1, ()).item()
             starts.append(start)
 
         h0, w0, d0 = starts
-        h1, w1, d1 = [start + size for start, size in zip(starts, self.crop_size)]
+        h1, w1, d1 = [
+            start + size for start, size in zip(starts, self.crop_size, strict=True)
+        ]
         return images[:, h0:h1, w0:w1, d0:d1], labels[:, h0:h1, w0:w1, d0:d1]
 
     def _random_rotation(
@@ -63,14 +70,23 @@ class IMFuseTransform:
         angle = torch.empty((), dtype=images.dtype).uniform_(
             -self.rotation_degrees, self.rotation_degrees
         ).item()
-        theta = self._build_affine_matrix(math.radians(angle), axis, images.device, images.dtype)
+        theta = self._build_affine_matrix(
+            math.radians(angle),
+            axis,
+            images.device,
+            images.dtype,
+        )
 
         images_5d = images.unsqueeze(0).permute(0, 1, 4, 2, 3)
         labels_5d = labels.unsqueeze(0).permute(0, 1, 4, 2, 3).to(images.dtype)
 
         grid = F.affine_grid(theta.unsqueeze(0), images_5d.shape, align_corners=False)
         valid = F.grid_sample(
-            torch.ones((1, 1, *images_5d.shape[2:]), device=images.device, dtype=images.dtype),
+            torch.ones(
+                (1, 1, *images_5d.shape[2:]),
+                device=images.device,
+                dtype=images.dtype,
+            ),
             grid,
             mode="nearest",
             padding_mode="zeros",
@@ -130,11 +146,19 @@ class IMFuseTransform:
 
     def _random_intensity(self, images: torch.Tensor) -> torch.Tensor:
         channels = images.shape[0]
-        scale = torch.empty((channels, 1, 1, 1), device=images.device, dtype=images.dtype).uniform_(
+        scale = torch.empty(
+            (channels, 1, 1, 1),
+            device=images.device,
+            dtype=images.dtype,
+        ).uniform_(
             1.0 - self.intensity_scale,
             1.0 + self.intensity_scale,
         )
-        shift = torch.empty((channels, 1, 1, 1), device=images.device, dtype=images.dtype).uniform_(
+        shift = torch.empty(
+            (channels, 1, 1, 1),
+            device=images.device,
+            dtype=images.dtype,
+        ).uniform_(
             -self.intensity_shift,
             self.intensity_shift,
         )
@@ -149,6 +173,7 @@ class IMFuseTransform:
             self.flip_probabilities,
             (1, 2, 3),
             (1, 2, 3),
+            strict=True,
         ):
             if probability > 0 and torch.rand(()) < probability:
                 images = torch.flip(images, dims=(image_dim,))
@@ -166,14 +191,23 @@ class DCSegTransform(IMFuseTransform):
         angle = torch.empty((), dtype=images.dtype).uniform_(
             -self.rotation_degrees, self.rotation_degrees
         ).item()
-        theta = self._build_affine_matrix(math.radians(angle), axis, images.device, images.dtype)
+        theta = self._build_affine_matrix(
+            math.radians(angle),
+            axis,
+            images.device,
+            images.dtype,
+        )
 
         images_5d = images.unsqueeze(0).permute(0, 1, 4, 2, 3)
         labels_5d = labels.unsqueeze(0).permute(0, 1, 4, 2, 3).to(images.dtype)
 
         grid = F.affine_grid(theta.unsqueeze(0), images_5d.shape, align_corners=False)
         valid = F.grid_sample(
-            torch.ones((1, 1, *images_5d.shape[2:]), device=images.device, dtype=images.dtype),
+            torch.ones(
+                (1, 1, *images_5d.shape[2:]),
+                device=images.device,
+                dtype=images.dtype,
+            ),
             grid,
             mode="nearest",
             padding_mode="zeros",
@@ -243,6 +277,26 @@ class DCSegTransformManager(TransformManager):
         self.train_transforms = {
             "paired": DCSegTransform(
                 crop_size=(112, 112, 112),
+                rotation_degrees=10.0,
+                intensity_factors=(0.1, 0.1),
+                flip_probabilities=(0.5, 0.5, 0.5),
+            ),
+        }
+        self.test_transforms = {
+            "paired": IMFuseTransform(
+                crop_size=None,
+                rotation_degrees=0.0,
+                intensity_factors=(0.0, 0.0),
+                flip_probabilities=(0.0, 0.0, 0.0),
+            ),
+        }
+
+
+class RFNetTransformManager(TransformManager):
+    def _setup_transforms(self) -> None:
+        self.train_transforms = {
+            "paired": DCSegTransform(
+                crop_size=(80, 80, 80),
                 rotation_degrees=10.0,
                 intensity_factors=(0.1, 0.1),
                 flip_probabilities=(0.5, 0.5, 0.5),
