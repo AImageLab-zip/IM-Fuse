@@ -25,6 +25,7 @@ dependencies = [
     "packaging>=26.0",
     "pandas>=3.0.2",
     "prompt-toolkit>=3.0.52",
+    "ptflops>=0.7.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
     "torch==2.9.1",
@@ -44,6 +45,17 @@ dev = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+brainchmark = [
+  "data/dummy_brain.npz",
+  "data/configs/*.yaml",
+  "data/config_templates/*.yaml",
+  "data/splits/**/*.csv",
+  "data/splits/**/*.json",
+  "data/splits/**/*.py",
+  "data/splits/**/*.txt",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

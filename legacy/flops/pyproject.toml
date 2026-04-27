@@ -1,0 +1,27 @@
+[project]
+name = "legacy-flops"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Standalone CUDA-only FLOPs profiler for IM-Fuse legacy models."
+dependencies = [
+  "batchgenerators>=0.21",
+  "einops>=0.8",
+  "medpy>=0.5",
+  "monai>=1.2",
+  "nibabel>=5.3",
+  "numpy>=1.26",
+  "ptflops>=0.7.5",
+  "pyyaml>=6.0",
+  "rich>=14.3.3",
+  "simpleitk>=2.4",
+  "tensorboardX>=2.6",
+  "timm>=0.6.13",
+  "torch==2.9.1",
+  "torchvision>=0.24.1",
+  "tqdm>=4.67",
+  "transformers>=4.48",
+  "wandb>=0.23",
+]
+
+[project.scripts]
+legacy-flops = "legacy.flops.__main__:main"

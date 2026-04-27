@@ -46,6 +46,7 @@ Active tested model choices currently include:
 - `imfuse`
 - `mmformer`
 - `dcseg`
+- `rfnet`
 
 ## What It Produces
 

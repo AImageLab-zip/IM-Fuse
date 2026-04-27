@@ -1,0 +1,8 @@
+dynamic_network_architectures==0.3.1
+einops==0.8.0
+medpy==0.5.2
+nibabel==5.3.0
+Pillow==9.5.0
+SimpleITK==2.3.1
+torchmetrics==1.4.2
+tqdm==4.66.2

@@ -9,6 +9,7 @@ Relevant files:
 - `src/brainchmark/models/IMFuse.py`
 - `src/brainchmark/models/mmformer.py`
 - `src/brainchmark/models/dcseg.py`
+- `src/brainchmark/models/rfnet.py`
 - `src/brainchmark/enums.py`
 
 ## Mental Model
@@ -111,7 +112,7 @@ For `IMFuseTrainer`, training forward is expected to return:
 - `sep_preds`
 - `prm_preds`
 
-This is why `imfuse` and `mmformer` share the same trainer path.
+This is why `imfuse`, `mmformer`, and `rfnet` share the same trainer path.
 
 ### DC-Seg trainer compatibility
 

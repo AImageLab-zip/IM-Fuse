@@ -68,6 +68,7 @@ The easiest workflow is:
   - `imfuse`
   - `mmformer`
   - `dcseg`
+  - `rfnet`
 - `loss`: string enum
   - `imfuse`
   - `dcseg`
@@ -114,6 +115,7 @@ The easiest workflow is:
 - `transform_kind`: string enum or `null`
   - `imfuse`
   - `dcseg`
+  - `rfnet`
 
 ### Testing
 
@@ -124,6 +126,7 @@ The easiest workflow is:
   - `imfuse`
   - `mmformer`
   - `dcseg`
+  - `rfnet`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
@@ -372,6 +375,8 @@ Recommended examples:
 - `src/brainchmark/data/configs/mmformer_23.yaml`
 - `src/brainchmark/data/configs/dcseg_18.yaml`
 - `src/brainchmark/data/configs/dcseg_23.yaml`
+- `src/brainchmark/data/configs/rfnet_18.yaml`
+- `src/brainchmark/data/configs/rfnet_23.yaml`
 
 ## Related Docs
 

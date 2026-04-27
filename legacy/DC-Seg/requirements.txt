@@ -1,0 +1,11 @@
+numpy==2.2.0
+pandas==2.2.3
+rotary-embedding-torch==0.8.6
+scikit-image==0.25.0
+scikit-learn==1.6.0
+torch==2.5.1
+torchio==0.20.3
+torchmetrics==1.6.1
+torchvision==0.20.1
+tqdm==4.67.1
+transformers==4.48.0

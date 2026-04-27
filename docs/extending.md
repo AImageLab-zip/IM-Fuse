@@ -10,6 +10,56 @@ The maintained extension surface is `src/brainchmark`. The `legacy/` directories
 
 If you need field-by-field or component-by-component instructions, use the detailed guides in [docs/components/README.md](components/README.md).
 
+## External Contributor Workflow
+
+External contributors should work from a fork of the repository. Fork the upstream project, clone your fork locally, and keep the upstream repository configured as a second remote so you can regularly pull the latest changes.
+
+Use `development` as the base branch for new work and open pull requests back into `development`. The `stable` branch is reserved for validated release-ready code, so contributors should not use it as the target for everyday feature, model, trainer, dataset, or documentation PRs.
+
+Typical workflow:
+
+1. Fork the repository on GitHub.
+
+2. Clone your fork locally.
+
+   ```bash
+   git clone <your-fork-url>
+   cd IM-Fuse
+   ```
+
+3. Add the upstream repository as a remote if it is not already configured.
+
+   ```bash
+   git remote add upstream <upstream-repository-url>
+   ```
+
+4. Fetch the latest upstream branches.
+
+   ```bash
+   git fetch upstream
+   ```
+
+5. Update your local `development` branch from upstream.
+
+   ```bash
+   git checkout development
+   git pull upstream development
+   ```
+
+6. Create a feature branch from `development`.
+
+   ```bash
+   git checkout -b my-feature
+   ```
+
+7. Push the feature branch to your fork.
+
+   ```bash
+   git push -u origin my-feature
+   ```
+
+8. Open a pull request from your fork's feature branch into upstream `development`.
+
 ## Extension Flow
 
 Most changes follow the same path:
@@ -68,6 +118,7 @@ The model integration layer lives in:
 - [src/brainchmark/models/IMFuse.py](../src/brainchmark/models/IMFuse.py)
 - [src/brainchmark/models/mmformer.py](../src/brainchmark/models/mmformer.py)
 - [src/brainchmark/models/dcseg.py](../src/brainchmark/models/dcseg.py)
+- [src/brainchmark/models/rfnet.py](../src/brainchmark/models/rfnet.py)
 
 This is where you extend:
 

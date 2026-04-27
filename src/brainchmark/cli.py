@@ -6,30 +6,10 @@ import time
 
 # External dependencies
 import typer
-from rich.panel import Panel
-from rich.prompt import Confirm
-from rich.table import Table
 
 # Internal modules
 from brainchmark import __version__
 from brainchmark.cli_completion import config_shell_complete, split_shell_complete
-from brainchmark.cli_display import (
-    CONSOLE,
-    prompt_optional_existing_directory,
-    prompt_required_directory,
-)
-from brainchmark.cli_setup import (
-    CONFIG_TEMPLATES_DIR,
-    copy_config_templates,
-    update_setup_config,
-)
-from brainchmark.cli_workflows import (
-    build_preprocess_merged_config,
-    build_train_merged_config,
-    maybe_relaunch_distributed,
-    run_preprocess_from_merged,
-    run_train_from_merged,
-)
 from brainchmark.enums import (
     ClampMode,
     CropMode,
@@ -41,12 +21,50 @@ from brainchmark.enums import (
     TransformKind,
     TrainerKind,
 )
-from brainchmark.utils.cli_overrides import CONFIGS_DIR, SPLITS_DIR, load_yaml_config, merge_cli_overrides, resolve_split_path
+from brainchmark.paths import CONFIGS_DIR, SPLITS_DIR
+from brainchmark.utils.cli_overrides import (
+    load_yaml_config,
+    merge_cli_overrides,
+    resolve_split_path,
+)
+
+# Lazy-load heavy modules on first use
+_cli_workflows_cache = None
+_cli_display_cache = None
+_cli_setup_cache = None
+
+
+def _get_cli_workflows():
+    global _cli_workflows_cache
+    if _cli_workflows_cache is None:
+        from brainchmark import cli_workflows as _cw
+
+        _cli_workflows_cache = _cw
+    return _cli_workflows_cache
+
+
+def _get_cli_display():
+    global _cli_display_cache
+    if _cli_display_cache is None:
+        from brainchmark import cli_display as _cd
+
+        _cli_display_cache = _cd
+    return _cli_display_cache
+
+
+def _get_cli_setup():
+    global _cli_setup_cache
+    if _cli_setup_cache is None:
+        from brainchmark import cli_setup as _cs
+
+        _cli_setup_cache = _cs
+    return _cli_setup_cache
+
 
 # Environment variables
 os.environ["WANDB_SILENT"] = "true"
 
-app = typer.Typer(help="BrainchMark CLI",rich_markup_mode="rich")
+app = typer.Typer(help="BrainchMark CLI", rich_markup_mode="rich")
 
 
 def _version_callback(value: bool) -> None:
@@ -77,8 +95,8 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
             "missing value; provide it in the CLI or in --config",
             param_hint="--output-dir",
         )
-    output_dir = merged.get("output_dir")
-    checkpoint_path = Path(output_dir) / 'checkpoints' /  "model_last.pth"
+
+    checkpoint_path = Path(output_dir) / "checkpoints" / "model_last.pth"
     if not checkpoint_path.is_file():
         raise typer.BadParameter(
             f"resume checkpoint not found at {checkpoint_path}",
@@ -101,29 +119,15 @@ def main(
 
 
 @app.command()
-def version(
-) -> None:
+def version() -> None:
     """Show the installed BrainchMark version."""
     typer.echo(f"BrainchMark {__version__}")
 
 
-'''@app.command()
-def hello() -> None:
-    """Simple test command."""
-    message = "Hello from the AImageLab Team!"
-
-    text = Text(message, style="bold magenta")
-    text.stylize("bold cyan", 0, 5)      # "Hello"
-    text.stylize("bold yellow", 15, 24)  # "AImageLab"
-
-    console.print()
-    console.print(text, justify="center")
-    console.print()'''
-
 @app.command("self-destruct")
 def self_destruct(
-    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt")
-):
+    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt"),
+) -> None:
     """
     Totally irreversible self-destruct sequence.
     """
@@ -132,7 +136,9 @@ def self_destruct(
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit()
-        confirm = typer.confirm("Are you ABSOLUTELY sure you want to DESTROY YOUR PC AND THIS REPO?")
+        confirm = typer.confirm(
+            "Are you ABSOLUTELY sure you want to DESTROY YOUR PC AND THIS REPO?"
+        )
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit()
@@ -145,8 +151,7 @@ def self_destruct(
         time.sleep(1)
         typer.echo("")
 
-    text = \
-"""———————————No brains?———————————
+    text = """———————————No brains?———————————
 ⠀⣞⢽⢪⢣⢣⢣⢫⡺⡵⣝⡮⣗⢷⢽⢽⢽⣮⡷⡽⣜⣜⢮⢺⣜⢷⢽⢝⡽⣝
 ⠸⡸⠜⠕⠕⠁⢁⢇⢏⢽⢺⣪⡳⡝⣎⣏⢯⢞⡿⣟⣷⣳⢯⡷⣽⢽⢯⣳⣫⠇
 ⠀⠀⢀⢀⢄⢬⢪⡪⡎⣆⡈⠚⠜⠕⠇⠗⠝⢕⢯⢫⣞⣯⣿⣻⡽⣏⢗⣗⠏⠀
@@ -161,14 +166,29 @@ def self_destruct(
 ⠀⠀⠀⡟⡾⣿⢿⢿⢵⣽⣾⣼⣘⢸⢸⣞⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠁⠇⠡⠩⡫⢿⣝⡻⡮⣒⢽⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 —————————————————————————————
-    """
+"""
     typer.echo(text)
 
 
 @app.command()
 def setup() -> None:
     """Copy template configs and patch only the local path fields."""
-    CONSOLE.print(
+    from rich.panel import Panel
+    from rich.prompt import Confirm
+    from rich.table import Table
+
+    cli_display = _get_cli_display()
+    cli_setup = _get_cli_setup()
+
+    console = cli_display.CONSOLE
+    prompt_optional_existing_directory = cli_display.prompt_optional_existing_directory
+    prompt_required_directory = cli_display.prompt_required_directory
+
+    CONFIG_TEMPLATES_DIR = cli_setup.CONFIG_TEMPLATES_DIR
+    copy_config_templates = cli_setup.copy_config_templates
+    update_setup_config = cli_setup.update_setup_config
+
+    console.print(
         Panel(
             "[bold white]Configure the packaged BrainchMark YAML files.[/bold white]\n"
             "Leave a BraTS dataset path empty if you do not want to configure that dataset yet.",
@@ -213,7 +233,7 @@ def setup() -> None:
     table.add_row("Checkpoint Path", "<art_dir>/checkpoints/model_last.pth")
     table.add_row("Output Path", "<art_dir>/results.txt")
 
-    CONSOLE.print(
+    console.print(
         Panel(
             table,
             title="[bold green]Setup Plan[/bold green]",
@@ -246,7 +266,7 @@ def setup() -> None:
     result_table.add_row("Artifacts Root", str(artifacts_root_dir))
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
 
-    CONSOLE.print(
+    console.print(
         Panel(
             result_table,
             title="[bold green]Setup Complete[/bold green]",
@@ -254,6 +274,7 @@ def setup() -> None:
             expand=False,
         )
     )
+
 
 @app.command(
     help=(
@@ -299,16 +320,18 @@ def preprocess(
     crop_mode: str = typer.Option(
         CropMode.NONE.value,
         "--crop-mode",
-        help= "Cropping strategy. Built-ins: " + ", ".join(mode.value for mode in CropMode) + ". Custom function names from preprocessing.cropping are also accepted.",
+        help="Cropping strategy. Built-ins: "
+        + ", ".join(mode.value for mode in CropMode)
+        + ". Custom function names from preprocessing.cropping are also accepted.",
         rich_help_panel="Cropping",
     ),
-    crop_size: list[int] | None | None = typer.Option(
+    crop_size: list[int] | None = typer.Option(
         None,
         "--crop-size",
         help="Center crop size as three integers: X Y Z.",
         rich_help_panel="Cropping",
     ),
-    crop_min_size: list[int] | None | None = typer.Option(
+    crop_min_size: list[int] | None = typer.Option(
         None,
         "--crop-min-size",
         help="Minimum non-empty crop size as three integers: X Y Z.",
@@ -317,33 +340,29 @@ def preprocess(
     clamp_mode: str = typer.Option(
         ClampMode.NONE.value,
         "--clamp-mode",
-        help="Clamp mode. Built-ins: " + ", ".join(mode.value for mode in ClampMode) + ". Custom function names from preprocessing.clamping are also accepted.",
+        help="Clamp mode. Built-ins: "
+        + ", ".join(mode.value for mode in ClampMode)
+        + ". Custom function names from preprocessing.clamping are also accepted.",
         rich_help_panel="Clamping",
     ),
-
     clamp_percentile: list[float] | None = typer.Option(
         None,
         "--clamp-percentile",
         help="Clamp percentiles as one or two floats: HIGH or LOW HIGH. If one value is given, LOW is assumed to be 0.",
         rich_help_panel="Clamping",
     ),
-
     clamp_min: list[int] | None = typer.Option(
         None,
         "--clamp-min",
         help="Minimum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
         rich_help_panel="Clamping",
-
     ),
-
     clamp_max: list[int] | None = typer.Option(
         None,
         "--clamp-max",
         help="Maximum clamp values as one or four integers. If one value is given, it will be used for all modalities.",
         rich_help_panel="Clamping",
-
     ),
-
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -354,7 +373,9 @@ def preprocess(
     norm_mode: str = typer.Option(
         NormMode.NONE.value,
         "--norm-mode",
-        help="Normalization mode. Built-ins: " + ", ".join(mode.value for mode in NormMode) + ". Custom function names from preprocessing.normalization are also accepted.",
+        help="Normalization mode. Built-ins: "
+        + ", ".join(mode.value for mode in NormMode)
+        + ". Custom function names from preprocessing.normalization are also accepted.",
         rich_help_panel="Normalization",
     ),
     norm_min_max_range: tuple[float, float] | None = typer.Option(
@@ -363,14 +384,12 @@ def preprocess(
         help="Target min-max normalization range as two floats: MIN MAX.",
         rich_help_panel="Normalization",
     ),
-
     norm_mean: tuple[float, float, float, float] | None = typer.Option(
         None,
         "--norm-mean",
         help="Normalization means as four floats, one for each modality.",
         rich_help_panel="Normalization",
     ),
-
     norm_std: tuple[float, float, float, float] | None = typer.Option(
         None,
         "--norm-std",
@@ -379,7 +398,10 @@ def preprocess(
     ),
 ) -> None:
     """Preprocess a BraTS-style dataset into BrainchMark `.npz` artifacts."""
-    merged = build_preprocess_merged_config(
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    merged = workflows.build_preprocess_merged_config(
         config=config,
         input_dir=input_dir,
         output_dir=output_dir,
@@ -397,7 +419,7 @@ def preprocess(
         norm_std=norm_std,
         yes=yes,
     )
-    run_preprocess_from_merged(merged, console=CONSOLE, yes=yes)
+    workflows.run_preprocess_from_merged(merged, console=console, yes=yes)
 
 
 @app.command()
@@ -432,7 +454,10 @@ def preprocess_train(
     ),
 ) -> None:
     """Run preprocessing first and then launch training using the same config."""
-    preprocess_merged = build_preprocess_merged_config(
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    preprocess_merged = workflows.build_preprocess_merged_config(
         config=config,
         input_dir=None,
         output_dir=None,
@@ -450,9 +475,9 @@ def preprocess_train(
         norm_std=None,
         yes=yes,
     )
-    run_preprocess_from_merged(preprocess_merged, console=CONSOLE, yes=yes)
+    workflows.run_preprocess_from_merged(preprocess_merged, console=console, yes=yes)
 
-    train_merged = build_train_merged_config(
+    train_merged = workflows.build_train_merged_config(
         config=config,
         data_dir=None,
         art_dir=None,
@@ -501,8 +526,8 @@ def preprocess_train(
         wandb_run_name=None,
         dataset_type=None,
     )
-    maybe_relaunch_distributed(train_merged)
-    run_train_from_merged(train_merged)
+    workflows.maybe_relaunch_distributed(train_merged)
+    workflows.run_train_from_merged(train_merged)
 
 
 @app.command()
@@ -737,7 +762,7 @@ def train(
         help="Weight decay.",
         rich_help_panel="Optimization",
     ),
-    num_workers: int= typer.Option(
+    num_workers: int = typer.Option(
         8,
         "--num-workers",
         help="Number of dataloader workers.",
@@ -809,9 +834,17 @@ def train(
     ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
-    with CONSOLE.status("[bold cyan]Starting BrainchMark[/bold cyan]", spinner="dots") as status:
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    # Keep these local so their imports don't affect startup/completion.
+    from brainchmark.training.config import parse_kv_list
+
+    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
+
+    with console.status("[bold cyan]Starting BrainchMark[/bold cyan]", spinner="dots") as status:
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]reading configuration[/dim]")
-        merged = build_train_merged_config(
+        merged = workflows.build_train_merged_config(
             config=config,
             data_dir=data_dir,
             art_dir=art_dir,
@@ -849,6 +882,8 @@ def train(
             batch_size=batch_size,
             weight_decay=weight_decay,
             num_workers=num_workers,
+            distributed=distributed,
+            nproc_per_node=nproc_per_node,
             fp16=fp16,
             resume=resume,
             pretrain=pretrain,
@@ -858,11 +893,11 @@ def train(
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
         )
-        maybe_relaunch_distributed(merged)
+        workflows.maybe_relaunch_distributed(merged)
 
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]building training objects[/dim]")
         status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]initializing trainer[/dim]")
-        run_train_from_merged(merged)
+        workflows.run_train_from_merged(merged)
 
 
 @app.command()
@@ -993,3 +1028,98 @@ def test(
         seed=int(merged.get("seed", 42)),
     )
     typer.echo(f"Test report written to {output_file}")
+
+
+@app.command()
+def flops(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file. If --model is omitted, reads model from YAML.",
+        rich_help_panel="Config",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to profile. Overrides YAML model.",
+        rich_help_panel="Model",
+    ),
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        help="Device to use for profiling: auto, cpu, or cuda.",
+        rich_help_panel="Runtime",
+    ),
+    all_configs: bool = typer.Option(
+        False,
+        "--all",
+        help="Profile all packaged 2023 configs, using each config's model.",
+        rich_help_panel="Runtime",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+) -> None:
+    """Profile model FLOPs from a model name or config."""
+    from brainchmark.flops import (
+        build_flops_table,
+        resolve_2023_config_paths,
+        run_flops_analysis,
+        validate_flops_selection,
+    )
+    from brainchmark.training.config import parse_kv_list
+
+    console = _get_cli_display().CONSOLE
+
+    validate_flops_selection(
+        all_configs=all_configs,
+        config_path=config,
+        model_name=model,
+    )
+    parsed_model_kwargs = parse_kv_list(custom_model_kwargs)
+
+    with console.status(
+        "[bold cyan]Profiling BrainchMark FLOPs[/bold cyan]",
+        spinner="dots",
+    ) as status:
+        if all_configs:
+            reports = []
+            for config_path in resolve_2023_config_paths():
+                status.update(
+                    "[bold cyan]Profiling BrainchMark FLOPs[/bold cyan]  "
+                    f"[dim]{config_path.name}[/dim]"
+                )
+                reports.append(
+                    (
+                        config_path,
+                        run_flops_analysis(
+                            config_path=config_path,
+                            model_name=None,
+                            custom_model_kwargs=parsed_model_kwargs,
+                            device=device,
+                        ),
+                    )
+                )
+        else:
+            reports = [
+                (
+                    config,
+                    run_flops_analysis(
+                        config_path=config,
+                        model_name=model,
+                        custom_model_kwargs=parsed_model_kwargs,
+                        device=device,
+                    ),
+                )
+            ]
+
+    for config_path, report in reports:
+        if config_path is not None:
+            console.print(f"[bold]Config:[/bold] {config_path}")
+        console.print(build_flops_table(report))

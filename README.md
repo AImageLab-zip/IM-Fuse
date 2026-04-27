@@ -56,6 +56,7 @@ CLI commands:
 - `preprocess-train`
 - `train`
 - `test`
+- `flops`
 - `self-destruct`
 
 `self-destruct` is obviously part of the serious workflow.
@@ -69,7 +70,7 @@ BrainchMark currently provides:
 - a Typer CLI with `preprocess`, `train`, and `test`
 - YAML-driven execution with CLI overrides
 - a small GUI generated from the CLI surface
-- active model integrations for `imfuse`, `mmformer`, and `dcseg`
+- active model integrations for `imfuse`, `mmformer`, `dcseg`, and `rfnet`
 
 Supported dataset types:
 
