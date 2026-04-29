@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import ast
 
-input_dir = Path('/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/data/splits')
+input_dir = Path('/home/ocarpentiero/PycharmProjects/IM-Fuse/src/mimose/data/splits')
 output_18 = input_dir / 'split.json'
 #(flair, t1ce, t1, t2)
 modes = ['brats18','brats23']

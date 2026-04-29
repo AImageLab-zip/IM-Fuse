@@ -4,8 +4,8 @@ This document explains how to extend the evaluation path.
 
 Relevant files:
 
-- `src/brainchmark/testing/pipeline.py`
-- `src/brainchmark/cli.py`
+- `src/mimose/testing/pipeline.py`
+- `src/mimose/cli.py`
 - model modules implementing `predict(images, mask)`
 
 ## Mental Model

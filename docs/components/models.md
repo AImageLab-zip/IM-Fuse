@@ -4,13 +4,13 @@ This document explains how to add or modify models in detail.
 
 Relevant files:
 
-- `src/brainchmark/models/config.py`
-- `src/brainchmark/models/abstract_model.py`
-- `src/brainchmark/models/IMFuse.py`
-- `src/brainchmark/models/mmformer.py`
-- `src/brainchmark/models/dcseg.py`
-- `src/brainchmark/models/rfnet.py`
-- `src/brainchmark/enums.py`
+- `src/mimose/models/config.py`
+- `src/mimose/models/abstract_model.py`
+- `src/mimose/models/IMFuse.py`
+- `src/mimose/models/mmformer.py`
+- `src/mimose/models/dcseg.py`
+- `src/mimose/models/rfnet.py`
+- `src/mimose/enums.py`
 
 ## Mental Model
 
@@ -33,7 +33,7 @@ All active models should:
 
 The `predict(...)` method is mandatory for `mimose test`.
 
-`predict(...)` is not just a duplicate of `forward(...)`. It is the test-time inference method used by [src/brainchmark/testing/pipeline.py](../../src/brainchmark/testing/pipeline.py), where the runtime calls:
+`predict(...)` is not just a duplicate of `forward(...)`. It is the test-time inference method used by [src/mimose/testing/pipeline.py](../../src/mimose/testing/pipeline.py), where the runtime calls:
 
 ```python
 output = model.predict(images, mask)
@@ -56,7 +56,7 @@ The important point is that `mimose test` expects a final segmentation predictio
 
 ## Add a New Model Module
 
-1. create `src/brainchmark/models/my_model.py`
+1. create `src/mimose/models/my_model.py`
 2. define a public model class
 3. inherit from `AbstractModel`
 4. implement training forward behavior
@@ -81,14 +81,14 @@ If you want the easiest integration path, make the model IMFuse-compatible:
 
 1. start from an `imfuse` YAML config
 2. make `forward(...)` return `(fuse_pred, sep_preds, prm_preds)`
-3. keep the output shapes consistent with [src/brainchmark/losses/imfuse.py](../../src/brainchmark/losses/imfuse.py)
+3. keep the output shapes consistent with [src/mimose/losses/imfuse.py](../../src/mimose/losses/imfuse.py)
 4. make `predict(...)` return the final fused segmentation tensor only
 
-This lets you reuse the existing [IMFuseTrainer](../../src/brainchmark/training/trainers/imfuse.py) and IMFuse-style training path without creating a new trainer family first.
+This lets you reuse the existing [IMFuseTrainer](../../src/mimose/training/trainers/imfuse.py) and IMFuse-style training path without creating a new trainer family first.
 
 ## How Resolution Works
 
-The model resolver scans modules under `src/brainchmark/models/` and compares normalized names.
+The model resolver scans modules under `src/mimose/models/` and compares normalized names.
 
 That means:
 

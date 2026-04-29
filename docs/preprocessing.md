@@ -314,7 +314,7 @@ Each output archive contains:
 
 The validation rules documented here are enforced in:
 
-- [config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/preprocessing/config.py)
-- [cli.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/brainchmark/cli.py)
+- [config.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/mimose/preprocessing/config.py)
+- [cli.py](/home/ocarpentiero/PycharmProjects/IM-Fuse/src/mimose/cli.py)
 
 If the behavior changes, update this document together with those files.

@@ -5,15 +5,15 @@ from pathlib import Path
 import pytest
 import torch
 
-from brainchmark.enums import TransformKind
-from brainchmark.flops import resolve_2023_config_paths
-from brainchmark.models.config import build_model_config
-from brainchmark.models.rfnet import RFNet, input_patch_size
-from brainchmark.training.transforms import (
+from mimose.enums import TransformKind
+from mimose.flops import resolve_2023_config_paths
+from mimose.models.config import build_model_config
+from mimose.models.rfnet import RFNet, input_patch_size
+from mimose.training.transforms import (
     RFNetTransformManager,
     build_transform_manager,
 )
-from brainchmark.utils.cli_overrides import load_yaml_config
+from mimose.utils.cli_overrides import load_yaml_config
 
 
 def test_rfnet_inference_forward_returns_segmentation_shape() -> None:

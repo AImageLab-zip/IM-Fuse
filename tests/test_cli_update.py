@@ -5,7 +5,7 @@ import subprocess
 
 from typer.testing import CliRunner
 
-from brainchmark import cli
+from mimose import cli
 
 
 def test_update_runs_install_script(monkeypatch) -> None:
@@ -13,10 +13,10 @@ def test_update_runs_install_script(monkeypatch) -> None:
     calls: list[tuple[list[str], Path]] = []
 
     monkeypatch.setattr(cli, "maybe_notify_about_update", lambda: None)
-    monkeypatch.setattr(cli, "_repo_root", lambda: Path("/tmp/brainchmark-repo"))
+    monkeypatch.setattr(cli, "_repo_root", lambda: Path("/tmp/mimose-repo"))
 
     def fake_is_file(self: Path) -> bool:
-        return str(self) == "/tmp/brainchmark-repo/install.sh"
+        return str(self) == "/tmp/mimose-repo/install.sh"
 
     def fake_run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         calls.append((cmd, cwd))
@@ -30,7 +30,7 @@ def test_update_runs_install_script(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [
         (
-            ["bash", "/tmp/brainchmark-repo/install.sh"],
-            Path("/tmp/brainchmark-repo"),
+            ["bash", "/tmp/mimose-repo/install.sh"],
+            Path("/tmp/mimose-repo"),
         )
     ]

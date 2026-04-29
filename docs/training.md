@@ -20,7 +20,7 @@ Run from YAML:
 ```bash
 mimose train --config imfuse_23.yaml
 ```
-The CLI automatically resolves and autocompletes config files found in src/brainchmark/data/config. Absolute or relative paths for custom yaml files are supported too.
+The CLI automatically resolves and autocompletes config files found in src/mimose/data/config. Absolute or relative paths for custom yaml files are supported too.
 Run from CLI:
 
 ```bash
@@ -47,14 +47,14 @@ For very detailed extension notes on trainers, models, and runtime wiring, see [
 
 The repo currently ships these reference training configs:
 
-- `src/brainchmark/data/configs/imfuse_18.yaml`
-- `src/brainchmark/data/configs/imfuse_23.yaml`
-- `src/brainchmark/data/configs/mmformer_18.yaml`
-- `src/brainchmark/data/configs/mmformer_23.yaml`
-- `src/brainchmark/data/configs/dcseg_18.yaml`
-- `src/brainchmark/data/configs/dcseg_23.yaml`
-- `src/brainchmark/data/configs/rfnet_18.yaml`
-- `src/brainchmark/data/configs/rfnet_23.yaml`
+- `src/mimose/data/configs/imfuse_18.yaml`
+- `src/mimose/data/configs/imfuse_23.yaml`
+- `src/mimose/data/configs/mmformer_18.yaml`
+- `src/mimose/data/configs/mmformer_23.yaml`
+- `src/mimose/data/configs/dcseg_18.yaml`
+- `src/mimose/data/configs/dcseg_23.yaml`
+- `src/mimose/data/configs/rfnet_18.yaml`
+- `src/mimose/data/configs/rfnet_23.yaml`
 
 They are combined reference files that include preprocess, train, and test sections/fields. The train command reads the training-relevant keys and ignores the rest.
 
@@ -249,7 +249,7 @@ Example:
 
 ```bash
 mimose train \
-  --config src/brainchmark/data/configs/mmformer_23.yaml \
+  --config src/mimose/data/configs/mmformer_23.yaml \
   --wandb-run-name mmformer-ablation-01
 ```
 

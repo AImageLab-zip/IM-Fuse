@@ -17,7 +17,7 @@ Each command reads only the keys it needs and ignores the rest. While it is poss
 - CLI values override YAML values when both are provided.
 - Most fields are top-level keys.
 - `custom_model_kwargs`, `custom_loss_kwargs`, and `custom_trainer_kwargs` are nested dictionaries.
-- Shipped examples live in `src/brainchmark/data/configs/`.
+- Shipped examples live in `src/mimose/data/configs/`.
 
 The easiest workflow is:
 
@@ -369,14 +369,14 @@ You do not need separate files unless that is easier for your workflow.
 
 Recommended examples:
 
-- `src/brainchmark/data/configs/imfuse_18.yaml`
-- `src/brainchmark/data/configs/imfuse_23.yaml`
-- `src/brainchmark/data/configs/mmformer_18.yaml`
-- `src/brainchmark/data/configs/mmformer_23.yaml`
-- `src/brainchmark/data/configs/dcseg_18.yaml`
-- `src/brainchmark/data/configs/dcseg_23.yaml`
-- `src/brainchmark/data/configs/rfnet_18.yaml`
-- `src/brainchmark/data/configs/rfnet_23.yaml`
+- `src/mimose/data/configs/imfuse_18.yaml`
+- `src/mimose/data/configs/imfuse_23.yaml`
+- `src/mimose/data/configs/mmformer_18.yaml`
+- `src/mimose/data/configs/mmformer_23.yaml`
+- `src/mimose/data/configs/dcseg_18.yaml`
+- `src/mimose/data/configs/dcseg_23.yaml`
+- `src/mimose/data/configs/rfnet_18.yaml`
+- `src/mimose/data/configs/rfnet_23.yaml`
 
 ## Related Docs
 

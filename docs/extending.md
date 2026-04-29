@@ -1,12 +1,12 @@
 # Extending MiMoSe
 
-This document gives a high-level map of how to extend the active `brainchmark` package under `src/brainchmark`.
+This document gives a high-level map of how to extend the active `mimose` package under `src/mimose`.
 
 In practice, the easiest way to extend MiMoSe is usually to start from an `imfuse` config and add a custom model module that follows the IMFuse-style trainer contract. This is the lowest-friction path because the repository already has a stable `IMFuseTrainer`, `IMFuseLoss`, dataset pipeline, masking logic, and testing flow.
 
-Concretely, you can add a new file under [src/brainchmark/models/](../src/brainchmark/models), define a public class that inherits from [AbstractModel](../src/brainchmark/models/abstract_model.py), implement `forward(images, mask)` so that training returns `(fuse_pred, sep_preds, prm_preds)` as expected by [IMFuseTrainer](../src/brainchmark/training/trainers/imfuse.py), and implement `predict(images, mask)` for evaluation. You do not have to manually register the module in a hardcoded registry: [src/brainchmark/models/config.py](../src/brainchmark/models/config.py) scans `src/brainchmark/models/*.py` dynamically and resolves public callables by normalized name, so once the file exists you can usually select it directly from YAML or CLI with `model: your_model_name`.
+Concretely, you can add a new file under [src/mimose/models/](../src/mimose/models), define a public class that inherits from [AbstractModel](../src/mimose/models/abstract_model.py), implement `forward(images, mask)` so that training returns `(fuse_pred, sep_preds, prm_preds)` as expected by [IMFuseTrainer](../src/mimose/training/trainers/imfuse.py), and implement `predict(images, mask)` for evaluation. You do not have to manually register the module in a hardcoded registry: [src/mimose/models/config.py](../src/mimose/models/config.py) scans `src/mimose/models/*.py` dynamically and resolves public callables by normalized name, so once the file exists you can usually select it directly from YAML or CLI with `model: your_model_name`.
 
-The maintained extension surface is `src/brainchmark`. The `legacy/` directories are useful for reference and comparison, but they are not the package API you should extend.
+The maintained extension surface is `src/mimose`. The `legacy/` directories are useful for reference and comparison, but they are not the package API you should extend.
 
 If you need field-by-field or component-by-component instructions, use the detailed guides in [docs/components/README.md](components/README.md).
 
@@ -64,10 +64,10 @@ Typical workflow:
 
 Most changes follow the same path:
 
-1. add or modify the implementation in `src/brainchmark/...`
+1. add or modify the implementation in `src/mimose/...`
 2. wire the new behavior into config/build logic
 3. expose it through CLI and YAML if users need to select it
-4. update reference configs under `src/brainchmark/data/configs/`
+4. update reference configs under `src/mimose/data/configs/`
 5. update the relevant docs
 
 If your change introduces or changes YAML fields, start with [docs/yaml-config.md](yaml-config.md).
@@ -76,23 +76,23 @@ If your change introduces or changes YAML fields, start with [docs/yaml-config.m
 
 These are the main places you will touch:
 
-- [src/brainchmark/cli.py](../src/brainchmark/cli.py): CLI entrypoints, option definitions, command wiring
-- [src/brainchmark/gui.py](../src/brainchmark/gui.py): GUI surface generated from the CLI
-- [src/brainchmark/enums.py](../src/brainchmark/enums.py): shared enum choices exposed across config and CLI
-- [src/brainchmark/utils/cli_overrides.py](../src/brainchmark/utils/cli_overrides.py): CLI-over-YAML merge behavior
-- [src/brainchmark/data/config_templates/](../src/brainchmark/data/config_templates): shipped config templates copied by `mimose setup`
-- [src/brainchmark/data/configs/](../src/brainchmark/data/configs): local reference configs used by the package
-- [src/brainchmark/data/splits/split.json](../src/brainchmark/data/splits/split.json): packaged dataset split definition
+- [src/mimose/cli.py](../src/mimose/cli.py): CLI entrypoints, option definitions, command wiring
+- [src/mimose/gui.py](../src/mimose/gui.py): GUI surface generated from the CLI
+- [src/mimose/enums.py](../src/mimose/enums.py): shared enum choices exposed across config and CLI
+- [src/mimose/utils/cli_overrides.py](../src/mimose/utils/cli_overrides.py): CLI-over-YAML merge behavior
+- [src/mimose/data/config_templates/](../src/mimose/data/config_templates): shipped config templates copied by `mimose setup`
+- [src/mimose/data/configs/](../src/mimose/data/configs): local reference configs used by the package
+- [src/mimose/data/splits/split.json](../src/mimose/data/splits/split.json): packaged dataset split definition
 
 ## Preprocessing
 
 The preprocessing stack lives in:
 
-- [src/brainchmark/preprocessing/config.py](../src/brainchmark/preprocessing/config.py)
-- [src/brainchmark/preprocessing/cropping.py](../src/brainchmark/preprocessing/cropping.py)
-- [src/brainchmark/preprocessing/clamping.py](../src/brainchmark/preprocessing/clamping.py)
-- [src/brainchmark/preprocessing/normalization.py](../src/brainchmark/preprocessing/normalization.py)
-- [src/brainchmark/preprocessing/pipeline.py](../src/brainchmark/preprocessing/pipeline.py)
+- [src/mimose/preprocessing/config.py](../src/mimose/preprocessing/config.py)
+- [src/mimose/preprocessing/cropping.py](../src/mimose/preprocessing/cropping.py)
+- [src/mimose/preprocessing/clamping.py](../src/mimose/preprocessing/clamping.py)
+- [src/mimose/preprocessing/normalization.py](../src/mimose/preprocessing/normalization.py)
+- [src/mimose/preprocessing/pipeline.py](../src/mimose/preprocessing/pipeline.py)
 
 This is where you extend:
 
@@ -113,12 +113,12 @@ Detailed guide: [docs/components/preprocessing.md](components/preprocessing.md)
 
 The model integration layer lives in:
 
-- [src/brainchmark/models/abstract_model.py](../src/brainchmark/models/abstract_model.py)
-- [src/brainchmark/models/config.py](../src/brainchmark/models/config.py)
-- [src/brainchmark/models/IMFuse.py](../src/brainchmark/models/IMFuse.py)
-- [src/brainchmark/models/mmformer.py](../src/brainchmark/models/mmformer.py)
-- [src/brainchmark/models/dcseg.py](../src/brainchmark/models/dcseg.py)
-- [src/brainchmark/models/rfnet.py](../src/brainchmark/models/rfnet.py)
+- [src/mimose/models/abstract_model.py](../src/mimose/models/abstract_model.py)
+- [src/mimose/models/config.py](../src/mimose/models/config.py)
+- [src/mimose/models/IMFuse.py](../src/mimose/models/IMFuse.py)
+- [src/mimose/models/mmformer.py](../src/mimose/models/mmformer.py)
+- [src/mimose/models/dcseg.py](../src/mimose/models/dcseg.py)
+- [src/mimose/models/rfnet.py](../src/mimose/models/rfnet.py)
 
 This is where you extend:
 
@@ -128,7 +128,7 @@ This is where you extend:
 
 Typical file route:
 
-1. add a new module under `src/brainchmark/models/`
+1. add a new module under `src/mimose/models/`
 2. inherit from `AbstractModel`
 3. implement `forward(images, mask)` with the output structure expected by the chosen trainer
 4. implement `predict(images, mask)` for evaluation and testing
@@ -136,7 +136,7 @@ Typical file route:
 6. add enum support in `enums.py` if it should be a first-class built-in choice
 7. make sure the chosen trainer understands the model output structure
 
-The `predict(...)` method is the inference entrypoint used by [mimose test](../src/brainchmark/testing/pipeline.py). It should take a full input volume and a modality mask, run the model in test-time mode, and return segmentation logits or probabilities with shape `[B, C, H, W, D]`. In other words, `forward(...)` is the training contract, while `predict(...)` is the evaluation contract.
+The `predict(...)` method is the inference entrypoint used by [mimose test](../src/mimose/testing/pipeline.py). It should take a full input volume and a modality mask, run the model in test-time mode, and return segmentation logits or probabilities with shape `[B, C, H, W, D]`. In other words, `forward(...)` is the training contract, while `predict(...)` is the evaluation contract.
 
 Detailed guide: [docs/components/models.md](components/models.md)
 
@@ -144,10 +144,10 @@ Detailed guide: [docs/components/models.md](components/models.md)
 
 The loss layer lives in:
 
-- [src/brainchmark/losses/config.py](../src/brainchmark/losses/config.py)
-- [src/brainchmark/losses/imfuse.py](../src/brainchmark/losses/imfuse.py)
-- [src/brainchmark/losses/dcseg.py](../src/brainchmark/losses/dcseg.py)
-- [src/brainchmark/losses/__init__.py](../src/brainchmark/losses/__init__.py)
+- [src/mimose/losses/config.py](../src/mimose/losses/config.py)
+- [src/mimose/losses/imfuse.py](../src/mimose/losses/imfuse.py)
+- [src/mimose/losses/dcseg.py](../src/mimose/losses/dcseg.py)
+- [src/mimose/losses/__init__.py](../src/mimose/losses/__init__.py)
 
 This is where you extend:
 
@@ -157,7 +157,7 @@ This is where you extend:
 
 Typical file route:
 
-1. implement the loss module under `src/brainchmark/losses/`
+1. implement the loss module under `src/mimose/losses/`
 2. wire it through `losses/config.py`
 3. add enum support in `enums.py` if needed
 4. make sure the trainer passes the right tensors to it
@@ -168,10 +168,10 @@ The trainer/loss contract matters more than the loss file alone. If the model ou
 
 The dataset layer lives in:
 
-- [src/brainchmark/datasets/base.py](../src/brainchmark/datasets/base.py)
-- [src/brainchmark/datasets/imfuse.py](../src/brainchmark/datasets/imfuse.py)
-- [src/brainchmark/datasets/config.py](../src/brainchmark/datasets/config.py)
-- [src/brainchmark/data/splits/split.json](../src/brainchmark/data/splits/split.json)
+- [src/mimose/datasets/base.py](../src/mimose/datasets/base.py)
+- [src/mimose/datasets/imfuse.py](../src/mimose/datasets/imfuse.py)
+- [src/mimose/datasets/config.py](../src/mimose/datasets/config.py)
+- [src/mimose/data/splits/split.json](../src/mimose/data/splits/split.json)
 
 This is where you extend:
 
@@ -185,7 +185,7 @@ Typical file route:
 1. add enum support in `enums.py`
 2. update dataset config or dataset classes
 3. update preprocessing and testing pipeline assumptions if the sample format changes
-4. add or update split files under `src/brainchmark/data/splits/`
+4. add or update split files under `src/mimose/data/splits/`
 
 Detailed guide: [docs/components/datasets.md](components/datasets.md)
 
@@ -193,8 +193,8 @@ Detailed guide: [docs/components/datasets.md](components/datasets.md)
 
 The shared runtime configuration lives in:
 
-- [src/brainchmark/training/config.py](../src/brainchmark/training/config.py)
-- [src/brainchmark/enums.py](../src/brainchmark/enums.py)
+- [src/mimose/training/config.py](../src/mimose/training/config.py)
+- [src/mimose/enums.py](../src/mimose/enums.py)
 
 This is where you extend:
 
@@ -216,13 +216,13 @@ Detailed guide: [docs/components/runtime-config.md](components/runtime-config.md
 
 The trainer stack lives in:
 
-- [src/brainchmark/training/trainers/abstract_trainer.py](../src/brainchmark/training/trainers/abstract_trainer.py)
-- [src/brainchmark/training/trainers/base_trainer.py](../src/brainchmark/training/trainers/base_trainer.py)
-- [src/brainchmark/training/trainers/imfuse.py](../src/brainchmark/training/trainers/imfuse.py)
-- [src/brainchmark/training/trainers/dcseg.py](../src/brainchmark/training/trainers/dcseg.py)
-- [src/brainchmark/training/transforms/base_transforms.py](../src/brainchmark/training/transforms/base_transforms.py)
-- [src/brainchmark/training/transforms/imfuse.py](../src/brainchmark/training/transforms/imfuse.py)
-- [src/brainchmark/training/transforms/__init__.py](../src/brainchmark/training/transforms/__init__.py)
+- [src/mimose/training/trainers/abstract_trainer.py](../src/mimose/training/trainers/abstract_trainer.py)
+- [src/mimose/training/trainers/base_trainer.py](../src/mimose/training/trainers/base_trainer.py)
+- [src/mimose/training/trainers/imfuse.py](../src/mimose/training/trainers/imfuse.py)
+- [src/mimose/training/trainers/dcseg.py](../src/mimose/training/trainers/dcseg.py)
+- [src/mimose/training/transforms/base_transforms.py](../src/mimose/training/transforms/base_transforms.py)
+- [src/mimose/training/transforms/imfuse.py](../src/mimose/training/transforms/imfuse.py)
+- [src/mimose/training/transforms/__init__.py](../src/mimose/training/transforms/__init__.py)
 
 This is where you extend:
 
@@ -244,9 +244,9 @@ Detailed guide: [docs/components/trainers.md](components/trainers.md)
 
 The evaluation path lives in:
 
-- [src/brainchmark/testing/pipeline.py](../src/brainchmark/testing/pipeline.py)
-- [src/brainchmark/models/abstract_model.py](../src/brainchmark/models/abstract_model.py)
-- [src/brainchmark/cli.py](../src/brainchmark/cli.py)
+- [src/mimose/testing/pipeline.py](../src/mimose/testing/pipeline.py)
+- [src/mimose/models/abstract_model.py](../src/mimose/models/abstract_model.py)
+- [src/mimose/cli.py](../src/mimose/cli.py)
 
 This is where you extend:
 
@@ -262,10 +262,10 @@ Detailed guide: [docs/components/testing.md](components/testing.md)
 
 The user-facing entrypoints live in:
 
-- [src/brainchmark/cli.py](../src/brainchmark/cli.py)
-- [src/brainchmark/gui.py](../src/brainchmark/gui.py)
-- [src/brainchmark/utils/cli_overrides.py](../src/brainchmark/utils/cli_overrides.py)
-- [src/brainchmark/utils/cli_utils.py](../src/brainchmark/utils/cli_utils.py)
+- [src/mimose/cli.py](../src/mimose/cli.py)
+- [src/mimose/gui.py](../src/mimose/gui.py)
+- [src/mimose/utils/cli_overrides.py](../src/mimose/utils/cli_overrides.py)
+- [src/mimose/utils/cli_utils.py](../src/mimose/utils/cli_utils.py)
 
 This is where you extend:
 
@@ -287,8 +287,8 @@ Detailed guide: [docs/components/cli-gui.md](components/cli-gui.md)
 
 The packaged reference configs live in:
 
-- [src/brainchmark/data/config_templates/](../src/brainchmark/data/config_templates)
-- [src/brainchmark/data/configs/](../src/brainchmark/data/configs)
+- [src/mimose/data/config_templates/](../src/mimose/data/config_templates)
+- [src/mimose/data/configs/](../src/mimose/data/configs)
 
 When you add a new built-in model, trainer, loss, or workflow option, update the shipped configs too. Otherwise the code may be technically wired but still hard to discover or use correctly.
 

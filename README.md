@@ -2,7 +2,7 @@
 
 MiMoSe is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
 
-The code you should actually use lives in `src/brainchmark`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `mimose`.
+The code you should actually use lives in `src/mimose`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `mimose`.
 
 We also encourage fellow researchers to extend the repository and open PRs with new models, trainers, datasets, and evaluation ideas. More detail: [docs/extending.md](docs/extending.md).
 
@@ -77,7 +77,7 @@ Supported dataset types:
 - `brats23`
 ## Preprocessing Quick Start
 
-This copies the packaged templates from `src/brainchmark/data/config_templates` into `src/brainchmark/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.
+This copies the packaged templates from `src/mimose/data/config_templates` into `src/mimose/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.
 
 Run preprocessing from YAML:
 
@@ -129,7 +129,7 @@ The common pattern is:
 
 CLI values override YAML values when both are present.
 
-Reference configs live in [src/brainchmark/data/configs](src/brainchmark/data/configs).
+Reference configs live in [src/mimose/data/configs](src/mimose/data/configs).
 
 For a dedicated guide to writing configs, see [docs/yaml-config.md](docs/yaml-config.md).
 
@@ -153,13 +153,13 @@ If you want to add your own model, trainer, dataset integration, runtime compone
 
 Key package areas:
 
-- [src/brainchmark/cli.py](src/brainchmark/cli.py): CLI entrypoints
-- [src/brainchmark/gui.py](src/brainchmark/gui.py): GUI launcher
-- [src/brainchmark/preprocessing/](src/brainchmark/preprocessing): preprocessing config and pipeline
-- [src/brainchmark/models/](src/brainchmark/models): active model integrations
-- [src/brainchmark/datasets/](src/brainchmark/datasets): dataset abstractions and masking logic
-- [src/brainchmark/training/](src/brainchmark/training): trainer/runtime/config code
-- [src/brainchmark/testing/](src/brainchmark/testing): evaluation pipeline
+- [src/mimose/cli.py](src/mimose/cli.py): CLI entrypoints
+- [src/mimose/gui.py](src/mimose/gui.py): GUI launcher
+- [src/mimose/preprocessing/](src/mimose/preprocessing): preprocessing config and pipeline
+- [src/mimose/models/](src/mimose/models): active model integrations
+- [src/mimose/datasets/](src/mimose/datasets): dataset abstractions and masking logic
+- [src/mimose/training/](src/mimose/training): trainer/runtime/config code
+- [src/mimose/testing/](src/mimose/testing): evaluation pipeline
 
 Documentation:
 

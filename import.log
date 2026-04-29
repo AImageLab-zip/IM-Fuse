@@ -146,7 +146,7 @@ import time:      1825 |      12533 |     importlib.abc
 import time:      3956 |     183356 |   importlib.metadata
 import time:      2479 |       2479 |     email.feedparser
 import time:      1434 |       3913 |   email.parser
-import time:      6874 |     194142 | brainchmark
+import time:      6874 |     194142 | mimose
 import time:      1333 |       1333 |       __future__
 import time:      2752 |       2752 |         gettext
 import time:      2201 |       2201 |           click._compat
@@ -193,8 +193,8 @@ import time:      2996 |       4607 |       difflib
 import time:      3111 |       7717 |     typer.core
 import time:      3380 |      51896 |   typer.main
 import time:      1614 |      83834 | typer
-import time:      1449 |       1449 | brainchmark.cli_completion
-import time:       217 |        217 |     brainchmark.utils
+import time:      1449 |       1449 | mimose.cli_completion
+import time:       217 |        217 |     mimose.utils
 import time:      2361 |       2361 |       yaml.error
 import time:      1863 |       1863 |       yaml.tokens
 import time:      1624 |       1624 |       yaml.events
@@ -213,6 +213,6 @@ import time:      1765 |       6924 |       yaml.dumper
 import time:      1402 |       1402 |         yaml._yaml
 import time:      2186 |       3587 |       yaml.cyaml
 import time:      1785 |      49159 |     yaml
-import time:      2167 |      51543 |   brainchmark.utils.cli_overrides
-import time:      3944 |      55486 | brainchmark.enums
-import time:      2057 |       2057 | brainchmark.paths
+import time:      2167 |      51543 |   mimose.utils.cli_overrides
+import time:      3944 |      55486 | mimose.enums
+import time:      2057 |       2057 | mimose.paths

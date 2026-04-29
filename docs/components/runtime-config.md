@@ -4,9 +4,9 @@ This document explains how to extend optimizers, schedulers, and other runtime-c
 
 Relevant files:
 
-- `src/brainchmark/training/config.py`
-- `src/brainchmark/enums.py`
-- `src/brainchmark/cli.py`
+- `src/mimose/training/config.py`
+- `src/mimose/enums.py`
+- `src/mimose/cli.py`
 
 ## Mental Model
 

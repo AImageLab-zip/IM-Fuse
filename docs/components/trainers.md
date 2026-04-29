@@ -4,12 +4,12 @@ This document explains how to add or modify trainers in detail.
 
 Relevant files:
 
-- `src/brainchmark/training/trainers/abstract_trainer.py`
-- `src/brainchmark/training/trainers/base_trainer.py`
-- `src/brainchmark/training/trainers/imfuse.py`
-- `src/brainchmark/training/trainers/dcseg.py`
-- `src/brainchmark/training/trainers/__init__.py`
-- `src/brainchmark/cli.py`
+- `src/mimose/training/trainers/abstract_trainer.py`
+- `src/mimose/training/trainers/base_trainer.py`
+- `src/mimose/training/trainers/imfuse.py`
+- `src/mimose/training/trainers/dcseg.py`
+- `src/mimose/training/trainers/__init__.py`
+- `src/mimose/cli.py`
 
 ## Mental Model
 
@@ -40,7 +40,7 @@ These implement model-family-specific behavior:
 
 ## Add a New Trainer
 
-1. create `src/brainchmark/training/trainers/my_trainer.py`
+1. create `src/mimose/training/trainers/my_trainer.py`
 2. subclass `BaseTrainer`
 3. implement:
    - `train_epoch(self, epoch)`

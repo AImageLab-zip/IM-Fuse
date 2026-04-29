@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from brainchmark.losses.imfuse import IMFuseLoss, dice_loss, softmax_weighted_loss
+from mimose.losses.imfuse import IMFuseLoss, dice_loss, softmax_weighted_loss
 
 
 def _load_legacy_criterions():

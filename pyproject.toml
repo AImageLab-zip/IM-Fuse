@@ -49,7 +49,7 @@ dev = [
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-brainchmark = [
+mimose = [
   "data/dummy_brain.npz",
   "data/configs/*.yaml",
   "data/config_templates/*.yaml",
@@ -82,7 +82,5 @@ dev = [
 ]
 
 [project.scripts]
-mimose = "brainchmark.cli:app"
-mimose-gui = "brainchmark.gui:launch"
-brainchmark = "brainchmark.cli:app"
-brainchmark-gui = "brainchmark.gui:launch"
+mimose = "mimose.cli:app"
+mimose-gui = "mimose.gui:launch"

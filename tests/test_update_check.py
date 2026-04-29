@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from brainchmark import update_check
+from mimose import update_check
 
 
 def test_extract_version_from_pyproject_reads_project_version() -> None:

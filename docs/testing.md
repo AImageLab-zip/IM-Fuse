@@ -13,7 +13,7 @@ The active testing path currently uses:
 Run from YAML:
 
 ```bash
-mimose test --config src/brainchmark/data/configs/imfuse_23.yaml
+mimose test --config src/mimose/data/configs/imfuse_23.yaml
 ```
 
 Run from CLI:
@@ -118,9 +118,9 @@ The test command reads these fields from the combined config files:
 ## Example
 
 ```yaml
-data_dir: /work/grana_neuro/brainchmark/dcseg23-preprocessed
-checkpoint_path: /work/grana_neuro/brainchmark/runs/dcseg23/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/dcseg23/results.txt
+data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
+checkpoint_path: /work/grana_neuro/mimose/runs/dcseg23/checkpoints/model_last.pth
+output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg
 custom_model_kwargs:
   num_cls: 4
@@ -133,11 +133,11 @@ seed: 42
 Online-checkpoint example:
 
 ```yaml
-data_dir: /work/grana_neuro/brainchmark/dcseg23-preprocessed
-art_dir: /work/grana_neuro/brainchmark/runs/dcseg23
+data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
+art_dir: /work/grana_neuro/mimose/runs/dcseg23
 checkpoint_link: https://example.com/model_last.pth
 online: true
-output_path: /work/grana_neuro/brainchmark/runs/dcseg23/results.txt
+output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg
 dataset_type: brats23
 num_workers: 8

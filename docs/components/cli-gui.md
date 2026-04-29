@@ -4,9 +4,9 @@ This document explains how to extend the command-line and GUI surface.
 
 Relevant files:
 
-- `src/brainchmark/cli.py`
-- `src/brainchmark/gui.py`
-- `src/brainchmark/utils/cli_overrides.py`
+- `src/mimose/cli.py`
+- `src/mimose/gui.py`
+- `src/mimose/utils/cli_overrides.py`
 
 ## Mental Model
 

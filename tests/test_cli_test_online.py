@@ -4,9 +4,9 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from brainchmark import cli
-from brainchmark.models import config as model_config
-import brainchmark.testing as testing
+from mimose import cli
+from mimose.models import config as model_config
+import mimose.testing as testing
 
 
 def test_test_online_downloads_checkpoint_into_art_dir(
