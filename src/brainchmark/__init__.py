@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
-PACKAGE_NAME = "BrainchMark"
+PACKAGE_NAME = "MiMoSe"
 
 try:
     __version__ = version(PACKAGE_NAME)

@@ -1,8 +1,8 @@
 # Combined mmFormer reference config for BraTS 2023.
 # This mirrors legacy mmFormer defaults as closely as possible under the current
-# BrainchMark CLI/config API.
+# MiMoSe CLI/config API.
 #
-# Note: BrainchMark currently reuses the IMFuse-style trainer/loss/data pipeline
+# Note: MiMoSe currently reuses the IMFuse-style trainer/loss/data pipeline
 # for mmFormer because the legacy training loop and loss decomposition are the
 # same. The key legacy differences reflected here are model selection, optimizer,
 # scheduler, and default optimization hyperparameters.

@@ -1,8 +1,10 @@
 # Standard library
 import os
-from pathlib import Path
+import shutil
 import sys
 import time
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 # External dependencies
 import typer
@@ -22,11 +24,13 @@ from brainchmark.enums import (
     TrainerKind,
 )
 from brainchmark.paths import CONFIGS_DIR, SPLITS_DIR
+from brainchmark.update_check import maybe_notify_about_update
 from brainchmark.utils.cli_overrides import (
     load_yaml_config,
     merge_cli_overrides,
     resolve_split_path,
 )
+from pathlib import Path
 
 # Lazy-load heavy modules on first use
 _cli_workflows_cache = None
@@ -64,14 +68,15 @@ def _get_cli_setup():
 # Environment variables
 os.environ["WANDB_SILENT"] = "true"
 
-app = typer.Typer(help="BrainchMark CLI", rich_markup_mode="rich")
+app = typer.Typer(help="MiMoSe CLI", rich_markup_mode="rich")
 
 
 def _version_callback(value: bool) -> None:
     if not value:
         return
 
-    typer.echo(f"BrainchMark {__version__}")
+    maybe_notify_about_update()
+    typer.echo(f"MiMoSe {__version__}")
     raise typer.Exit()
 
 
@@ -105,25 +110,79 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
     return checkpoint_path
 
 
+def _online_checkpoint_cache_path(art_dir: Path, checkpoint_link: str) -> Path:
+    parsed = urlparse(checkpoint_link)
+    suffix = Path(parsed.path).suffix or ".pth"
+    return art_dir / "checkpoints" / f"online_checkpoint{suffix}"
+
+
+def _download_checkpoint(checkpoint_link: str, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(checkpoint_link) as response, destination.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+
+def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
+    online = bool(merged.get("online", False))
+    if not online:
+        checkpoint_value = merged.get("checkpoint_path")
+        if checkpoint_value is None:
+            raise typer.BadParameter(
+                "missing value; provide it in the CLI or in --config",
+                param_hint="--checkpoint-path",
+            )
+        return Path(checkpoint_value)
+
+    checkpoint_link = merged.get("checkpoint_link")
+    if checkpoint_link is None:
+        raise typer.BadParameter(
+            "missing value; provide it in the CLI or in --config",
+            param_hint="--checkpoint-link",
+        )
+
+    art_dir = merged.get("art_dir")
+    if art_dir is None:
+        raise typer.BadParameter(
+            "missing value; provide it in the CLI or in --config",
+            param_hint="--art-dir",
+        )
+
+    cached_checkpoint = _online_checkpoint_cache_path(Path(art_dir), str(checkpoint_link))
+    if cached_checkpoint.is_file():
+        typer.echo(f"Using cached checkpoint at {cached_checkpoint}")
+        return cached_checkpoint
+
+    typer.echo(f"Downloading checkpoint from {checkpoint_link} to {cached_checkpoint}")
+    try:
+        _download_checkpoint(str(checkpoint_link), cached_checkpoint)
+    except Exception as exc:  # pragma: no cover - exact network errors vary
+        raise typer.BadParameter(
+            f"failed to download checkpoint from {checkpoint_link}: {exc}",
+            param_hint="--checkpoint-link",
+        ) from exc
+    return cached_checkpoint
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
         False,
         "--version",
-        help="Show BrainchMark version and exit.",
+        help="Show MiMoSe version and exit.",
         callback=_version_callback,
         is_eager=True,
     ),
 ) -> None:
-    """BrainchMark command group."""
+    """MiMoSe command group."""
+    maybe_notify_about_update()
 
 
-@app.command()
+'''@app.command()
 def version() -> None:
-    """Show the installed BrainchMark version."""
-    typer.echo(f"BrainchMark {__version__}")
-
-
+    """Show the installed MiMoSe version."""
+    typer.echo(f"MiMoSe {__version__}")
+'''
+'''
 @app.command("self-destruct")
 def self_destruct(
     force: bool = typer.Option(False, "--force", help="Skip confirmation prompt"),
@@ -168,7 +227,7 @@ def self_destruct(
 —————————————————————————————
 """
     typer.echo(text)
-
+'''
 
 @app.command()
 def setup() -> None:
@@ -190,9 +249,9 @@ def setup() -> None:
 
     console.print(
         Panel(
-            "[bold white]Configure the packaged BrainchMark YAML files.[/bold white]\n"
+            "[bold white]Configure the packaged MiMoSe YAML files.[/bold white]\n"
             "Leave a BraTS dataset path empty if you do not want to configure that dataset yet.",
-            title="[bold green]BrainchMark Setup[/bold green]",
+            title="[bold green]MiMoSe Setup[/bold green]",
             border_style="green",
             expand=False,
         )
@@ -209,7 +268,7 @@ def setup() -> None:
     if brats23_dir is None and brats18_dir is None:
         raise typer.BadParameter(
             "at least one dataset directory must be provided",
-            param_hint="brainchmark setup",
+            param_hint="mimose setup",
         )
 
     preprocessed_root_dir = prompt_required_directory(
@@ -242,7 +301,7 @@ def setup() -> None:
         )
     )
 
-    if not Confirm.ask("Copy templates and rewrite local BrainchMark configs?", default=True):
+    if not Confirm.ask("Copy templates and rewrite local MiMoSe configs?", default=True):
         raise typer.Abort()
 
     updated_files = copy_config_templates()
@@ -279,7 +338,7 @@ def setup() -> None:
 @app.command(
     help=(
         "Preprocess a BraTS-style dataset into the compressed `.npz` format "
-        "used by BrainchMark training and testing."
+        "used by MiMoSe training and testing."
     ),
     short_help="Preprocess a BraTS-style dataset.",
 )
@@ -397,7 +456,7 @@ def preprocess(
         rich_help_panel="Normalization",
     ),
 ) -> None:
-    """Preprocess a BraTS-style dataset into BrainchMark `.npz` artifacts."""
+    """Preprocess a BraTS-style dataset into MiMoSe `.npz` artifacts."""
     console = _get_cli_display().CONSOLE
     workflows = _get_cli_workflows()
 
@@ -842,8 +901,8 @@ def train(
 
     trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
 
-    with console.status("[bold cyan]Starting BrainchMark[/bold cyan]", spinner="dots") as status:
-        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]reading configuration[/dim]")
+    with console.status("[bold cyan]Starting MiMoSe[/bold cyan]", spinner="dots") as status:
+        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]reading configuration[/dim]")
         merged = workflows.build_train_merged_config(
             config=config,
             data_dir=data_dir,
@@ -895,8 +954,8 @@ def train(
         )
         workflows.maybe_relaunch_distributed(merged)
 
-        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]building training objects[/dim]")
-        status.update("[bold cyan]Starting BrainchMark[/bold cyan]  [dim]initializing trainer[/dim]")
+        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]building training objects[/dim]")
+        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]initializing trainer[/dim]")
         workflows.run_train_from_merged(merged)
 
 
@@ -929,6 +988,14 @@ def test(
         help="Text file where mask-sweep test results will be written.",
         rich_help_panel="Input/Output",
     ),
+    art_dir: Path | None = typer.Option(
+        None,
+        "--art-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Artifact directory used to cache online checkpoints.",
+        rich_help_panel="Input/Output",
+    ),
     checkpoint_path: Path | None = typer.Option(
         None,
         "--checkpoint-path",
@@ -937,6 +1004,18 @@ def test(
         exists=True,
         readable=True,
         help="Checkpoint path to evaluate.",
+        rich_help_panel="Checkpointing",
+    ),
+    checkpoint_link: str | None = typer.Option(
+        None,
+        "--checkpoint-link",
+        help="Checkpoint URL to download and use when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    online: bool = typer.Option(
+        False,
+        "--online",
+        help="Download the checkpoint from --checkpoint-link into art_dir/checkpoints and reuse it if already cached.",
         rich_help_panel="Checkpointing",
     ),
     model: ModelKind | None = typer.Option(
@@ -993,7 +1072,10 @@ def test(
         yaml_config,
         data_dir=data_dir,
         output_path=output_path,
+        art_dir=art_dir,
         checkpoint_path=checkpoint_path,
+        checkpoint_link=checkpoint_link,
+        online=online,
         model=model,
         custom_model_kwargs=parse_kv_list(custom_model_kwargs),
         split_file=split_file,
@@ -1007,9 +1089,10 @@ def test(
         merged,
         "data_dir",
         "output_path",
-        "checkpoint_path",
         "dataset_type",
     )
+    resolved_checkpoint_path = _resolve_test_checkpoint(merged)
+    merged["checkpoint_path"] = str(resolved_checkpoint_path)
 
     model_kind = TestingModelKind(merged.get("model", TestingModelKind.IMFUSE))
     model_config = build_model_config(
@@ -1019,7 +1102,7 @@ def test(
     output_file = run_testing(
         data_dir=Path(merged["data_dir"]),
         output_path=Path(merged["output_path"]),
-        checkpoint_path=Path(merged["checkpoint_path"]),
+        checkpoint_path=resolved_checkpoint_path,
         dataset_type=DatasetType(merged["dataset_type"]),
         model_class=model_config.model_class,
         model_kwargs=model_config.kwargs,
@@ -1085,14 +1168,14 @@ def flops(
     parsed_model_kwargs = parse_kv_list(custom_model_kwargs)
 
     with console.status(
-        "[bold cyan]Profiling BrainchMark FLOPs[/bold cyan]",
+        "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]",
         spinner="dots",
     ) as status:
         if all_configs:
             reports = []
             for config_path in resolve_2023_config_paths():
                 status.update(
-                    "[bold cyan]Profiling BrainchMark FLOPs[/bold cyan]  "
+                    "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]  "
                     f"[dim]{config_path.name}[/dim]"
                 )
                 reports.append(

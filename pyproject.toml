@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "BrainchMark"
+name = "MiMoSe"
 version = "0.0.2"
 description = "This repository provides a unified benchmark for brain tumor segmentation under missing modality conditions, built on the BraTS 2023 dataset. It offers a standardized framework to fairly reproduce, evaluate, and compare state-of-the-art methods designed for incomplete multimodal medical imaging."
 readme = "README.md"
@@ -18,6 +18,7 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "matplotlib>=3.10.9",
     "medpy>=0.5.2",
     "ninja>=1.13.0",
     "numpy>=2.4.3",
@@ -28,6 +29,7 @@ dependencies = [
     "ptflops>=0.7.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
+    "thop>=0.1.1.post2209072238",
     "torch==2.9.1",
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
@@ -80,5 +82,7 @@ dev = [
 ]
 
 [project.scripts]
+mimose = "brainchmark.cli:app"
+mimose-gui = "brainchmark.gui:launch"
 brainchmark = "brainchmark.cli:app"
 brainchmark-gui = "brainchmark.gui:launch"

@@ -1,5 +1,5 @@
 # Combined RFNet reference config for BraTS 2023.
-# This mirrors legacy RFNet defaults under the current BrainchMark CLI/config API.
+# This mirrors legacy RFNet defaults under the current MiMoSe CLI/config API.
 
 # preprocess
 input_dir: /path/to/brats23

@@ -1,8 +1,8 @@
-# Extending BrainchMark
+# Extending MiMoSe
 
 This document gives a high-level map of how to extend the active `brainchmark` package under `src/brainchmark`.
 
-In practice, the easiest way to extend BrainchMark is usually to start from an `imfuse` config and add a custom model module that follows the IMFuse-style trainer contract. This is the lowest-friction path because the repository already has a stable `IMFuseTrainer`, `IMFuseLoss`, dataset pipeline, masking logic, and testing flow.
+In practice, the easiest way to extend MiMoSe is usually to start from an `imfuse` config and add a custom model module that follows the IMFuse-style trainer contract. This is the lowest-friction path because the repository already has a stable `IMFuseTrainer`, `IMFuseLoss`, dataset pipeline, masking logic, and testing flow.
 
 Concretely, you can add a new file under [src/brainchmark/models/](../src/brainchmark/models), define a public class that inherits from [AbstractModel](../src/brainchmark/models/abstract_model.py), implement `forward(images, mask)` so that training returns `(fuse_pred, sep_preds, prm_preds)` as expected by [IMFuseTrainer](../src/brainchmark/training/trainers/imfuse.py), and implement `predict(images, mask)` for evaluation. You do not have to manually register the module in a hardcoded registry: [src/brainchmark/models/config.py](../src/brainchmark/models/config.py) scans `src/brainchmark/models/*.py` dynamically and resolves public callables by normalized name, so once the file exists you can usually select it directly from YAML or CLI with `model: your_model_name`.
 
@@ -80,7 +80,7 @@ These are the main places you will touch:
 - [src/brainchmark/gui.py](../src/brainchmark/gui.py): GUI surface generated from the CLI
 - [src/brainchmark/enums.py](../src/brainchmark/enums.py): shared enum choices exposed across config and CLI
 - [src/brainchmark/utils/cli_overrides.py](../src/brainchmark/utils/cli_overrides.py): CLI-over-YAML merge behavior
-- [src/brainchmark/data/config_templates/](../src/brainchmark/data/config_templates): shipped config templates copied by `brainchmark setup`
+- [src/brainchmark/data/config_templates/](../src/brainchmark/data/config_templates): shipped config templates copied by `mimose setup`
 - [src/brainchmark/data/configs/](../src/brainchmark/data/configs): local reference configs used by the package
 - [src/brainchmark/data/splits/split.json](../src/brainchmark/data/splits/split.json): packaged dataset split definition
 
@@ -136,7 +136,7 @@ Typical file route:
 6. add enum support in `enums.py` if it should be a first-class built-in choice
 7. make sure the chosen trainer understands the model output structure
 
-The `predict(...)` method is the inference entrypoint used by [brainchmark test](../src/brainchmark/testing/pipeline.py). It should take a full input volume and a modality mask, run the model in test-time mode, and return segmentation logits or probabilities with shape `[B, C, H, W, D]`. In other words, `forward(...)` is the training contract, while `predict(...)` is the evaluation contract.
+The `predict(...)` method is the inference entrypoint used by [mimose test](../src/brainchmark/testing/pipeline.py). It should take a full input volume and a modality mask, run the model in test-time mode, and return segmentation logits or probabilities with shape `[B, C, H, W, D]`. In other words, `forward(...)` is the training contract, while `predict(...)` is the evaluation contract.
 
 Detailed guide: [docs/components/models.md](components/models.md)
 
@@ -254,7 +254,7 @@ This is where you extend:
 - result formatting
 - model-specific inference integration
 
-The critical contract is that test-time models must support `predict(images, mask)`. If a model only works through `forward(...)`, `brainchmark test` will not be enough on its own.
+The critical contract is that test-time models must support `predict(images, mask)`. If a model only works through `forward(...)`, `mimose test` will not be enough on its own.
 
 Detailed guide: [docs/components/testing.md](components/testing.md)
 

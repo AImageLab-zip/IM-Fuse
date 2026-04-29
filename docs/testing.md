@@ -1,6 +1,6 @@
 # Testing
 
-`brainchmark test` evaluates a checkpoint by sweeping the standard 15 missing-modality masks and writing a text report plus an Excel summary.
+`mimose test` evaluates a checkpoint by sweeping the standard 15 missing-modality masks and writing a text report plus an Excel summary.
 
 The active testing path currently uses:
 
@@ -13,15 +13,28 @@ The active testing path currently uses:
 Run from YAML:
 
 ```bash
-brainchmark test --config src/brainchmark/data/configs/imfuse_23.yaml
+mimose test --config src/brainchmark/data/configs/imfuse_23.yaml
 ```
 
 Run from CLI:
 
 ```bash
-brainchmark test \
+mimose test \
   --data-dir /path/to/preprocessed \
   --checkpoint-path /path/to/checkpoint.pth \
+  --output-path /path/to/results.txt \
+  --dataset-type brats23 \
+  --model dcseg
+```
+
+Run from CLI with an online checkpoint cache:
+
+```bash
+mimose test \
+  --data-dir /path/to/preprocessed \
+  --art-dir /path/to/artifacts/run1 \
+  --checkpoint-link https://example.com/model_last.pth \
+  --online \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
   --model dcseg
@@ -33,12 +46,16 @@ The test command requires:
 
 - `data_dir`
 - `output_path`
-- `checkpoint_path`
 - `dataset_type`
+
+Use one of these checkpoint inputs:
+
+- `checkpoint_path` for a local checkpoint
+- `checkpoint_link` together with `online=true` and `art_dir` for a downloaded cached checkpoint
 
 `model` is optional in the CLI because it defaults to `imfuse`, but for a real run you should set it explicitly unless the config already does.
 
-For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For the overall MiMoSe YAML format, see [docs/yaml-config.md](yaml-config.md).
 For a very detailed extension guide for the testing path, see [docs/components/testing.md](components/testing.md).
 
 Active tested model choices currently include:
@@ -79,12 +96,17 @@ The current metrics reported are:
 
 If a checkpoint is missing, the command raises a clean CLI error.
 
+If `online` is enabled, MiMoSe downloads the checkpoint from `checkpoint_link` into `art_dir/checkpoints/online_checkpoint.<ext>` and reuses that cached file on later runs if it is already present.
+
 ## YAML Fields
 
 The test command reads these fields from the combined config files:
 
 - `data_dir`
 - `checkpoint_path`
+- `art_dir`
+- `checkpoint_link`
+- `online`
 - `output_path`
 - `model`
 - `custom_model_kwargs`
@@ -103,6 +125,20 @@ model: dcseg
 custom_model_kwargs:
   num_cls: 4
   fusion_type: RFM
+dataset_type: brats23
+num_workers: 8
+seed: 42
+```
+
+Online-checkpoint example:
+
+```yaml
+data_dir: /work/grana_neuro/brainchmark/dcseg23-preprocessed
+art_dir: /work/grana_neuro/brainchmark/runs/dcseg23
+checkpoint_link: https://example.com/model_last.pth
+online: true
+output_path: /work/grana_neuro/brainchmark/runs/dcseg23/results.txt
+model: dcseg
 dataset_type: brats23
 num_workers: 8
 seed: 42

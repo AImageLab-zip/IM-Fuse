@@ -326,7 +326,8 @@ class TF_3D(nn.Module):
 
         n_modality = len(all_content)
         token_content = self.project(all_content)
-        position_enc = PositionalEncoding(self.d_model, token_content.size(1))
+        pos_size = token_content.size(1) if token_content is not None else self.patch_dim ** 3
+        position_enc = PositionalEncoding(self.d_model, pos_size)
         
         # print(token_content.size())
         out = self.fusion_block(self.dropout(position_enc(token_content)))

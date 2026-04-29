@@ -1,6 +1,6 @@
 # Combined IMFuse reference config for BraTS 2023.
 # This mirrors legacy IMFuse defaults as closely as possible under the current
-# BrainchMark CLI/config API.
+# MiMoSe CLI/config API.
 #
 # Note: the current CLI still expects command-specific flat YAML files, so this
 # combined file is a reference/source-of-truth file rather than a single file

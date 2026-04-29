@@ -39,7 +39,7 @@ def replace_yaml_line(
     if count != 1:
         raise typer.BadParameter(
             f"Could not update '{key}' in config content",
-            param_hint="brainchmark setup",
+            param_hint="mimose setup",
         )
     return updated
 
@@ -88,7 +88,7 @@ def copy_config_templates() -> list[Path]:
     if not template_paths:
         raise typer.BadParameter(
             f"No config templates found under {CONFIG_TEMPLATES_DIR}",
-            param_hint="brainchmark setup",
+            param_hint="mimose setup",
         )
 
     copied_paths: list[Path] = []

@@ -1,5 +1,5 @@
 # Combined RFNet reference config for BraTS 2018.
-# This mirrors legacy RFNet defaults under the current BrainchMark CLI/config API.
+# This mirrors legacy RFNet defaults under the current MiMoSe CLI/config API.
 
 # preprocess
 input_dir: /work/grana_neuro/MICCAI_BraTS_2018_Data_Training

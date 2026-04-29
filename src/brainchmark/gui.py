@@ -18,7 +18,7 @@ from brainchmark.preprocessing.config import ClampMode, CropMode, NormMode
 
 
 
-APP_TITLE = "BrainchMark GUI"
+APP_TITLE = "MiMoSe GUI"
 
 
 def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
@@ -579,9 +579,9 @@ class AutoCommandForm(ttk.Frame):
             raw_values = {name: field.get_value() for name, field in self.fields.items()}
             kwargs = self._convert_types(sig, raw_values)
             self.command_fn(**kwargs)
-            messagebox.showinfo("BrainchMark", f"{self.command_name.replace('-', ' ').title()} completed.")
+            messagebox.showinfo("MiMoSe", f"{self.command_name.replace('-', ' ').title()} completed.")
         except Exception as exc:
-            messagebox.showerror("BrainchMark", str(exc))
+            messagebox.showerror("MiMoSe", str(exc))
 
 
 class CommandGrid(ttk.Frame):

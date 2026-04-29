@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import torch
 import torch.nn as nn
+from torch.nn.parameter import UninitializedParameter
 from rich.table import Table
 
 
@@ -76,6 +77,21 @@ def _import_root(path: Path):
             pass
 
 
+@contextmanager
+def _import_roots(paths: list[Path]):
+    inserted = [str(path) for path in paths]
+    for path in reversed(inserted):
+        sys.path.insert(0, path)
+    try:
+        yield
+    finally:
+        for path in inserted:
+            try:
+                sys.path.remove(path)
+            except ValueError:
+                pass
+
+
 def _extract_primary_tensor(output: Any) -> torch.Tensor:
     if isinstance(output, torch.Tensor):
         return output
@@ -98,6 +114,14 @@ def _mask_from_bool(batch_size: int, values: tuple[bool, bool, bool, bool], devi
     return torch.tensor([values] * batch_size, dtype=torch.bool, device=device)
 
 
+def _modality_bitmask(values: torch.Tensor) -> int:
+    encoded = 0
+    for index, value in enumerate(values.tolist()):
+        if bool(value):
+            encoded |= 1 << index
+    return encoded
+
+
 class _LegacyWrapper(nn.Module):
     def __init__(self, model: nn.Module, adapter_kind: str) -> None:
         super().__init__()
@@ -116,9 +140,12 @@ class _LegacyWrapper(nn.Module):
         elif self.adapter_kind == "split_mask":
             result = self.model(flair, t1ce, t1, t2, mask[0])
         elif self.adapter_kind == "list_mask":
-            # InOutFusion and SFusion use an encoded missing-modality descriptor.
-            modality_descriptor = tuple(int(v) for v in mask[0].tolist())
+            # InOutFusion expects a scalar bitmask in the same format as its dataloader.
+            modality_descriptor = _modality_bitmask(mask[0])
             result = self.model([flair, t1ce, t1, t2], modality_descriptor)
+        elif self.adapter_kind == "list_mask_tensor":
+            # SFusion expects a boolean mask tensor shaped like [batch, 4].
+            result = self.model(images, mask)
         elif self.adapter_kind == "uhved":
             images_dict = {"Flair": flair, "T1c": t1ce, "T1": t1, "T2": t2}
             result = self.model(images_dict, mask, is_inference=True)
@@ -140,37 +167,300 @@ def _resolve_device() -> torch.device:
     return torch.device("cuda")
 
 
+def _first_tensor(value: Any) -> torch.Tensor | None:
+    if isinstance(value, torch.Tensor):
+        return value
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            tensor = _first_tensor(item)
+            if tensor is not None:
+                return tensor
+        return None
+    if isinstance(value, dict):
+        for item in value.values():
+            tensor = _first_tensor(item)
+            if tensor is not None:
+                return tensor
+        return None
+    return None
+
+
+def _extract_tensor_shape(value: Any) -> tuple[int, ...] | None:
+    tensor = _first_tensor(value)
+    if tensor is None:
+        return None
+    return tuple(tensor.shape)
+
+
+def _multihead_attention_macs(module: nn.MultiheadAttention, query: torch.Tensor) -> float:
+    if query.ndim != 3:
+        return 0.0
+    if module.batch_first:
+        batch_size, target_len, embed_dim = query.shape
+    else:
+        target_len, batch_size, embed_dim = query.shape
+    source_len = target_len
+    in_proj_macs = 3.0 * batch_size * target_len * embed_dim * embed_dim
+    attn_macs = 2.0 * batch_size * target_len * source_len * embed_dim
+    return in_proj_macs + attn_macs
+
+
+def _local_attention_macs(module: nn.Module, q: torch.Tensor) -> float:
+    if q.ndim != 4:
+        return 0.0
+    batch_size, heads, seq_len, head_dim = q.shape
+    window_size = int(getattr(module, "window_size", seq_len))
+    if window_size <= 0 or seq_len <= 0:
+        return 0.0
+    windows = max(seq_len // window_size, 1)
+    look_backward = int(getattr(module, "look_backward", 1))
+    look_forward = int(getattr(module, "look_forward", 0))
+    context_len = (look_backward + look_forward + 1) * window_size
+    return 2.0 * batch_size * heads * windows * window_size * context_len * head_dim
+
+
+def _afno1d_macs(module: nn.Module, x: torch.Tensor) -> float:
+    if x.ndim != 3:
+        return 0.0
+    batch_size, seq_len, hidden_size = x.shape
+    num_blocks = int(getattr(module, "num_blocks", 1))
+    hidden_size_factor = int(getattr(module, "hidden_size_factor", 1))
+    if num_blocks <= 0 or hidden_size <= 0 or seq_len <= 0:
+        return 0.0
+    block_size = hidden_size // num_blocks
+    freq_len = (seq_len // 2) + 1
+    fft_macs = 10.0 * batch_size * hidden_size * seq_len * max(seq_len.bit_length() - 1, 1)
+    einsum1 = 4.0 * batch_size * num_blocks * freq_len * block_size * (block_size * hidden_size_factor)
+    einsum2 = 4.0 * batch_size * num_blocks * freq_len * (block_size * hidden_size_factor) * block_size
+    complex_mul = 3.0 * batch_size * hidden_size * freq_len
+    return fft_macs + einsum1 + einsum2 + complex_mul
+
+
+def _attention_base_macs(module: nn.Module, x: torch.Tensor) -> float:
+    if x.ndim != 5:
+        return 0.0
+    batch_size, channels, depth, height, width = x.shape
+    num_heads = int(getattr(module, "num_heads", 1))
+    if num_heads <= 0 or channels <= 0:
+        return 0.0
+    tokens = depth * height * width
+    channels_per_head = channels // num_heads
+    return 2.0 * batch_size * num_heads * channels_per_head * channels_per_head * tokens
+
+
+def _estimate_macs_from_executed_layers(
+    wrapper: nn.Module,
+    images: torch.Tensor,
+    mask: torch.Tensor,
+) -> tuple[float, str | None]:
+    total_macs = 0.0
+    hook_handles = []
+
+    def conv_flops_counter_hook(module: nn.Module, input: tuple[Any, ...], output: Any) -> None:
+        nonlocal total_macs
+        output_tensor = _first_tensor(output)
+        if output_tensor is None:
+            return
+
+        if isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+            kernel_macs_per_output = module.weight.numel() / max(module.out_channels, 1)
+            total_macs += float(output_tensor.numel()) * kernel_macs_per_output
+            return
+
+        if isinstance(module, nn.Linear):
+            total_macs += float(output_tensor.numel()) * float(module.in_features)
+            return
+
+        if isinstance(module, nn.MultiheadAttention):
+            query = _first_tensor(input[0]) if input else None
+            if query is not None:
+                total_macs += _multihead_attention_macs(module, query)
+            return
+
+        name = module.__class__.__name__
+        if name == "LocalAttention":
+            query = _first_tensor(input[0]) if input else None
+            if query is not None:
+                total_macs += _local_attention_macs(module, query)
+            return
+
+        if name == "AFNO1D_channelfirst":
+            x = _first_tensor(input[0]) if input else None
+            if x is not None:
+                total_macs += _afno1d_macs(module, x)
+            return
+
+        if name == "AttentionBase":
+            x = _first_tensor(input[0]) if input else None
+            if x is not None:
+                total_macs += _attention_base_macs(module, x)
+
+    try:
+        for m in wrapper.modules():
+            if isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear, nn.MultiheadAttention)):
+                hook_handles.append(m.register_forward_hook(conv_flops_counter_hook))
+            elif m.__class__.__name__ in {"LocalAttention", "AFNO1D_channelfirst", "AttentionBase"}:
+                hook_handles.append(m.register_forward_hook(conv_flops_counter_hook))
+
+        with torch.no_grad():
+            wrapper(images, mask)
+        return float(total_macs), None
+    except Exception as exc:
+        if total_macs > 0:
+            return float(total_macs), f"analytical fallback was partial: {type(exc).__name__}"
+        return 0.0, f"analytical fallback failed: {type(exc).__name__}"
+    finally:
+        for handle in hook_handles:
+            try:
+                handle.remove()
+            except Exception:
+                pass
+
+
+def _estimate_macs_with_flopcount(wrapper: nn.Module, images: torch.Tensor, mask: torch.Tensor) -> float:
+    try:
+        from flopcount import get_flops
+        with torch.no_grad():
+            flops = get_flops(wrapper, (images, mask))
+        if flops is not None and flops > 0:
+            return float(flops) / 2.0
+    except Exception:
+        pass
+    return 0.0
+
+
 def _measure_macs(
     model: nn.Module,
     adapter_kind: str,
     images: torch.Tensor,
     mask: torch.Tensor,
-) -> float:
+) -> tuple[float, str]:
+    wrapper = _LegacyWrapper(model, adapter_kind=adapter_kind).eval()
+
+    failures: list[str] = []
+
     try:
         from ptflops import get_model_complexity_info
     except ImportError as exc:
-        raise RuntimeError("ptflops is required to run legacy/flops") from exc
+        failures.append(f"ptflops import failed: {exc}")
+    else:
+        for backend in ("aten", "pytorch"):
+            try:
+                with torch.no_grad():
+                    # Create a wrapper that stores mask in closure and accepts just images
+                    class SingleArgWrapper(nn.Module):
+                        def __init__(self, wrapped_model: nn.Module, mask_tensor: torch.Tensor) -> None:
+                            super().__init__()
+                            self.wrapped_model = wrapped_model
+                            self.mask_tensor = mask_tensor
+                        
+                        def forward(self, img: torch.Tensor) -> torch.Tensor:
+                            # Ensure mask has same batch size as images
+                            mask_batch = self.mask_tensor
+                            if mask_batch.shape[0] != img.shape[0]:
+                                mask_batch = self.mask_tensor.repeat(img.shape[0], 1)
+                            return self.wrapped_model(img, mask_batch)
+                    
+                    single_arg_wrapper = SingleArgWrapper(wrapper, mask)
+                    macs, _ = get_model_complexity_info(
+                        single_arg_wrapper,
+                        tuple(images.shape[1:]),
+                        input_constructor=lambda shape: images,
+                        as_strings=False,
+                        print_per_layer_stat=False,
+                        verbose=False,
+                        backend=backend,
+                    )
+                if macs is None or macs == 0:
+                    failures.append(f"ptflops/{backend}: no MAC count returned")
+                    continue
+                return float(macs), ""
+            except Exception as exc:
+                failures.append(f"ptflops/{backend}: {type(exc).__name__}")
 
-    wrapper = _LegacyWrapper(model, adapter_kind=adapter_kind).eval()
+    try:
+        from thop import profile
+    except ImportError as exc:
+        failures.append(f"thop import failed: {exc}")
+    else:
+        try:
+            with torch.no_grad():
+                macs, _ = profile(wrapper, inputs=(images, mask), verbose=False)
+            if macs is None or macs == 0:
+                failures.append("thop: no MAC count returned")
+            else:
+                return float(macs), "estimated with thop hooks"
+        except Exception as exc:
+            failures.append(f"thop: {type(exc).__name__}")
 
-    def input_constructor(_: tuple[int, ...]) -> dict[str, torch.Tensor]:
-        return {"images": images, "mask": mask}
+    try:
+        from torch.profiler import ProfilerActivity, profile as torch_profile
+    except ImportError as exc:
+        failures.append(f"torch.profiler import failed: {exc}")
+    else:
+        try:
+            activities = [ProfilerActivity.CPU]
+            if images.is_cuda:
+                activities.append(ProfilerActivity.CUDA)
 
-    with torch.no_grad():
-        macs, _ = get_model_complexity_info(
-            wrapper,
-            tuple(images.shape[1:]),
-            input_constructor=input_constructor,
-            as_strings=False,
-            print_per_layer_stat=False,
-            verbose=False,
-            backend="aten",
+            with torch_profile(
+                activities=activities,
+                record_shapes=False,
+                profile_memory=False,
+                with_flops=True,
+            ) as prof:
+                with torch.no_grad():
+                    wrapper(images, mask)
+
+            total_flops = sum(getattr(event, "flops", 0) or 0 for event in prof.key_averages())
+            if total_flops > 0:
+                return float(total_flops) / 2.0, "estimated with torch.profiler operator FLOPs"
+            failures.append("torch.profiler: no FLOPs recorded")
+        except Exception as exc:
+            failures.append(f"torch.profiler: {type(exc).__name__}")
+
+    flopcount_macs = _estimate_macs_with_flopcount(wrapper, images, mask)
+    if flopcount_macs > 0:
+        return flopcount_macs, "estimated with flopcount"
+
+    estimated_macs, analytical_note = _estimate_macs_from_executed_layers(wrapper, images, mask)
+    if estimated_macs > 0:
+        return estimated_macs, _join_notes(
+            "estimated from executed layers and analytical attention formulas",
+            analytical_note or "",
         )
-    return float(macs)
+    if analytical_note is not None:
+        failures.append(analytical_note)
+
+    raise RuntimeError(
+        "no supported profiler could produce a MAC count for this model. "
+        + "; ".join(failures)
+    )
+
 
 
 def _count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+def _has_uninitialized_parameters(model: nn.Module) -> bool:
+    return any(isinstance(parameter, UninitializedParameter) for parameter in model.parameters())
+
+
+def _initialize_lazy_parameters(
+    model: nn.Module,
+    adapter_kind: str,
+    batch_size: int,
+    spatial_shape: tuple[int, int, int],
+    device: torch.device,
+) -> None:
+    if not _has_uninitialized_parameters(model):
+        return
+    wrapper = _LegacyWrapper(model, adapter_kind=adapter_kind).eval()
+    images = _build_images(batch_size, spatial_shape, device)
+    mask = _mask_from_bool(batch_size, (True, True, True, True), device)
+    with torch.no_grad():
+        wrapper(images, mask)
 
 
 def _build_images(
@@ -257,10 +547,21 @@ def report_to_dict(report: FlopsReport) -> dict[str, Any]:
     }
 
 
+def _join_notes(*notes: str) -> str:
+    return "; ".join(note for note in notes if note)
+
+
 def _module_attr(module_name: str, attr_name: str, root: Path) -> Any:
     with _import_root(root):
         module = importlib.import_module(module_name)
         return getattr(module, attr_name)
+
+
+def _construct_attr(module_name: str, attr_name: str, root: Path, **kwargs: Any) -> Any:
+    with _import_root(root):
+        module = importlib.import_module(module_name)
+        model_class = getattr(module, attr_name)
+        return model_class(**kwargs)
 
 
 def _build_d2net_model() -> nn.Module:
@@ -296,8 +597,10 @@ def _build_d2net_model() -> nn.Module:
 
 
 def _build_lckd_model() -> nn.Module:
-    model_class = _module_attr("DualNet", "DualNet", LEGACY_ROOT / "LCKD")
-    return model_class(
+    return _construct_attr(
+        "DualNet",
+        "DualNet",
+        LEGACY_ROOT / "LCKD",
         norm_cfg="IN",
         activation_cfg="LeakyReLU",
         weight_std=True,
@@ -308,13 +611,16 @@ def _build_lckd_model() -> nn.Module:
 
 
 def _build_shaspec_model() -> nn.Module:
-    model_class = _module_attr("DualNet_SS", "DualNet_SS", LEGACY_ROOT / "ShaSpec")
     args = SimpleNamespace(
         num_classes=3,
         weight_std=True,
+        input_size="80,160,160",
         mode="0,1,2,3",
     )
-    return model_class(
+    return _construct_attr(
+        "DualNet_SS",
+        "DualNet_SS",
+        LEGACY_ROOT / "ShaSpec",
         args=args,
         norm_cfg="IN",
         activation_cfg="LeakyReLU",
@@ -364,12 +670,32 @@ def _build_rehydil_model() -> nn.Module:
     return model_class(batch_size=31)
 
 
+def _build_srmnet_model() -> nn.Module:
+    root = LEGACY_ROOT / "SRMNet"
+    dcn_root = root / "dcn"
+    d3d_build = root / "dcn" / "build"
+    compiled_d3d = sorted(d3d_build.rglob("D3D*.so"))
+    try:
+        with _import_roots([root, dcn_root]):
+            module = importlib.import_module("model.net")
+            model_class = getattr(module, "Model")
+            return model_class(num_cls=4)
+    except ModuleNotFoundError as exc:
+        if exc.name == "D3D" and compiled_d3d:
+            available = ", ".join(path.name for path in compiled_d3d)
+            raise RuntimeError(
+                "SRMNet requires the local D3D extension, but Python could not import it from "
+                f"{dcn_root}. Found builds: {available}. Ensure the Python 3.12 build exists in "
+                "legacy/SRMNet/dcn and that the extension dependencies are loadable."
+            ) from exc
+        raise
+
+
 def _simple_builder(root_rel: str, module_name: str, attr_name: str, **kwargs: Any) -> Callable[[], nn.Module]:
     root = LEGACY_ROOT / root_rel
 
     def build() -> nn.Module:
-        model_class = _module_attr(module_name, attr_name, root)
-        return model_class(**kwargs)
+        return _construct_attr(module_name, attr_name, root, **kwargs)
 
     return build
 
@@ -400,8 +726,8 @@ def _registry() -> dict[str, MethodSpec]:
         "RFNet": MethodSpec("RFNet", LEGACY_ROOT / "RFNet", "legacy/RFNet/test.py", "models.Model", _simple_builder("RFNet", "models", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
         "ReHyDIL": MethodSpec("ReHyDIL", LEGACY_ROOT / "ReHyDIL", "legacy/ReHyDIL/test.py", "test_utils.CPH_3d", _build_rehydil_model, "images_only", (224, 224, 155), (224, 224, 155), FullVolumeStrategy("direct")),
         "RobustSeg": MethodSpec("RobustSeg", LEGACY_ROOT / "RobustSeg", "legacy/RobustSeg/test_robustseg.py", "RobustSeg.RobustSeg", _simple_builder("RobustSeg", "RobustSeg", "RobustSeg", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
-        "SFusion": MethodSpec("SFusion", LEGACY_ROOT / "SFusion", "legacy/SFusion/test_sfusion.py", "SFusion.TF_RMBTS", _simple_builder("SFusion", "SFusion", "TF_RMBTS", in_channels=1, out_channels=4, levels=4, feature_maps=16), "list_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "SRMNet": MethodSpec("SRMNet", LEGACY_ROOT / "SRMNet", "legacy/SRMNet/test.py", "model.net.Model", _simple_builder("SRMNet", "model.net", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "SFusion": MethodSpec("SFusion", LEGACY_ROOT / "SFusion", "legacy/SFusion/test_sfusion.py", "SFusion.TF_RMBTS", _simple_builder("SFusion", "SFusion", "TF_RMBTS", in_channels=1, out_channels=4, levels=4, feature_maps=16), "list_mask_tensor", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "SRMNet": MethodSpec("SRMNet", LEGACY_ROOT / "SRMNet", "legacy/SRMNet/test.py", "model.net.Model", _build_srmnet_model, "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "ShaSpec": MethodSpec("ShaSpec", LEGACY_ROOT / "ShaSpec", "legacy/ShaSpec/eval.py", "DualNet_SS.DualNet_SS", _build_shaspec_model, "images_mode", (80, 160, 160), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 160, 160), overlap=1.0 / 3.0)),
         "UHVED": MethodSpec("UHVED", LEGACY_ROOT / "UHVED", "legacy/UHVED/test_uhved.py", "UHVED.U_HVED", _simple_builder("UHVED", "UHVED", "U_HVED", num_classes=4), "uhved", (112, 112, 112), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (112, 112, 112), 0.5)),
         "UNET-MFI": MethodSpec("UNET-MFI", LEGACY_ROOT / "UNET-MFI", "legacy/UNET-MFI/test.py", "Model.no_share_unet", _simple_builder("UNET-MFI", "Model", "no_share_unet", in_channel=1, out_channel=3, diff=True, deepSupvision=True), "split_mask", (120, 120, 120), (240, 240, 160), FullVolumeStrategy("patched", (120, 120, 120), stride=(40, 40, 40))),
@@ -434,9 +760,18 @@ def run_flops_for_method(
     spec = get_method_spec(method)
     model_target = spec.model_target
     source_entrypoint = spec.source_entrypoint
+    patch_shape = shape or spec.forward_shape
+    volume_shape = full_volume_shape or spec.full_volume_shape
 
     try:
         model = spec.builder().to(device).eval()
+        _initialize_lazy_parameters(
+            model,
+            spec.adapter_kind,
+            batch_size,
+            patch_shape,
+            device,
+        )
         params = _count_parameters(model)
     except Exception as exc:
         failed = FlopsMeasurement(
@@ -453,8 +788,6 @@ def run_flops_for_method(
         )
         return FlopsReport(spec.name, source_entrypoint, model_target, (failed,))
 
-    patch_shape = shape or spec.forward_shape
-    volume_shape = full_volume_shape or spec.full_volume_shape
     mask = _mask_from_bool(batch_size, (True, True, True, True), device)
     measurements: list[FlopsMeasurement] = []
     patch_macs: float | None = None
@@ -462,7 +795,7 @@ def run_flops_for_method(
     if measure in {"forward", "all"}:
         patch_images = _build_images(batch_size, patch_shape, device)
         try:
-            patch_macs = _measure_macs(model, spec.adapter_kind, patch_images, mask)
+            patch_macs, patch_note = _measure_macs(model, spec.adapter_kind, patch_images, mask)
             measurements.append(
                 FlopsMeasurement(
                     method=spec.name,
@@ -474,6 +807,7 @@ def run_flops_for_method(
                     flops=patch_macs * 2,
                     params=params,
                     status="ok",
+                    note=patch_note,
                 )
             )
         except Exception as exc:
@@ -498,7 +832,7 @@ def run_flops_for_method(
             if patch_macs is None:
                 patch_images = _build_images(batch_size, strategy.patch_shape or patch_shape, device)
                 try:
-                    patch_macs = _measure_macs(model, spec.adapter_kind, patch_images, mask)
+                    patch_macs, patch_note = _measure_macs(model, spec.adapter_kind, patch_images, mask)
                 except Exception as exc:
                     measurements.append(
                         FlopsMeasurement(
@@ -532,13 +866,16 @@ def run_flops_for_method(
                     flops=total_macs * 2,
                     params=params,
                     status="ok",
-                    note=f"patched full-volume cost across {windows} windows",
+                    note=_join_notes(
+                        f"patched full-volume cost across {windows} windows",
+                        patch_note,
+                    ),
                 )
             )
         else:
             volume_images = _build_images(batch_size, volume_shape, device)
             try:
-                volume_macs = _measure_macs(model, spec.adapter_kind, volume_images, mask)
+                volume_macs, volume_note = _measure_macs(model, spec.adapter_kind, volume_images, mask)
                 measurements.append(
                     FlopsMeasurement(
                         method=spec.name,
@@ -550,6 +887,7 @@ def run_flops_for_method(
                         flops=volume_macs * 2,
                         params=params,
                         status="ok",
+                        note=volume_note,
                     )
                 )
             except Exception as exc:

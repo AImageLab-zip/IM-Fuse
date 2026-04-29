@@ -1,8 +1,8 @@
-# BrainchMark🧠
+# MiMoSe🧠
 
-BrainchMark is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
+MiMoSe is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
 
-The code you should actually use lives in `src/brainchmark`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `brainchmark`. 
+The code you should actually use lives in `src/brainchmark`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `mimose`.
 
 We also encourage fellow researchers to extend the repository and open PRs with new models, trainers, datasets, and evaluation ideas. More detail: [docs/extending.md](docs/extending.md).
 
@@ -25,12 +25,12 @@ The installation step can take a while the first time. Some dependencies, includ
 After the installation, rewrite the packaged reference configs running:
 
 ```bash
-brainchmark setup
+mimose setup
 ```
 
 ## Supported Hardware and Software
 
-BrainchMark is currently supported on:
+MiMoSe is currently supported on:
 
 - Linux
 - NVIDIA GPUs based on the Turing architecture or newer
@@ -44,14 +44,14 @@ Linux is the only supported operating system for now.
 After installation:
 
 ```bash
-brainchmark --help
-brainchmark-gui
-brainchmark --version
+mimose --help
+mimose --version
 ```
 
 CLI commands:
 
 - `setup`
+- `update`
 - `preprocess`
 - `preprocess-train`
 - `train`
@@ -63,13 +63,12 @@ CLI commands:
 
 ## What Exists Today
 
-BrainchMark currently provides:
+MiMoSe currently provides:
 
 - an interactive `setup` command for generating local configs from packaged templates
 - dataset-aware preprocessing for BraTS-style datasets
 - a Typer CLI with `preprocess`, `train`, and `test`
 - YAML-driven execution with CLI overrides
-- a small GUI generated from the CLI surface
 - active model integrations for `imfuse`, `mmformer`, `dcseg`, and `rfnet`
 
 Supported dataset types:
@@ -83,13 +82,13 @@ This copies the packaged templates from `src/brainchmark/data/config_templates` 
 Run preprocessing from YAML:
 
 ```bash
-brainchmark preprocess --config imfuse_23.yaml
+mimose preprocess --config imfuse_23.yaml
 ```
 
 Run preprocessing followed immediately by training:
 
 ```bash
-brainchmark preprocess-train --config imfuse_23.yaml
+mimose preprocess-train --config imfuse_23.yaml
 ```
 
 The preprocessing output is one compressed `.npz` file per case containing:
@@ -104,7 +103,7 @@ More detail: [docs/preprocessing.md](docs/preprocessing.md)
 Example with a reference config:
 
 ```bash
-brainchmark train --config imfuse_23.yaml
+mimose train --config imfuse_23.yaml
 ```
 
 More detail: [docs/training.md](docs/training.md)
@@ -114,7 +113,7 @@ More detail: [docs/training.md](docs/training.md)
 Evaluate a checkpoint across the standard 15 mask patterns:
 
 ```bash
-brainchmark test --config imfuse_23.yaml
+mimose test --config imfuse_23.yaml
 ```
 
 The test command writes the text report at `output_path` and also creates a sibling Excel summary with the same stem and `.xlsx` suffix.
@@ -136,20 +135,6 @@ For a dedicated guide to writing configs, see [docs/yaml-config.md](docs/yaml-co
 
 For training startup, the CLI now shows a Rich `dots` status immediately while it loads training modules, resolves config, and initializes the trainer. This is expected before the full launch summary panel appears.
 
-## GUI
-
-Launch the GUI with:
-
-```bash
-brainchmark-gui
-```
-
-It is useful for:
-
-- browsing command options
-- filling config/CLI parameters interactively
-- launching CLI-backed workflows without typing long commands
-
 ## Contributing
 
 Contributions are welcome and will be evaluated quickly.
@@ -159,8 +144,7 @@ Contributions are welcome and will be evaluated quickly.
 The installed package version is exposed through:
 
 ```bash
-brainchmark --version
-brainchmark version
+mimose --version
 ```
 
 If you want to add your own model, trainer, dataset integration, runtime component, or other custom extension, follow [docs/extending.md](docs/extending.md).

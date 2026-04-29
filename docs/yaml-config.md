@@ -1,10 +1,10 @@
 # YAML Config Guide
 
-This document explains how to write a YAML config for BrainchMark.
+This document explains how to write a YAML config for MiMoSe.
 
 If you are extending the codebase itself rather than just writing configs, the detailed component extension guides live under [docs/components/README.md](components/README.md).
 
-BrainchMark uses a flat YAML style. One file can contain fields for:
+MiMoSe uses a flat YAML style. One file can contain fields for:
 
 - preprocessing
 - training
@@ -359,9 +359,9 @@ Use YAML lists for sequences:
 
 It is normal for one config to include preprocess, train, and test fields together.
 
-- `brainchmark preprocess --config ...` reads preprocess keys
-- `brainchmark train --config ...` reads train keys
-- `brainchmark test --config ...` reads test keys
+- `mimose preprocess --config ...` reads preprocess keys
+- `mimose train --config ...` reads train keys
+- `mimose test --config ...` reads test keys
 
 You do not need separate files unless that is easier for your workflow.
 

@@ -15,7 +15,7 @@ class AbstractModel(nn.Module, ABC):
     ) -> torch.Tensor:
         """Run test-time inference for a batch of masked input volumes.
 
-        This is the evaluation contract used by the BrainchMark testing
+        This is the evaluation contract used by the MiMoSe testing
         pipeline. Unlike ``forward(...)``, which may return trainer-specific
         tuples for loss computation, ``predict(...)`` must return the final
         segmentation prediction tensor only.

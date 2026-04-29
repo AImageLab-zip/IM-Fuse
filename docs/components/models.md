@@ -21,7 +21,7 @@ Model selection is driven by:
 3. dynamic resolution inside `models/config.py`
 4. model construction from `model_class(**model_kwargs)`
 
-The runtime expects models to be normal PyTorch modules, but also to conform to the BrainchMark inference contract.
+The runtime expects models to be normal PyTorch modules, but also to conform to the MiMoSe inference contract.
 
 ## Required Base Contract
 
@@ -31,7 +31,7 @@ All active models should:
 2. implement `forward(...)`
 3. implement `predict(images, mask)`
 
-The `predict(...)` method is mandatory for `brainchmark test`.
+The `predict(...)` method is mandatory for `mimose test`.
 
 `predict(...)` is not just a duplicate of `forward(...)`. It is the test-time inference method used by [src/brainchmark/testing/pipeline.py](../../src/brainchmark/testing/pipeline.py), where the runtime calls:
 
@@ -52,7 +52,7 @@ Depending on the model family, `predict(...)` may:
 - remap modalities before inference
 - disable training-only branches or auxiliary outputs
 
-The important point is that `brainchmark test` expects a final segmentation prediction tensor, not the full training tuple returned by some trainer-specific `forward(...)` implementations.
+The important point is that `mimose test` expects a final segmentation prediction tensor, not the full training tuple returned by some trainer-specific `forward(...)` implementations.
 
 ## Add a New Model Module
 
@@ -178,5 +178,5 @@ Before calling a model extension done, verify:
 - it can be selected from YAML
 - it can be selected from CLI
 - training forward matches the chosen trainer
-- `predict(images, mask)` works under `brainchmark test`
+- `predict(images, mask)` works under `mimose test`
 - checkpoint save/load works without key mismatches

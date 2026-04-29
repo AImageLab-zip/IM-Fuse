@@ -110,7 +110,7 @@ If you are adding a new dataset layout, this file usually needs changes.
    - add fields to `CropConfig`
    - validate them in `build_crop_config(...)`
    - expose them in `cli.py`
-6. Test it through `brainchmark preprocess`.
+6. Test it through `mimose preprocess`.
 
 ### Add a custom clamp mode
 

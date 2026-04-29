@@ -1,6 +1,6 @@
 # Training
 
-`brainchmark train` launches config-driven training for the active BrainchMark package.
+`mimose train` launches config-driven training for the active MiMoSe package.
 
 The active training stack currently includes:
 
@@ -18,13 +18,13 @@ The runtime still shares common checkpointing, DDP, WandB, and Rich progress inf
 Run from YAML:
 
 ```bash
-brainchmark train --config imfuse_23.yaml
+mimose train --config imfuse_23.yaml
 ```
 The CLI automatically resolves and autocompletes config files found in src/brainchmark/data/config. Absolute or relative paths for custom yaml files are supported too.
 Run from CLI:
 
 ```bash
-brainchmark train \
+mimose train \
   --data-dir /path/to/preprocessed \
   --art-dir /path/to/artifacts_dir \
   --trainer dcseg \
@@ -39,7 +39,7 @@ brainchmark train \
 
 CLI values override YAML values when both are provided.
 
-For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For the overall MiMoSe YAML format, see [docs/yaml-config.md](yaml-config.md).
 For very detailed extension notes on trainers, models, and runtime wiring, see [docs/components/README.md](components/README.md).
 
 
@@ -229,7 +229,7 @@ custom_model_kwargs:
 You can also override these from the CLI:
 
 ```bash
-brainchmark train \
+mimose train \
   --model imfuse \
   --custom-model-kwargs interleaved_tokenization=True \
   --custom-model-kwargs mamba_skip=True
@@ -248,14 +248,14 @@ Training supports:
 Example:
 
 ```bash
-brainchmark train \
+mimose train \
   --config src/brainchmark/data/configs/mmformer_23.yaml \
   --wandb-run-name mmformer-ablation-01
 ```
 
 The training launch panel also prints the resolved run name.
 
-If W&B logging is enabled but there is no active login in the terminal, BrainchMark now fails with a clean CLI message telling you to run `wandb login` or disable W&B with `--wandb-mode disabled`.
+If W&B logging is enabled but there is no active login in the terminal, MiMoSe now fails with a clean CLI message telling you to run `wandb login` or disable W&B with `--wandb-mode disabled`.
 
 ## Distributed Training
 
@@ -272,7 +272,7 @@ CLI flags:
 - `--no-distributed`
 - `--nproc-per-node`
 
-When distributed mode is enabled outside an existing `torchrun` launch, BrainchMark relaunches itself through `torchrun`.
+When distributed mode is enabled outside an existing `torchrun` launch, MiMoSe relaunches itself through `torchrun`.
 
 
 ## Example YAML

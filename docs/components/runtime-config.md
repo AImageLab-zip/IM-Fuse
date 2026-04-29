@@ -10,7 +10,7 @@ Relevant files:
 
 ## Mental Model
 
-For runtime objects, BrainchMark usually follows this pattern:
+For runtime objects, MiMoSe usually follows this pattern:
 
 1. enum value in `enums.py`
 2. config dataclass in `training/config.py`

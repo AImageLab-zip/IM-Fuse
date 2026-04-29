@@ -66,7 +66,7 @@ If you change startup behavior:
 
 Before calling a CLI/GUI extension done, verify:
 
-- the option appears in `brainchmark --help` or the relevant subcommand help
+- the option appears in `mimose --help` or the relevant subcommand help
 - YAML override behavior still works if applicable
 - defaults are correct
 - error messages are CLI-friendly
