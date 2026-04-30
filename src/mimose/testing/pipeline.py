@@ -20,6 +20,7 @@ from rich.progress import (
 )
 from torch.utils.data import DataLoader
 
+from mimose.checkpoints import load_weights_only_checkpoint
 from mimose.datasets import DatasetType, IMFuseDataset
 from mimose.models.abstract_model import AbstractModel
 
@@ -185,12 +186,7 @@ def run_testing(
         if not isinstance(model, AbstractModel):
             raise RuntimeError(f"{model_class.__name__} must inherit from AbstractModel")
         model = model.to(device)
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        state_dict = (
-            checkpoint["state_dict"]
-            if isinstance(checkpoint, dict) and "state_dict" in checkpoint
-            else checkpoint
-        )
+        state_dict = load_weights_only_checkpoint(checkpoint_path, device=device)
         model.load_state_dict(state_dict)
         model.eval()
         if hasattr(model, "is_training"):

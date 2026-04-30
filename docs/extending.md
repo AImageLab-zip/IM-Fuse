@@ -256,6 +256,13 @@ This is where you extend:
 
 The critical contract is that test-time models must support `predict(images, mask)`. If a model only works through `forward(...)`, `mimose test` will not be enough on its own.
 
+Checkpoint format is also part of the contract now:
+
+- training resume uses `checkpoints/model_last.pth`
+- inference and testing use `checkpoints/final_weights_only.safetensors`
+- if you add or modify trainer checkpoint behavior, keep those two artifact roles separate
+- if you add a new evaluation path, load the exported `.safetensors` weights artifact rather than a resumable pickle checkpoint
+
 Detailed guide: [docs/components/testing.md](components/testing.md)
 
 ## CLI and GUI

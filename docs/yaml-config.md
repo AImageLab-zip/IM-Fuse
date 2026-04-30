@@ -148,7 +148,7 @@ Path-like values are written as strings:
 
 ```yaml
 data_dir: /work/user/preprocessed
-checkpoint_path: /work/user/run/checkpoints/model_last.pth
+checkpoint_path: /work/user/run/checkpoints/final_weights_only.safetensors
 ```
 
 ### Enums
@@ -267,7 +267,7 @@ dataset_type: brats23
 
 ```yaml
 data_dir: /path/to/preprocessed
-checkpoint_path: /path/to/checkpoint.pth
+checkpoint_path: /path/to/final_weights_only.safetensors
 output_path: /path/to/results.txt
 model: dcseg
 

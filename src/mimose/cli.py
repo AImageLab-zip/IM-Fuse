@@ -126,12 +126,23 @@ def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
     online = bool(merged.get("online", False))
     if not online:
         checkpoint_value = merged.get("checkpoint_path")
-        if checkpoint_value is None:
+        if checkpoint_value is not None:
+            return Path(checkpoint_value)
+
+        art_dir = merged.get("art_dir")
+        if art_dir is None:
             raise typer.BadParameter(
                 "missing value; provide it in the CLI or in --config",
-                param_hint="--checkpoint-path",
+                param_hint="--art-dir",
             )
-        return Path(checkpoint_value)
+
+        checkpoint_path = Path(art_dir) / "checkpoints" / "final_weights_only.safetensors"
+        if not checkpoint_path.is_file():
+            raise typer.BadParameter(
+                f"weights-only checkpoint not found at {checkpoint_path}",
+                param_hint="--art-dir",
+            )
+        return checkpoint_path
 
     checkpoint_link = merged.get("checkpoint_link")
     if checkpoint_link is None:
@@ -289,7 +300,7 @@ def setup() -> None:
     table.add_row("Artifacts Root", str(artifacts_root_dir))
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     table.add_row("Configs", str(CONFIGS_DIR))
-    table.add_row("Checkpoint Path", "<art_dir>/checkpoints/model_last.pth")
+    table.add_row("Checkpoint Path", "<art_dir>/checkpoints/final_weights_only.safetensors")
     table.add_row("Output Path", "<art_dir>/results.txt")
 
     console.print(
@@ -1003,13 +1014,13 @@ def test(
         dir_okay=False,
         exists=True,
         readable=True,
-        help="Checkpoint path to evaluate.",
+        help="Path to a weights-only .safetensors checkpoint to evaluate.",
         rich_help_panel="Checkpointing",
     ),
     checkpoint_link: str | None = typer.Option(
         None,
         "--checkpoint-link",
-        help="Checkpoint URL to download and use when --online is enabled.",
+        help="URL to a weights-only .safetensors checkpoint used when --online is enabled.",
         rich_help_panel="Checkpointing",
     ),
     online: bool = typer.Option(

@@ -72,7 +72,7 @@ def update_setup_config(
         content = replace_yaml_line(
             content,
             key="checkpoint_path",
-            value=str(artifacts_dir / "checkpoints" / "model_last.pth"),
+            value=str(artifacts_dir / "checkpoints" / "final_weights_only.safetensors"),
         )
         content = replace_yaml_line(
             content,

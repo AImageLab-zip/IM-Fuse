@@ -4,6 +4,7 @@ This document explains how to extend the evaluation path.
 
 Relevant files:
 
+- `src/mimose/checkpoints.py`
 - `src/mimose/testing/pipeline.py`
 - `src/mimose/cli.py`
 - model modules implementing `predict(images, mask)`
@@ -19,6 +20,12 @@ The active testing path:
 5. calls `model.predict(images, mask)` across the standard missing-modality masks
 6. writes a text report and Excel summary
 
+The active checkpoint contract for testing is:
+
+- testing consumes weights-only `.safetensors` files
+- the default local artifact is `art_dir/checkpoints/final_weights_only.safetensors`
+- resumable training checkpoints such as `model_last.pth` are not the testing artifact
+
 ## What Testing Assumes
 
 The current path assumes:
@@ -27,6 +34,7 @@ The current path assumes:
 - batch size is `1`
 - the model inherits from `AbstractModel`
 - the model implements `predict(images, mask)`
+- the selected checkpoint is a weights-only `.safetensors` file
 - predictions can be reduced to the BraTS-style metrics currently implemented
 
 If your extension breaks one of these assumptions, testing likely needs explicit updates.
@@ -72,6 +80,7 @@ Typical steps:
 Before calling a testing extension done, verify:
 
 - the selected checkpoint loads cleanly
+- the exported checkpoint is a `.safetensors` weights file
 - `predict(...)` is actually used
 - all masks complete without shape/device errors
 - the report file is written

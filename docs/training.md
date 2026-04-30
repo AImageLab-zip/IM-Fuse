@@ -13,6 +13,11 @@ The active training stack currently includes:
 
 The runtime still shares common checkpointing, DDP, WandB, and Rich progress infrastructure across trainers, but the DC-Seg path now has its own trainer and transform wiring.
 
+Training produces two checkpoint classes:
+
+- resumable checkpoints such as `checkpoints/model_last.pth` for training resume only
+- an inference/export checkpoint at `checkpoints/final_weights_only.safetensors` containing only model weights
+
 ## Basic Usage
 
 Run from YAML:

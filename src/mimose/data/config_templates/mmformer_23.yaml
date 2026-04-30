@@ -89,5 +89,5 @@ wandb_mode: online
 wandb_run_name: mmformer23_training
 
 # testing
-checkpoint_path: /path/to/artifacts/mmformer23/checkpoints/model_last.pth
+checkpoint_path: /path/to/artifacts/mmformer23/checkpoints/final_weights_only.safetensors
 output_path: /path/to/artifacts/mmformer23/results.txt

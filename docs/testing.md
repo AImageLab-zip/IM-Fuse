@@ -21,7 +21,7 @@ Run from CLI:
 ```bash
 mimose test \
   --data-dir /path/to/preprocessed \
-  --checkpoint-path /path/to/checkpoint.pth \
+  --checkpoint-path /path/to/final_weights_only.safetensors \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
   --model dcseg
@@ -33,7 +33,7 @@ Run from CLI with an online checkpoint cache:
 mimose test \
   --data-dir /path/to/preprocessed \
   --art-dir /path/to/artifacts/run1 \
-  --checkpoint-link https://example.com/model_last.pth \
+  --checkpoint-link https://example.com/final_weights_only.safetensors \
   --online \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
@@ -50,8 +50,9 @@ The test command requires:
 
 Use one of these checkpoint inputs:
 
-- `checkpoint_path` for a local checkpoint
+- `checkpoint_path` for a local `.safetensors` weights file
 - `checkpoint_link` together with `online=true` and `art_dir` for a downloaded cached checkpoint
+- `art_dir` by itself to auto-resolve `art_dir/checkpoints/final_weights_only.safetensors`
 
 `model` is optional in the CLI because it defaults to `imfuse`, but for a real run you should set it explicitly unless the config already does.
 
@@ -96,7 +97,7 @@ The current metrics reported are:
 
 If a checkpoint is missing, the command raises a clean CLI error.
 
-If `online` is enabled, MiMoSe downloads the checkpoint from `checkpoint_link` into `art_dir/checkpoints/online_checkpoint.<ext>` and reuses that cached file on later runs if it is already present.
+If `online` is enabled, MiMoSe downloads the checkpoint from `checkpoint_link` into `art_dir/checkpoints/online_checkpoint.<ext>` and reuses that cached file on later runs if it is already present. The testing path expects that downloaded file to be a `.safetensors` weights checkpoint.
 
 ## YAML Fields
 
@@ -119,7 +120,7 @@ The test command reads these fields from the combined config files:
 
 ```yaml
 data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
-checkpoint_path: /work/grana_neuro/mimose/runs/dcseg23/checkpoints/model_last.pth
+checkpoint_path: /work/grana_neuro/mimose/runs/dcseg23/checkpoints/final_weights_only.safetensors
 output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg
 custom_model_kwargs:
@@ -135,7 +136,7 @@ Online-checkpoint example:
 ```yaml
 data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
 art_dir: /work/grana_neuro/mimose/runs/dcseg23
-checkpoint_link: https://example.com/model_last.pth
+checkpoint_link: https://example.com/final_weights_only.safetensors
 online: true
 output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg

@@ -29,6 +29,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from mimose.datasets import DatasetType
+from mimose.checkpoints import load_weights_only_checkpoint, save_weights_only_checkpoint
 from mimose.training.config import OptimizerConfig, SchedulerConfig
 from mimose.training.trainers.abstract_trainer import AbstractTrainer
 from mimose.losses.config import LossConfig
@@ -241,19 +242,10 @@ class BaseTrainer(AbstractTrainer):
         if model is None:
             raise RuntimeError("model must be initialized before saving a checkpoint")
         if not self.is_main_process:
-            return self.checkpoint_dir / "final.pth"
+            return self.checkpoint_dir / "final_weights_only.safetensors"
 
-        checkpoint = {
-            "epoch": self.current_epoch,
-            "state_dict": model.state_dict(),
-            "optim_dict": self.optimizer.state_dict() if self.optimizer is not None else None,
-            "scheduler_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
-            "best_val_loss": self.best_val_loss,
-        }
-
-        final_path = self.checkpoint_dir / "final.pth"
-        torch.save(checkpoint, final_path)
-        return final_path
+        final_path = self.checkpoint_dir / "final_weights_only.safetensors"
+        return save_weights_only_checkpoint(model.state_dict(), final_path)
 
     def _build_model(self) -> torch.nn.Module:
         if self.model_config is None:
@@ -781,8 +773,14 @@ class BaseTrainer(AbstractTrainer):
         self.optimizer.step()
 
     def _load_pretrain(self) -> None:
-        checkpoint = torch.load(self.pretrain, map_location=self.device)
-        state_dict = checkpoint.get("state_dict", checkpoint)
+        if self.pretrain is None:
+            raise RuntimeError("pretrain path must be set before loading pretrained weights")
+
+        if self.pretrain.suffix == ".safetensors":
+            state_dict = load_weights_only_checkpoint(self.pretrain, device=self.device)
+        else:
+            checkpoint = torch.load(self.pretrain, map_location=self.device)
+            state_dict = checkpoint.get("state_dict", checkpoint)
         model = self._model_for_state()
         if model is None:
             raise RuntimeError("model must be initialized before loading pretrained weights")

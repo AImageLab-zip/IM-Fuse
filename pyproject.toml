@@ -29,6 +29,7 @@ dependencies = [
     "ptflops>=0.7.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
+    "safetensors>=0.6.2",
     "thop>=0.1.1.post2209072238",
     "torch==2.9.1",
     "tqdm>=4.67.3",

@@ -4,6 +4,7 @@ This document explains how to add or modify trainers in detail.
 
 Relevant files:
 
+- `src/mimose/checkpoints.py`
 - `src/mimose/training/trainers/abstract_trainer.py`
 - `src/mimose/training/trainers/base_trainer.py`
 - `src/mimose/training/trainers/imfuse.py`
@@ -29,6 +30,11 @@ Provides generic runtime behavior:
 - launch summary
 - WandB integration
 - OOM normalization
+
+The shared checkpoint policy is split by purpose:
+
+- `model_last.pth` is the resumable training checkpoint
+- `final_weights_only.safetensors` is the exported inference/testing checkpoint
 
 ### Concrete trainers
 
@@ -137,5 +143,6 @@ Before calling a trainer extension done, verify:
 - the trainer can be selected from CLI/YAML
 - its model/output/loss contract is internally consistent
 - checkpoint save/load works
+- `save_final_checkpoint()` exports weights-only `.safetensors`
 - validation runs without relying on training-only outputs
 - testing still works if the model is expected to support `predict(...)`

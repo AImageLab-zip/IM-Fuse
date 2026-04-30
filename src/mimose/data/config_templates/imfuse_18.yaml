@@ -87,5 +87,5 @@ wandb_project: SegmentationMM
 wandb_mode: online
 wandb_run_name: imfuse18_training
 # testing
-checkpoint_path: /path/to/artifacts/imfuse18/checkpoints/model_last.pth
+checkpoint_path: /path/to/artifacts/imfuse18/checkpoints/final_weights_only.safetensors
 output_path: /path/to/artifacts/imfuse18/results.txt
