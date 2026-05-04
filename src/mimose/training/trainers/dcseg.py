@@ -48,6 +48,8 @@ class DCSegTrainer(BaseTrainer):
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
         dataset_type: str | None = None,
+        push_to_hf: bool = False,
+        hf_repo: str | None = None,
     ) -> None:
         trainer_kwargs = dict(custom_trainer_kwargs or {})
         self.dataset_type = self._resolve_dataset_type(dataset_type)
@@ -116,6 +118,8 @@ class DCSegTrainer(BaseTrainer):
             wandb_mode=wandb_mode,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
+            push_to_hf=push_to_hf,
+            hf_repo=hf_repo,
         )
         self.anatomy_contrastive_loss = AnatomyContrastiveLoss(method=self.anatomy_contrastive_method).to(self.device)
         self.modality_contrastive_loss = ModalityContrastiveLoss().to(self.device)

@@ -15,8 +15,8 @@ Recommended setup with `uv`:
 Ensure that `uv` is installed system-wide before running the setup steps below.
 
 ```bash
-git clone https://github.com/AImageLab-zip/IM-Fuse
-cd IM-Fuse
+git clone https://github.com/AImageLab-zip/MiMoSe
+cd MiMoSe
 bash install.sh
 ```
 

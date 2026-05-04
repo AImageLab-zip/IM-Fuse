@@ -8,6 +8,7 @@ from math import ceil
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -20,6 +21,7 @@ from rich.table import Table
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_ROOT = REPO_ROOT / "legacy"
 DEFAULT_FULL_VOLUME_SHAPE = (240, 240, 155)
+DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE = (136, 170, 138)
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,16 @@ class MethodSpec:
     forward_shape: tuple[int, int, int]
     full_volume_shape: tuple[int, int, int]
     full_volume_strategy: FullVolumeStrategy
+
+
+LEGACY_NONEMPTY_CROP_RATIOS = tuple(
+    crop_dim / full_dim
+    for crop_dim, full_dim in zip(
+        DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE,
+        DEFAULT_FULL_VOLUME_SHAPE,
+        strict=True,
+    )
+)
 
 
 @contextmanager
@@ -471,6 +483,23 @@ def _build_images(
     return torch.randn(batch_size, 4, *spatial_shape, device=device, dtype=torch.float32)
 
 
+def _estimate_legacy_nonempty_crop_shape(
+    full_shape: tuple[int, int, int],
+    *,
+    min_shape: tuple[int, int, int] = (128, 128, 128),
+) -> tuple[int, int, int]:
+    cropped: list[int] = []
+    for full_dim, ratio, min_dim in zip(
+        full_shape,
+        LEGACY_NONEMPTY_CROP_RATIOS,
+        min_shape,
+        strict=True,
+    ):
+        estimated = int(round(full_dim * ratio))
+        cropped.append(min(full_dim, max(min_dim, estimated)))
+    return tuple(cropped)
+
+
 def _sliding_window_count(
     full_shape: tuple[int, int, int],
     patch_shape: tuple[int, int, int],
@@ -702,38 +731,27 @@ def _simple_builder(root_rel: str, module_name: str, attr_name: str, **kwargs: A
 
 def _registry() -> dict[str, MethodSpec]:
     return {
-        "D2Net": MethodSpec(
-            name="D2Net",
-            import_root=LEGACY_ROOT / "D2Net",
-            source_entrypoint="legacy/D2Net/test.py",
-            model_target="models.DisenNet",
-            builder=_build_d2net_model,
-            adapter_kind="d2net",
-            forward_shape=(128, 128, 128),
-            full_volume_shape=DEFAULT_FULL_VOLUME_SHAPE,
-            full_volume_strategy=FullVolumeStrategy("patched", patch_shape=(128, 128, 128), overlap=0.5),
-        ),
-        "DC-Seg": MethodSpec("DC-Seg", LEGACY_ROOT / "DC-Seg", "legacy/DC-Seg/test.py", "models.DC_Seg", _simple_builder("DC-Seg", "models", "DC_Seg", num_cls=4, fusion_type="RFM"), "images_mask", (112, 112, 112), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (112, 112, 112), 0.5)),
-        "IMFuse": MethodSpec("IMFuse", LEGACY_ROOT / "IMFuse", "legacy/IMFuse/test.py", "IMFuse.IMFuse", _simple_builder("IMFuse", "IMFuse", "IMFuse", num_cls=4, interleaved_tokenization=False, mamba_skip=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "IMS2Trans": MethodSpec("IMS2Trans", LEGACY_ROOT / "IMS2Trans", "legacy/IMS2Trans/test.py", "ims2trans.Model", _simple_builder("IMS2Trans", "ims2trans", "Model", num_cls=4, use_checkpoint=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "InOutFusion": MethodSpec("InOutFusion", LEGACY_ROOT / "InOutFusion", "legacy/InOutFusion/test.py", "net.Network_InOut.RsInOut_U_Hemis3D", _simple_builder("InOutFusion", "net.Network_InOut", "RsInOut_U_Hemis3D", in_channels=1, out_channels=4, levels=4, feature_maps=8, method="TF", phase="test"), "list_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "DC-Seg": MethodSpec("DC-Seg", LEGACY_ROOT / "DC-Seg", "legacy/DC-Seg/test.py", "models.DC_Seg", _simple_builder("DC-Seg", "models", "DC_Seg", num_cls=4, fusion_type="RFM"), "images_mask", (112, 112, 112), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (112, 112, 112), 0.5)),
+        "IMFuse": MethodSpec("IMFuse", LEGACY_ROOT / "IMFuse", "legacy/IMFuse/test.py", "IMFuse.IMFuse", _simple_builder("IMFuse", "IMFuse", "IMFuse", num_cls=4, interleaved_tokenization=False, mamba_skip=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
+        "IMS2Trans": MethodSpec("IMS2Trans", LEGACY_ROOT / "IMS2Trans", "legacy/IMS2Trans/test.py", "ims2trans.Model", _simple_builder("IMS2Trans", "ims2trans", "Model", num_cls=4, use_checkpoint=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
+        "InOutFusion": MethodSpec("InOutFusion", LEGACY_ROOT / "InOutFusion", "legacy/InOutFusion/test.py", "net.Network_InOut.RsInOut_U_Hemis3D", _simple_builder("InOutFusion", "net.Network_InOut", "RsInOut_U_Hemis3D", in_channels=1, out_channels=4, levels=4, feature_maps=8, method="TF", phase="test"), "list_mask", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "LCKD": MethodSpec("LCKD", LEGACY_ROOT / "LCKD", "legacy/LCKD/test.py", "DualNet.DualNet", _build_lckd_model, "images_mode", (80, 160, 160), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 160, 160), overlap=1.0 / 3.0)),
-        "M2FTrans": MethodSpec("M2FTrans", LEGACY_ROOT / "M2FTrans" / "M2FTrans_v1", "legacy/M2FTrans/M2FTrans_v1/test.py", "models.fusiontrans.Model", _simple_builder("M2FTrans/M2FTrans_v1", "models.fusiontrans", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
-        "MIFPN": MethodSpec("MIFPN", LEGACY_ROOT / "MIFPN", "legacy/MIFPN/test.py", "models.PNT.Model", _simple_builder("MIFPN", "models.PNT", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
-        "MMMViT": MethodSpec("MMMViT", LEGACY_ROOT / "MMMViT", "legacy/MMMViT/test.py", "mmmvit.Model", _simple_builder("MMMViT", "mmmvit", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "M2FTrans": MethodSpec("M2FTrans", LEGACY_ROOT / "M2FTrans" / "M2FTrans_v1", "legacy/M2FTrans/M2FTrans_v1/test.py", "models.fusiontrans.Model", _simple_builder("M2FTrans/M2FTrans_v1", "models.fusiontrans", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
+        "MIFPN": MethodSpec("MIFPN", LEGACY_ROOT / "MIFPN", "legacy/MIFPN/test.py", "models.PNT.Model", _simple_builder("MIFPN", "models.PNT", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
+        "MMMViT": MethodSpec("MMMViT", LEGACY_ROOT / "MMMViT", "legacy/MMMViT/test.py", "mmmvit.Model", _simple_builder("MMMViT", "mmmvit", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "MST-KDNet": MethodSpec("MST-KDNet", LEGACY_ROOT / "MST-KDNet", "legacy/MST-KDNet/eval.py", "models.build_MSTKDNet()[1]", _build_mstkd_model, "images_only", (160, 192, 128), (160, 192, 128), FullVolumeStrategy("direct")),
-        "MaM": MethodSpec("MaM", LEGACY_ROOT / "MaM", "legacy/MaM/test.py", "unet.MultimodalRecon", _build_mam_model, "mam", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "RFNet": MethodSpec("RFNet", LEGACY_ROOT / "RFNet", "legacy/RFNet/test.py", "models.Model", _simple_builder("RFNet", "models", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
+        "MaM": MethodSpec("MaM", LEGACY_ROOT / "MaM", "legacy/MaM/test.py", "unet.MultimodalRecon", _build_mam_model, "mam", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "RFNet": MethodSpec("RFNet", LEGACY_ROOT / "RFNet", "legacy/RFNet/test.py", "models.Model", _simple_builder("RFNet", "models", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
         "ReHyDIL": MethodSpec("ReHyDIL", LEGACY_ROOT / "ReHyDIL", "legacy/ReHyDIL/test.py", "test_utils.CPH_3d", _build_rehydil_model, "images_only", (224, 224, 155), (224, 224, 155), FullVolumeStrategy("direct")),
-        "RobustSeg": MethodSpec("RobustSeg", LEGACY_ROOT / "RobustSeg", "legacy/RobustSeg/test_robustseg.py", "RobustSeg.RobustSeg", _simple_builder("RobustSeg", "RobustSeg", "RobustSeg", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
-        "SFusion": MethodSpec("SFusion", LEGACY_ROOT / "SFusion", "legacy/SFusion/test_sfusion.py", "SFusion.TF_RMBTS", _simple_builder("SFusion", "SFusion", "TF_RMBTS", in_channels=1, out_channels=4, levels=4, feature_maps=16), "list_mask_tensor", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "SRMNet": MethodSpec("SRMNet", LEGACY_ROOT / "SRMNet", "legacy/SRMNet/test.py", "model.net.Model", _build_srmnet_model, "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "RobustSeg": MethodSpec("RobustSeg", LEGACY_ROOT / "RobustSeg", "legacy/RobustSeg/test_robustseg.py", "RobustSeg.RobustSeg", _simple_builder("RobustSeg", "RobustSeg", "RobustSeg", num_cls=4), "images_mask", (80, 80, 80), (80, 80, 80), FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
+        "SFusion": MethodSpec("SFusion", LEGACY_ROOT / "SFusion", "legacy/SFusion/test_sfusion.py", "SFusion.TF_RMBTS", _simple_builder("SFusion", "SFusion", "TF_RMBTS", in_channels=1, out_channels=4, levels=4, feature_maps=16), "list_mask_tensor", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "SRMNet": MethodSpec("SRMNet", LEGACY_ROOT / "SRMNet", "legacy/SRMNet/test.py", "model.net.Model", _build_srmnet_model, "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "ShaSpec": MethodSpec("ShaSpec", LEGACY_ROOT / "ShaSpec", "legacy/ShaSpec/eval.py", "DualNet_SS.DualNet_SS", _build_shaspec_model, "images_mode", (80, 160, 160), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 160, 160), overlap=1.0 / 3.0)),
-        "UHVED": MethodSpec("UHVED", LEGACY_ROOT / "UHVED", "legacy/UHVED/test_uhved.py", "UHVED.U_HVED", _simple_builder("UHVED", "UHVED", "U_HVED", num_classes=4), "uhved", (112, 112, 112), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (112, 112, 112), 0.5)),
+        "UHVED": MethodSpec("UHVED", LEGACY_ROOT / "UHVED", "legacy/UHVED/test_uhved.py", "UHVED.U_HVED", _simple_builder("UHVED", "UHVED", "U_HVED", num_classes=4), "uhved", (112, 112, 112), (112, 112, 112), FullVolumeStrategy("patched", (112, 112, 112), 0.5)),
         "UNET-MFI": MethodSpec("UNET-MFI", LEGACY_ROOT / "UNET-MFI", "legacy/UNET-MFI/test.py", "Model.no_share_unet", _simple_builder("UNET-MFI", "Model", "no_share_unet", in_channel=1, out_channel=3, diff=True, deepSupvision=True), "split_mask", (120, 120, 120), (240, 240, 160), FullVolumeStrategy("patched", (120, 120, 120), stride=(40, 40, 40))),
-        "m3ae": MethodSpec("m3ae", LEGACY_ROOT / "m3ae", "legacy/m3ae/test.py", "model.Unet.Unet_missing", _simple_builder("m3ae", "model.Unet", "Unet_missing", input_shape=[128, 128, 128], out_channels=3, mdp=3, init_channels=16, pre_train=False, mask_modal=[], patch_shape=128), "m3ae", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "mmFormer": MethodSpec("mmFormer", LEGACY_ROOT / "mmFormer" / "mmformer", "legacy/mmFormer/mmformer/test.py", "mmformer.Model", _simple_builder("mmFormer/mmformer", "mmformer", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
-        "reverse": MethodSpec("reverse", LEGACY_ROOT / "reverse", "legacy/reverse/test.py", "reverse.Model", _simple_builder("reverse", "reverse", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "m3ae": MethodSpec("m3ae", LEGACY_ROOT / "m3ae", "legacy/m3ae/test.py", "model.Unet.Unet_missing", _simple_builder("m3ae", "model.Unet", "Unet_missing", input_shape=[128, 128, 128], out_channels=3, mdp=3, init_channels=16, pre_train=False, mask_modal=[], patch_shape=128), "m3ae", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "mmFormer": MethodSpec("mmFormer", LEGACY_ROOT / "mmFormer" / "mmformer", "legacy/mmFormer/mmformer/test.py", "mmformer.Model", _simple_builder("mmFormer/mmformer", "mmformer", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
+        "reverse": MethodSpec("reverse", LEGACY_ROOT / "reverse", "legacy/reverse/test.py", "reverse.Model", _simple_builder("reverse", "reverse", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
     }
 
 
@@ -828,7 +846,15 @@ def run_flops_for_method(
 
     if measure in {"full_volume_forward", "all"}:
         strategy = spec.full_volume_strategy
-        if strategy.kind == "patched":
+        if strategy.kind in {"patched", "legacy_non_empty_patched"}:
+            effective_volume_shape = volume_shape
+            crop_note = ""
+            if strategy.kind == "legacy_non_empty_patched":
+                effective_volume_shape = _estimate_legacy_nonempty_crop_shape(volume_shape)
+                crop_note = (
+                    f"legacy non-empty crop from {_format_shape(volume_shape)} "
+                    f"to {_format_shape(effective_volume_shape)}"
+                )
             if patch_macs is None:
                 patch_images = _build_images(batch_size, strategy.patch_shape or patch_shape, device)
                 try:
@@ -840,7 +866,7 @@ def run_flops_for_method(
                             source_entrypoint=source_entrypoint,
                             model_target=model_target,
                             measurement="full_volume_forward",
-                            input_shape=(batch_size, 4, *volume_shape),
+                            input_shape=(batch_size, 4, *effective_volume_shape),
                             macs=None,
                             flops=None,
                             params=params,
@@ -851,9 +877,17 @@ def run_flops_for_method(
                     return FlopsReport(spec.name, source_entrypoint, model_target, tuple(measurements))
 
             if strategy.stride is not None:
-                windows = _strided_window_count(volume_shape, strategy.patch_shape or patch_shape, strategy.stride)
+                windows = _strided_window_count(
+                    effective_volume_shape,
+                    strategy.patch_shape or patch_shape,
+                    strategy.stride,
+                )
             else:
-                windows = _sliding_window_count(volume_shape, strategy.patch_shape or patch_shape, strategy.overlap)
+                windows = _sliding_window_count(
+                    effective_volume_shape,
+                    strategy.patch_shape or patch_shape,
+                    strategy.overlap,
+                )
             total_macs = patch_macs * windows
             measurements.append(
                 FlopsMeasurement(
@@ -861,12 +895,13 @@ def run_flops_for_method(
                     source_entrypoint=source_entrypoint,
                     model_target=model_target,
                     measurement="full_volume_forward",
-                    input_shape=(batch_size, 4, *volume_shape),
+                    input_shape=(batch_size, 4, *effective_volume_shape),
                     macs=total_macs,
                     flops=total_macs * 2,
                     params=params,
                     status="ok",
                     note=_join_notes(
+                        crop_note,
                         f"patched full-volume cost across {windows} windows",
                         patch_note,
                     ),
@@ -917,32 +952,7 @@ def run_flops_subprocess(
     shape: tuple[int, int, int] | None,
     full_volume_shape: tuple[int, int, int] | None,
 ) -> dict[str, Any]:
-    cmd = [
-        sys.executable,
-        "-m",
-        "legacy.flops",
-        "run",
-        "--method",
-        method,
-        "--batch-size",
-        str(batch_size),
-        "--measure",
-        measure,
-        "--json",
-        "-",
-    ]
-    if shape is not None:
-        cmd.extend(["--shape", *[str(v) for v in shape]])
-    if full_volume_shape is not None:
-        cmd.extend(["--full-volume-shape", *[str(v) for v in full_volume_shape]])
-    completed = subprocess.run(
-        cmd,
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
+    def failed_subprocess_report(note: str) -> dict[str, Any]:
         return {
             "method": method,
             "source_entrypoint": "",
@@ -957,7 +967,62 @@ def run_flops_subprocess(
                 "flops": None,
                 "params": None,
                 "status": "failed",
-                "note": completed.stderr.strip() or completed.stdout.strip() or f"subprocess failed with code {completed.returncode}",
+                "note": note,
             }],
         }
-    return json.loads(completed.stdout)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".json",
+        prefix="legacy-flops-",
+        delete=False,
+    ) as handle:
+        json_path = Path(handle.name)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "legacy.flops",
+        "run",
+        "--method",
+        method,
+        "--batch-size",
+        str(batch_size),
+        "--measure",
+        measure,
+        "--json",
+        str(json_path),
+    ]
+    if shape is not None:
+        cmd.extend(["--shape", *[str(v) for v in shape]])
+    if full_volume_shape is not None:
+        cmd.extend(["--full-volume-shape", *[str(v) for v in full_volume_shape]])
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return failed_subprocess_report(
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or f"subprocess failed with code {completed.returncode}"
+            )
+        if not json_path.exists():
+            return failed_subprocess_report("subprocess exited successfully but did not create a JSON report")
+        json_text = json_path.read_text().strip()
+        if not json_text:
+            return failed_subprocess_report("subprocess exited successfully but produced no JSON output")
+        try:
+            return json.loads(json_text)
+        except json.JSONDecodeError as exc:
+            details = completed.stderr.strip() or json_text[:500]
+            return failed_subprocess_report(
+                "subprocess exited successfully but produced invalid JSON output: "
+                f"{exc}. Details: {details}"
+            )
+    finally:
+        json_path.unlink(missing_ok=True)

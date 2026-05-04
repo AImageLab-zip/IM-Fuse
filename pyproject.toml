@@ -18,6 +18,7 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "huggingface_hub>=0.34.0",
     "matplotlib>=3.10.9",
     "medpy>=0.5.2",
     "ninja>=1.13.0",
@@ -32,6 +33,7 @@ dependencies = [
     "safetensors>=0.6.2",
     "thop>=0.1.1.post2209072238",
     "torch==2.9.1",
+    "torchvision>=0.24.1",
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",

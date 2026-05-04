@@ -9,7 +9,7 @@ from mimose.models import config as model_config
 import mimose.testing as testing
 
 
-def test_test_online_downloads_checkpoint_into_art_dir(
+def test_test_online_downloads_hf_checkpoint_into_art_dir(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -19,15 +19,15 @@ def test_test_online_downloads_checkpoint_into_art_dir(
     output_path = tmp_path / "results.txt"
     data_dir.mkdir()
 
-    downloads: list[tuple[str, Path]] = []
+    downloads: list[tuple[str, str, Path]] = []
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(cli, "maybe_notify_about_update", lambda: None)
     monkeypatch.setattr(
         cli,
-        "_download_checkpoint",
-        lambda link, destination: (
-            downloads.append((link, destination)),
+        "_download_hf_checkpoint",
+        lambda repo, run_name, destination: (
+            downloads.append((repo, run_name, destination)),
             destination.parent.mkdir(parents=True, exist_ok=True),
             destination.write_bytes(b"ckpt"),
         ),
@@ -55,19 +55,28 @@ def test_test_online_downloads_checkpoint_into_art_dir(
             "brats23",
             "--art-dir",
             str(art_dir),
-            "--checkpoint-link",
-            "https://example.com/final_weights_only.safetensors",
+            "--hf-repo",
+            "owner/repo",
+            "--hf-run-name",
+            "imfuse23_training",
             "--online",
         ],
     )
 
-    expected_checkpoint = art_dir / "checkpoints" / "online_checkpoint.safetensors"
+    expected_checkpoint = (
+        art_dir
+        / "checkpoints"
+        / "hf"
+        / "owner--repo"
+        / "imfuse23_training"
+        / "final_weights_only.safetensors"
+    )
     assert result.exit_code == 0
-    assert downloads == [("https://example.com/final_weights_only.safetensors", expected_checkpoint)]
+    assert downloads == [("owner/repo", "imfuse23_training", expected_checkpoint)]
     assert captured["checkpoint_path"] == expected_checkpoint
 
 
-def test_test_online_reuses_cached_checkpoint(
+def test_test_online_reuses_cached_hf_checkpoint(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -75,19 +84,26 @@ def test_test_online_reuses_cached_checkpoint(
     data_dir = tmp_path / "data"
     art_dir = tmp_path / "artifacts"
     output_path = tmp_path / "results.txt"
-    cached_checkpoint = art_dir / "checkpoints" / "online_checkpoint.safetensors"
+    cached_checkpoint = (
+        art_dir
+        / "checkpoints"
+        / "hf"
+        / "owner--repo"
+        / "imfuse23_training"
+        / "final_weights_only.safetensors"
+    )
     data_dir.mkdir()
     cached_checkpoint.parent.mkdir(parents=True, exist_ok=True)
     cached_checkpoint.write_bytes(b"cached")
 
-    downloads: list[tuple[str, Path]] = []
+    downloads: list[tuple[str, str, Path]] = []
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(cli, "maybe_notify_about_update", lambda: None)
     monkeypatch.setattr(
         cli,
-        "_download_checkpoint",
-        lambda link, destination: downloads.append((link, destination)),
+        "_download_hf_checkpoint",
+        lambda repo, run_name, destination: downloads.append((repo, run_name, destination)),
     )
     monkeypatch.setattr(
         model_config,
@@ -112,8 +128,10 @@ def test_test_online_reuses_cached_checkpoint(
             "brats23",
             "--art-dir",
             str(art_dir),
-            "--checkpoint-link",
-            "https://example.com/final_weights_only.safetensors",
+            "--hf-repo",
+            "owner/repo",
+            "--hf-run-name",
+            "imfuse23_training",
             "--online",
         ],
     )
@@ -123,7 +141,7 @@ def test_test_online_reuses_cached_checkpoint(
     assert captured["checkpoint_path"] == cached_checkpoint
 
 
-def test_test_online_requires_checkpoint_link(monkeypatch, tmp_path: Path) -> None:
+def test_test_online_requires_hf_repo(monkeypatch, tmp_path: Path) -> None:
     runner = CliRunner()
     data_dir = tmp_path / "data"
     art_dir = tmp_path / "artifacts"
@@ -144,12 +162,45 @@ def test_test_online_requires_checkpoint_link(monkeypatch, tmp_path: Path) -> No
             "brats23",
             "--art-dir",
             str(art_dir),
+            "--hf-run-name",
+            "imfuse23_training",
             "--online",
         ],
     )
 
     assert result.exit_code == 2
-    assert "--checkpoint-link" in result.output
+    assert "--hf-repo" in result.output
+
+
+def test_test_online_requires_hf_run_name(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / "data"
+    art_dir = tmp_path / "artifacts"
+    output_path = tmp_path / "results.txt"
+    data_dir.mkdir()
+
+    monkeypatch.setattr(cli, "maybe_notify_about_update", lambda: None)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "test",
+            "--data-dir",
+            str(data_dir),
+            "--output-path",
+            str(output_path),
+            "--dataset-type",
+            "brats23",
+            "--art-dir",
+            str(art_dir),
+            "--hf-repo",
+            "owner/repo",
+            "--online",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--hf-run-name" in result.output
 
 
 def test_test_uses_final_weights_only_from_art_dir_when_checkpoint_path_is_omitted(

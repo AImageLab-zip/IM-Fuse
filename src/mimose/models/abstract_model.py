@@ -1,12 +1,101 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import json
+from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
 
+from mimose.checkpoints import load_weights_only_checkpoint, save_weights_only_checkpoint
 
-class AbstractModel(nn.Module, ABC):
+try:
+    from huggingface_hub import PyTorchModelHubMixin
+except ImportError:  # pragma: no cover - exercised when optional dependency is absent
+    class PyTorchModelHubMixin:  # type: ignore[no-redef]
+        pass
+
+
+class AbstractModel(nn.Module, PyTorchModelHubMixin, ABC):
+    def get_hf_config(self) -> dict[str, Any]:
+        return {
+            "model_class": self.__class__.__name__,
+            "model_kwargs": dict(getattr(self, "_mimose_model_kwargs", {})),
+            "mimose_model_name": getattr(self, "_mimose_model_name", self.__class__.__name__),
+        }
+
+    def export_hf_pretrained(self, save_directory: str | Path) -> Path:
+        export_dir = Path(save_directory)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        self._save_pretrained(export_dir)
+        (export_dir / "config.json").write_text(
+            json.dumps(self.get_hf_config(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return export_dir
+
+    def _save_pretrained(self, save_directory: str | Path) -> None:
+        target_dir = Path(save_directory)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        save_weights_only_checkpoint(
+            self.state_dict(),
+            target_dir / "final_weights_only.safetensors",
+        )
+
+    @classmethod
+    def _from_pretrained(
+        cls,
+        *,
+        model_id: str,
+        revision: str | None,
+        cache_dir: str | Path | None,
+        force_download: bool,
+        proxies: dict[str, str] | None,
+        resume_download: bool | None,
+        local_files_only: bool,
+        token: str | bool | None,
+        map_location: str | torch.device = "cpu",
+        strict: bool = False,
+        **model_kwargs: Any,
+    ) -> "AbstractModel":
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:  # pragma: no cover - depends on environment
+            raise RuntimeError(
+                "Loading from Hugging Face requires the 'huggingface_hub' package"
+            ) from exc
+
+        config_path = hf_hub_download(
+            repo_id=model_id,
+            filename="config.json",
+            revision=revision,
+            cache_dir=str(cache_dir) if cache_dir is not None else None,
+            force_download=force_download,
+            proxies=proxies,
+            resume_download=resume_download,
+            local_files_only=local_files_only,
+            token=token,
+        )
+        config_payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        init_kwargs = dict(config_payload.get("model_kwargs", {}))
+        init_kwargs.update(model_kwargs)
+        model = cls(**init_kwargs)
+        checkpoint_path = hf_hub_download(
+            repo_id=model_id,
+            filename="final_weights_only.safetensors",
+            revision=revision,
+            cache_dir=str(cache_dir) if cache_dir is not None else None,
+            force_download=force_download,
+            proxies=proxies,
+            resume_download=resume_download,
+            local_files_only=local_files_only,
+            token=token,
+        )
+        state_dict = load_weights_only_checkpoint(checkpoint_path, device=map_location)
+        model.load_state_dict(state_dict, strict=strict)
+        return model
+
     @abstractmethod
     def predict(
         self,

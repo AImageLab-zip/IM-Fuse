@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from rich.console import Console
 from rich.panel import Panel
@@ -199,6 +200,8 @@ def build_train_merged_config(
     wandb_mode: str | None,
     wandb_run_name: str | None,
     dataset_type: DatasetType | None,
+    push_to_hf: bool | None,
+    hf_repo: str | None,
 ) -> dict[str, object]:
     from mimose.training.config import parse_kv_list
 
@@ -252,6 +255,8 @@ def build_train_merged_config(
         wandb_mode=wandb_mode,
         wandb_run_name=wandb_run_name,
         dataset_type=dataset_type,
+        push_to_hf=push_to_hf,
+        hf_repo=hf_repo,
     )
     merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
     explicit_loss_kwargs = {
@@ -276,6 +281,101 @@ def build_train_merged_config(
         merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
     merged["custom_trainer_kwargs"] = merged_trainer_kwargs
     merged["split_file"] = str(resolved_split_file)
+    merged["push_to_hf"] = bool(merged.get("push_to_hf", False) or merged.get("hf_repo"))
+    if merged["push_to_hf"] and merged.get("hf_repo") is None:
+        raise typer.BadParameter(
+            "missing value; provide it in the CLI or in --config",
+            param_hint="--hf-repo",
+        )
+    return merged
+
+
+def _validate_hf_repo_id(hf_repo: str, *, param_hint: str = "--hf-repo") -> None:
+    if re.match(r"^https?://", hf_repo.strip()):
+        raise typer.BadParameter(
+            "expected a Hugging Face repo id like 'namespace/repo', not a full URL",
+            param_hint=param_hint,
+        )
+
+
+def build_push_merged_config(
+    *,
+    config: Path | None,
+    art_dir: Path | None,
+    checkpoint_path: Path | None,
+    trainer: TrainerKind | None,
+    model: ModelKind | None,
+    custom_model_kwargs: list[str] | None,
+    custom_trainer_kwargs: list[str] | None,
+    num_workers: int,
+    seed: int,
+    wandb_run_name: str | None,
+    dataset_type: DatasetType | None,
+    hf_repo: str | None,
+) -> dict[str, object]:
+    merged = build_train_merged_config(
+        config=config,
+        data_dir=None,
+        art_dir=art_dir,
+        trainer=trainer,
+        model=model,
+        loss=None,
+        custom_model_kwargs=custom_model_kwargs,
+        custom_loss_kwargs=None,
+        loss_num_classes=None,
+        fuse_weight=None,
+        sep_weight=None,
+        prm_weight=None,
+        loss_eps=None,
+        log_clamp_min=None,
+        custom_trainer_kwargs=custom_trainer_kwargs,
+        split_file=None,
+        optimizer=None,
+        betas=None,
+        momentum=None,
+        scheduler=None,
+        poly_total_iters=None,
+        poly_power=None,
+        cosine_t_max=None,
+        cosine_eta_min=None,
+        step_step_size=None,
+        step_gamma=None,
+        multistep_milestones=None,
+        multistep_gamma=None,
+        plateau_mode=None,
+        plateau_factor=None,
+        plateau_patience=None,
+        transform_kind=None,
+        lr=None,
+        num_epochs=None,
+        batch_size=None,
+        weight_decay=None,
+        num_workers=num_workers,
+        distributed=False,
+        nproc_per_node=None,
+        fp16=None,
+        resume=False,
+        seed=seed,
+        pretrain=None,
+        wandb_project=None,
+        wandb_mode=None,
+        wandb_run_name=wandb_run_name,
+        dataset_type=dataset_type,
+        push_to_hf=True,
+        hf_repo=hf_repo,
+    )
+    if checkpoint_path is not None:
+        merged["checkpoint_path"] = str(checkpoint_path)
+    _require_train_values(
+        merged,
+        "art_dir",
+        "trainer",
+        "model",
+        "data_dir",
+        "hf_repo",
+        "wandb_run_name",
+    )
+    _validate_hf_repo_id(str(merged["hf_repo"]))
     return merged
 
 
@@ -296,6 +396,25 @@ def maybe_relaunch_distributed(merged: dict[str, object]) -> None:
 
 
 def run_train_from_merged(merged: dict[str, object]) -> None:
+    trainer_instance = _build_trainer_instance_from_merged(merged)
+    trainer_instance.fit()
+
+
+def run_push_from_merged(merged: dict[str, object]) -> Path:
+    trainer_instance = _build_trainer_instance_from_merged(merged)
+    checkpoint_path = Path(
+        merged.get("checkpoint_path")
+        or (Path(merged["art_dir"]) / "checkpoints" / "final_weights_only.safetensors")
+    )
+    if not checkpoint_path.is_file():
+        raise typer.BadParameter(
+            f"checkpoint not found at {checkpoint_path}",
+            param_hint="--checkpoint-path",
+        )
+    return trainer_instance.push_checkpoint_to_hf(checkpoint_path)
+
+
+def _build_trainer_instance_from_merged(merged: dict[str, object]):
     from mimose.training.config import (
         OptimizerKind as TrainingOptimizerKind,
         SchedulerKind as TrainingSchedulerKind,
@@ -393,5 +512,7 @@ def run_train_from_merged(merged: dict[str, object]) -> None:
         wandb_mode=merged.get("wandb_mode"),
         wandb_run_name=merged.get("wandb_run_name"),
         dataset_type=merged.get("dataset_type"),
+        push_to_hf=bool(merged.get("push_to_hf", False)),
+        hf_repo=merged.get("hf_repo"),
     )
-    trainer_instance.fit()
+    return trainer_instance

@@ -1,4 +1,5 @@
 #!/bin/bash
+echo REMEMBER TO REMOVE THE HARDCODED VARS
 export CUDA_HOME=/homes/admin/spack/opt/spack/linux-ivybridge/cuda-12.6.3-cr3dswdcqnxbg772az4phx3g6qqmegwy
 export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH

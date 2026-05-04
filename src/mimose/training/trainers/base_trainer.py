@@ -65,6 +65,8 @@ class BaseTrainer(AbstractTrainer):
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
         dataset_type:str|None = None,
+        push_to_hf: bool = False,
+        hf_repo: str | None = None,
     ) -> None:
         super().__init__(
             input_dir=input_dir,
@@ -85,6 +87,8 @@ class BaseTrainer(AbstractTrainer):
             wandb_mode=wandb_mode,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
+            push_to_hf=push_to_hf,
+            hf_repo=hf_repo,
         )
 
         self.distributed = self._should_use_distributed()
@@ -135,7 +139,8 @@ class BaseTrainer(AbstractTrainer):
                     self._step_scheduler(val_metrics)
                     self._log_wandb_epoch(epoch, train_metrics, val_metrics)
                     self.save_checkpoint(epoch, is_best=self._is_best_checkpoint(val_metrics))
-                self.save_final_checkpoint()
+                final_checkpoint = self.save_final_checkpoint()
+                self._maybe_push_to_hf(final_checkpoint)
             except Exception as exc:
                 if self._is_cuda_oom_error(exc):
                     self._handle_cuda_oom()
@@ -258,6 +263,8 @@ class BaseTrainer(AbstractTrainer):
             raise RuntimeError(
                 f"{self.model_config.model_class.__name__} must inherit from AbstractModel"
             )
+        model._mimose_model_kwargs = dict(model_kwargs)
+        model._mimose_model_name = self.model_config.model_class.__name__
         return model.to(self.device)
 
     def _build_optimizer(
@@ -582,7 +589,80 @@ class BaseTrainer(AbstractTrainer):
             config["pretrain"] = str(self.pretrain)
         if self.custom_trainer_kwargs:
             config["custom_trainer_kwargs"] = dict(self.custom_trainer_kwargs)
+        if self.push_to_hf:
+            config["push_to_hf"] = self.push_to_hf
+            config["hf_repo"] = self.hf_repo
         return config
+
+    def _hf_export_dir(self) -> Path:
+        return self.output_dir / "huggingface" / self.wandb_run_name
+
+    def _maybe_push_to_hf(self, checkpoint_path: Path) -> None:
+        if not self.push_to_hf or not self.is_main_process:
+            return
+        if self.hf_repo is None:
+            raise click.ClickException(
+                "Hugging Face push requested, but no --hf-repo was provided."
+            )
+
+        try:
+            export_dir = self._export_hf_artifacts(checkpoint_path)
+            self._upload_hf_artifacts(export_dir)
+        except Exception as exc:
+            LOGGER.warning("Failed to push trained model to Hugging Face: %s", exc)
+            CONSOLE.print(
+                f"[yellow]Warning:[/yellow] failed to push trained model to Hugging Face: {exc}"
+            )
+
+    def _export_hf_artifacts(self, checkpoint_path: Path) -> Path:
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before Hugging Face export")
+        if not isinstance(model, AbstractModel):
+            raise RuntimeError("Hugging Face export requires an AbstractModel instance")
+
+        export_dir = model.export_hf_pretrained(self._hf_export_dir())
+        exported_checkpoint = export_dir / "final_weights_only.safetensors"
+        if checkpoint_path != exported_checkpoint and checkpoint_path.is_file():
+            exported_checkpoint.write_bytes(checkpoint_path.read_bytes())
+        return export_dir
+
+    def _upload_hf_artifacts(self, export_dir: Path) -> None:
+        try:
+            from huggingface_hub import HfApi
+        except ImportError as exc:  # pragma: no cover - depends on environment
+            raise RuntimeError(
+                "Pushing to Hugging Face requires the 'huggingface_hub' package"
+            ) from exc
+
+        HfApi().upload_folder(
+            repo_id=self.hf_repo,
+            folder_path=str(export_dir),
+            path_in_repo=self.wandb_run_name,
+            repo_type="model",
+        )
+
+    def push_checkpoint_to_hf(self, checkpoint_path: str | Path) -> Path:
+        if self.hf_repo is None:
+            raise click.ClickException(
+                "Hugging Face push requested, but no --hf-repo was provided."
+            )
+
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before Hugging Face export")
+
+        resolved_checkpoint = Path(checkpoint_path)
+        if not resolved_checkpoint.is_file():
+            raise click.ClickException(
+                f"checkpoint not found at {resolved_checkpoint}"
+            )
+
+        state_dict = load_weights_only_checkpoint(resolved_checkpoint, device=self.device)
+        model.load_state_dict(state_dict)
+        export_dir = self._export_hf_artifacts(resolved_checkpoint)
+        self._upload_hf_artifacts(export_dir)
+        return export_dir
 
     def _wandb_run_id_path(self) -> Path:
         return self.output_dir / "wandb_run_id.txt"
@@ -657,6 +737,8 @@ class BaseTrainer(AbstractTrainer):
         table.add_row("Resume", resume_text)
         table.add_row("W&B", wandb_text)
         table.add_row("Run Name", self.wandb_run_name)
+        if self.push_to_hf:
+            table.add_row("HF Repo", self.hf_repo or "missing")
         table.add_row("Data", str(self.input_dir))
         table.add_row("Output", str(self.output_dir))
 

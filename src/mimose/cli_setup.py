@@ -8,6 +8,7 @@ from mimose.utils.cli_overrides import CONFIGS_DIR
 
 
 CONFIG_TEMPLATES_DIR = CONFIGS_DIR.parent / "config_templates"
+HF_REPO_PLACEHOLDER_PREFIXES = ("/path/to/", "<", "__")
 
 
 def config_run_tag(config_path: Path) -> str:
@@ -44,6 +45,38 @@ def replace_yaml_line(
     return updated
 
 
+def upsert_yaml_line(
+    content: str,
+    *,
+    key: str,
+    value: str | None,
+) -> str:
+    pattern = re.compile(rf"^{re.escape(key)}:\s*.*$", re.MULTILINE)
+    if pattern.search(content):
+        return replace_yaml_line(content, key=key, value=value)
+
+    if content and not content.endswith("\n"):
+        content += "\n"
+    return content + f"{key}: {'null' if value is None else value}\n"
+
+
+def get_yaml_line_value(content: str, *, key: str) -> str | None:
+    pattern = re.compile(rf"^{re.escape(key)}:\s*(.*)$", re.MULTILINE)
+    match = pattern.search(content)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def is_placeholder_value(value: str | None) -> bool:
+    if value is None:
+        return False
+    cleaned = value.strip().strip("\"'")
+    if cleaned in {"", "null", "none", "~"}:
+        return False
+    return cleaned.startswith(HF_REPO_PLACEHOLDER_PREFIXES)
+
+
 def update_setup_config(
     *,
     config_path: Path,
@@ -51,6 +84,7 @@ def update_setup_config(
     brats23_dir: Path | None,
     preprocessed_root_dir: Path,
     artifacts_root_dir: Path,
+    hf_repo: str | None = None,
 ) -> None:
     content = config_path.read_text(encoding="utf-8")
     run_tag = config_run_tag(config_path)
@@ -79,7 +113,19 @@ def update_setup_config(
             key="output_path",
             value=str(artifacts_dir / "results.txt"),
         )
+        template_hf_repo = get_yaml_line_value(content, key="hf_repo")
+        if is_placeholder_value(template_hf_repo):
+            content = upsert_yaml_line(content, key="push_to_hf", value="true" if hf_repo else "false")
+            content = upsert_yaml_line(content, key="hf_repo", value=hf_repo)
     config_path.write_text(content, encoding="utf-8")
+
+
+def templates_require_hf_repo_prompt() -> bool:
+    for template_path in sorted(CONFIG_TEMPLATES_DIR.glob("*.y*ml")):
+        content = template_path.read_text(encoding="utf-8")
+        if is_placeholder_value(get_yaml_line_value(content, key="hf_repo")):
+            return True
+    return False
 
 
 def copy_config_templates() -> list[Path]:

@@ -33,6 +33,8 @@ class AbstractTrainer(ABC):
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
         dataset_type: str | None = None,
+        push_to_hf: bool = False,
+        hf_repo: str | None = None,
     ) -> None:
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -54,6 +56,8 @@ class AbstractTrainer(ABC):
         self.wandb_mode = wandb_mode
         self.wandb_run_name = wandb_run_name or "training"
         self.dataset_type = dataset_type
+        self.push_to_hf = bool(push_to_hf)
+        self.hf_repo = hf_repo
 
         self.split_file: Path | None = None
         self.train_split: list[dict[str, Any]] | None = None

@@ -93,6 +93,8 @@ seed: 999
 wandb_project: SegmentationMM
 wandb_mode: online
 wandb_run_name: dcseg18_training
+push_to_hf: false
+hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/dcseg18/checkpoints/final_weights_only.safetensors

@@ -10,11 +10,13 @@ from legacy.flops import __main__ as flops_main
 from legacy.flops import core as flops_core
 from legacy.flops.core import (
     DEFAULT_FULL_VOLUME_SHAPE,
+    DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE,
     FlopsMeasurement,
     FlopsReport,
     FullVolumeStrategy,
     MethodSpec,
     _LegacyWrapper,
+    _estimate_legacy_nonempty_crop_shape,
     _sliding_window_count,
     _strided_window_count,
     build_flops_table,
@@ -59,6 +61,20 @@ def test_specs_use_legacy_entrypoints() -> None:
         assert spec.import_root.exists()
     shaspec = get_method_spec("ShaSpec")
     assert shaspec.forward_shape == (80, 160, 160)
+    imfuse = get_method_spec("IMFuse")
+    assert imfuse.full_volume_shape == DEFAULT_FULL_VOLUME_SHAPE
+    assert imfuse.full_volume_strategy.kind == "legacy_non_empty_patched"
+
+
+def test_estimate_legacy_nonempty_crop_shape_matches_reference_default() -> None:
+    assert _estimate_legacy_nonempty_crop_shape(DEFAULT_FULL_VOLUME_SHAPE) == (
+        DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE
+    )
+
+
+def test_estimate_legacy_nonempty_crop_shape_respects_minimum_extent() -> None:
+    cropped = _estimate_legacy_nonempty_crop_shape((160, 160, 130))
+    assert cropped == (128, 128, 128)
 
 
 def test_sliding_window_count_matches_half_overlap_pattern() -> None:
@@ -250,6 +266,100 @@ def test_run_all_methods_verbose_includes_measurement_summary(
 
     captured = capsys.readouterr()
     assert "Finished Alpha: forward=ok, full_volume_forward=failed" in captured.err
+
+
+def test_run_flops_subprocess_returns_failed_measurement_on_empty_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="noisy stdout that should be ignored\n",
+            stderr="",
+        ),
+    )
+
+    report = flops_core.run_flops_subprocess(
+        "ShaSpec",
+        batch_size=1,
+        measure="all",
+        shape=None,
+        full_volume_shape=None,
+    )
+
+    measurement = report["measurements"][0]
+    assert measurement["status"] == "failed"
+    assert "produced no JSON output" in measurement["note"]
+
+
+def test_run_flops_subprocess_returns_failed_measurement_on_invalid_json_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        cmd = args[0]
+        json_index = cmd.index("--json") + 1
+        Path(cmd[json_index]).write_text("not json\n")
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="unexpected child noise\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        fake_run,
+    )
+
+    report = flops_core.run_flops_subprocess(
+        "ShaSpec",
+        batch_size=1,
+        measure="all",
+        shape=None,
+        full_volume_shape=None,
+    )
+
+    measurement = report["measurements"][0]
+    assert measurement["status"] == "failed"
+    assert "produced invalid JSON output" in measurement["note"]
+
+
+def test_run_flops_subprocess_reads_json_file_even_if_stdout_is_noisy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        cmd = args[0]
+        json_index = cmd.index("--json") + 1
+        Path(cmd[json_index]).write_text('{"method":"ShaSpec","measurements":[]}\n')
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="spurious log line\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    report = flops_core.run_flops_subprocess(
+        "ShaSpec",
+        batch_size=1,
+        measure="all",
+        shape=None,
+        full_volume_shape=None,
+    )
+
+    assert report["method"] == "ShaSpec"
+    assert report["measurements"] == []
 
 
 def test_measure_macs_falls_back_from_aten_to_pytorch(
@@ -572,3 +682,42 @@ def test_initialize_lazy_parameters_materializes_lazy_modules() -> None:
 
     assert not flops_core._has_uninitialized_parameters(model)
     assert flops_core._count_parameters(model) == 15
+
+
+def test_run_flops_for_method_uses_legacy_nonempty_crop_before_window_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _DummyModel(torch.nn.Module):
+        def forward(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            return images
+
+    spec = MethodSpec(
+        name="Dummy",
+        import_root=Path("."),
+        source_entrypoint="legacy/Dummy/test.py",
+        model_target="dummy.Model",
+        builder=lambda: _DummyModel(),
+        adapter_kind="images_mask",
+        forward_shape=(128, 128, 128),
+        full_volume_shape=DEFAULT_FULL_VOLUME_SHAPE,
+        full_volume_strategy=FullVolumeStrategy(
+            "legacy_non_empty_patched",
+            patch_shape=(128, 128, 128),
+            overlap=0.5,
+        ),
+    )
+
+    monkeypatch.setattr(flops_core, "_resolve_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(flops_core, "get_method_spec", lambda method: spec)
+    monkeypatch.setattr(flops_core, "_measure_macs", lambda *args, **kwargs: (10.0, ""))
+
+    report = flops_core.run_flops_for_method("Dummy", measure="all")
+    full_volume = next(
+        measurement
+        for measurement in report.measurements
+        if measurement.measurement == "full_volume_forward"
+    )
+
+    assert full_volume.input_shape == (1, 4, *DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE)
+    assert full_volume.macs == 80.0
+    assert "legacy non-empty crop" in full_volume.note

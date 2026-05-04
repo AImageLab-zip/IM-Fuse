@@ -1,10 +1,8 @@
 # Standard library
 import os
-import shutil
 import sys
 import time
-from urllib.parse import urlparse
-from urllib.request import urlopen
+import re
 
 # External dependencies
 import typer
@@ -110,16 +108,38 @@ def _resolve_resume_checkpoint(merged: dict[str, object]) -> Path | None:
     return checkpoint_path
 
 
-def _online_checkpoint_cache_path(art_dir: Path, checkpoint_link: str) -> Path:
-    parsed = urlparse(checkpoint_link)
-    suffix = Path(parsed.path).suffix or ".pth"
-    return art_dir / "checkpoints" / f"online_checkpoint{suffix}"
+def _safe_hf_repo_name(repo_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "--", repo_id.strip())
 
 
-def _download_checkpoint(checkpoint_link: str, destination: Path) -> None:
+def _online_checkpoint_cache_path(art_dir: Path, hf_repo: str, hf_run_name: str) -> Path:
+    return (
+        art_dir
+        / "checkpoints"
+        / "hf"
+        / _safe_hf_repo_name(hf_repo)
+        / hf_run_name
+        / "final_weights_only.safetensors"
+    )
+
+
+def _download_hf_checkpoint(hf_repo: str, hf_run_name: str, destination: Path) -> None:
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "Downloading from Hugging Face requires the 'huggingface_hub' package"
+        ) from exc
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen(checkpoint_link) as response, destination.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
+    downloaded_path = hf_hub_download(
+        repo_id=hf_repo,
+        filename=f"{hf_run_name}/final_weights_only.safetensors",
+        local_dir=str(destination.parent),
+    )
+    downloaded_file = Path(downloaded_path)
+    if downloaded_file != destination:
+        destination.write_bytes(downloaded_file.read_bytes())
 
 
 def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
@@ -144,11 +164,18 @@ def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
             )
         return checkpoint_path
 
-    checkpoint_link = merged.get("checkpoint_link")
-    if checkpoint_link is None:
+    hf_repo = merged.get("hf_repo")
+    if hf_repo is None:
         raise typer.BadParameter(
             "missing value; provide it in the CLI or in --config",
-            param_hint="--checkpoint-link",
+            param_hint="--hf-repo",
+        )
+
+    hf_run_name = merged.get("hf_run_name")
+    if hf_run_name is None:
+        raise typer.BadParameter(
+            "missing value; provide it in the CLI or in --config",
+            param_hint="--hf-run-name",
         )
 
     art_dir = merged.get("art_dir")
@@ -158,18 +185,25 @@ def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
             param_hint="--art-dir",
         )
 
-    cached_checkpoint = _online_checkpoint_cache_path(Path(art_dir), str(checkpoint_link))
+    cached_checkpoint = _online_checkpoint_cache_path(
+        Path(art_dir),
+        str(hf_repo),
+        str(hf_run_name),
+    )
     if cached_checkpoint.is_file():
         typer.echo(f"Using cached checkpoint at {cached_checkpoint}")
         return cached_checkpoint
 
-    typer.echo(f"Downloading checkpoint from {checkpoint_link} to {cached_checkpoint}")
+    typer.echo(
+        f"Downloading checkpoint from Hugging Face repo {hf_repo} "
+        f"run {hf_run_name} to {cached_checkpoint}"
+    )
     try:
-        _download_checkpoint(str(checkpoint_link), cached_checkpoint)
+        _download_hf_checkpoint(str(hf_repo), str(hf_run_name), cached_checkpoint)
     except Exception as exc:  # pragma: no cover - exact network errors vary
         raise typer.BadParameter(
-            f"failed to download checkpoint from {checkpoint_link}: {exc}",
-            param_hint="--checkpoint-link",
+            f"failed to download checkpoint from {hf_repo}/{hf_run_name}: {exc}",
+            param_hint="--hf-repo",
         ) from exc
     return cached_checkpoint
 
@@ -251,6 +285,7 @@ def setup() -> None:
     cli_setup = _get_cli_setup()
 
     console = cli_display.CONSOLE
+    prompt_path = cli_display.prompt_path
     prompt_optional_existing_directory = cli_display.prompt_optional_existing_directory
     prompt_required_directory = cli_display.prompt_required_directory
 
@@ -290,6 +325,13 @@ def setup() -> None:
         label="Artifacts Root",
         prompt="Root directory for training artifacts",
     )
+    templates_require_hf_repo_prompt = cli_setup.templates_require_hf_repo_prompt
+    hf_repo: str | None = None
+    if templates_require_hf_repo_prompt():
+        hf_repo = prompt_path(
+            "Provide a Hugging Face repo to push checkpoints to (recommended). "
+            "Leave empty to skip"
+        ).strip() or None
 
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", no_wrap=True)
@@ -298,6 +340,7 @@ def setup() -> None:
     table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
     table.add_row("Preprocessed Root", str(preprocessed_root_dir))
     table.add_row("Artifacts Root", str(artifacts_root_dir))
+    table.add_row("HF Repo", hf_repo or "template-driven")
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     table.add_row("Configs", str(CONFIGS_DIR))
     table.add_row("Checkpoint Path", "<art_dir>/checkpoints/final_weights_only.safetensors")
@@ -323,6 +366,7 @@ def setup() -> None:
             brats23_dir=brats23_dir,
             preprocessed_root_dir=preprocessed_root_dir,
             artifacts_root_dir=artifacts_root_dir,
+            hf_repo=hf_repo,
         )
 
     result_table = Table.grid(padding=(0, 2))
@@ -334,6 +378,7 @@ def setup() -> None:
     result_table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
     result_table.add_row("Preprocessed Root", str(preprocessed_root_dir))
     result_table.add_row("Artifacts Root", str(artifacts_root_dir))
+    result_table.add_row("HF Repo", hf_repo or "template-driven")
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
 
     console.print(
@@ -595,6 +640,8 @@ def preprocess_train(
         wandb_mode=None,
         wandb_run_name=None,
         dataset_type=None,
+        push_to_hf=None,
+        hf_repo=None,
     )
     workflows.maybe_relaunch_distributed(train_merged)
     workflows.run_train_from_merged(train_merged)
@@ -896,6 +943,18 @@ def train(
         help="Optional Weights & Biases run name. Defaults to 'training'.",
         rich_help_panel="Logging",
     ),
+    push_to_hf: bool | None = typer.Option(
+        None,
+        "--push-to-hf/--no-push-to-hf",
+        help="Export the final trained model and upload it to Hugging Face.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_repo: str | None = typer.Option(
+        None,
+        "--hf-repo",
+        help="Target Hugging Face model repo id, for example owner/repo.",
+        rich_help_panel="Checkpointing",
+    ),
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
@@ -912,7 +971,10 @@ def train(
 
     trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
 
-    with console.status("[bold cyan]Starting MiMoSe[/bold cyan]", spinner="dots") as status:
+    with console.status(
+        "[bold cyan]Starting MiMoSe[/bold cyan]",
+        spinner="dots",
+    ) as status:
         status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]reading configuration[/dim]")
         merged = workflows.build_train_merged_config(
             config=config,
@@ -962,12 +1024,14 @@ def train(
             wandb_mode=wandb_mode,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
+            push_to_hf=push_to_hf,
+            hf_repo=hf_repo,
         )
         workflows.maybe_relaunch_distributed(merged)
 
-        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]building training objects[/dim]")
-        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]initializing trainer[/dim]")
-        workflows.run_train_from_merged(merged)
+        status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]preparing training launch[/dim]")
+
+    workflows.run_train_from_merged(merged)
 
 
 @app.command()
@@ -1017,16 +1081,22 @@ def test(
         help="Path to a weights-only .safetensors checkpoint to evaluate.",
         rich_help_panel="Checkpointing",
     ),
-    checkpoint_link: str | None = typer.Option(
-        None,
-        "--checkpoint-link",
-        help="URL to a weights-only .safetensors checkpoint used when --online is enabled.",
-        rich_help_panel="Checkpointing",
-    ),
     online: bool = typer.Option(
         False,
         "--online",
-        help="Download the checkpoint from --checkpoint-link into art_dir/checkpoints and reuse it if already cached.",
+        help="Download the checkpoint from Hugging Face into art_dir/checkpoints and reuse it if already cached.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_repo: str | None = typer.Option(
+        None,
+        "--hf-repo",
+        help="Hugging Face model repo id used when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_run_name: str | None = typer.Option(
+        None,
+        "--hf-run-name",
+        help="Run-name subdirectory inside the Hugging Face repo used when --online is enabled.",
         rich_help_panel="Checkpointing",
     ),
     model: ModelKind | None = typer.Option(
@@ -1085,8 +1155,9 @@ def test(
         output_path=output_path,
         art_dir=art_dir,
         checkpoint_path=checkpoint_path,
-        checkpoint_link=checkpoint_link,
         online=online,
+        hf_repo=hf_repo,
+        hf_run_name=hf_run_name,
         model=model,
         custom_model_kwargs=parse_kv_list(custom_model_kwargs),
         split_file=split_file,
@@ -1122,6 +1193,124 @@ def test(
         seed=int(merged.get("seed", 42)),
     )
     typer.echo(f"Test report written to {output_file}")
+
+
+@app.command()
+def push(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    art_dir: Path | None = typer.Option(
+        None,
+        "--art-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Artifact directory containing the trained checkpoint and export outputs.",
+        rich_help_panel="Input/Output",
+    ),
+    checkpoint_path: Path | None = typer.Option(
+        None,
+        "--checkpoint-path",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Optional weights-only .safetensors checkpoint to upload. Defaults to art_dir/checkpoints/final_weights_only.safetensors.",
+        rich_help_panel="Checkpointing",
+    ),
+    trainer: TrainerKind | None = typer.Option(
+        None,
+        "--trainer",
+        help="Trainer implementation to use when rebuilding the model for export.",
+        rich_help_panel="Model",
+    ),
+    model: ModelKind | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    custom_trainer_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-trainer-kwargs",
+        "--costom--trainer--kwargs",
+        help="Additional trainer kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Number of dataloader workers used while rebuilding the trainer.",
+        rich_help_panel="Runtime",
+    ),
+    seed: int = typer.Option(
+        69,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
+    ),
+    wandb_run_name: str | None = typer.Option(
+        None,
+        "--wandb-run-name",
+        help="Run-name subdirectory used for the Hugging Face export and upload path.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_repo: str | None = typer.Option(
+        None,
+        "--hf-repo",
+        help="Target Hugging Face model repo id, for example owner/repo.",
+        rich_help_panel="Checkpointing",
+    ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Input dataset type. Choose either brats18 or brats23",
+        rich_help_panel="Input/Output",
+    ),
+) -> None:
+    """Upload an existing local checkpoint to Hugging Face without training."""
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    from mimose.training.config import parse_kv_list
+
+    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
+
+    with console.status(
+        "[bold cyan]Preparing Hugging Face push[/bold cyan]",
+        spinner="dots",
+    ) as status:
+        status.update("[bold cyan]Preparing Hugging Face push[/bold cyan]  [dim]reading configuration[/dim]")
+        merged = workflows.build_push_merged_config(
+            config=config,
+            art_dir=art_dir,
+            checkpoint_path=checkpoint_path,
+            trainer=trainer,
+            model=model,
+            custom_model_kwargs=parse_kv_list(custom_model_kwargs),
+            custom_trainer_kwargs=trainer_kwargs,
+            num_workers=num_workers,
+            seed=seed,
+            wandb_run_name=wandb_run_name,
+            dataset_type=dataset_type,
+            hf_repo=hf_repo,
+        )
+        status.update("[bold cyan]Preparing Hugging Face push[/bold cyan]  [dim]building export objects[/dim]")
+
+    export_dir = workflows.run_push_from_merged(merged)
+    typer.echo(f"Pushed model artifacts from {export_dir}")
 
 
 @app.command()
