@@ -83,9 +83,8 @@ def run_preprocess_from_merged(
         build_norm_config,
     )
     from mimose.preprocessing.pipeline import run_preprocessing
-    from mimose.datasets.config import DatasetType as PreprocessingDatasetType
 
-    require_preprocess_values(merged, "input_dir", "output_dir", "dataset_type")
+    require_preprocess_values(merged, "input_dir", "output_dir")
     crop_config = build_crop_config(
         crop_mode=str(merged.get("crop_mode", CropMode.NONE.value)),
         crop_size=merged.get("crop_size"),
@@ -106,7 +105,6 @@ def run_preprocess_from_merged(
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", no_wrap=True)
     table.add_column(style="white")
-    table.add_row("Dataset", str(merged.get("dataset_type")))
     table.add_row("Crop", crop_config.fn.__name__)
     table.add_row("Clamp", clamp_config.fn.__name__)
     table.add_row("Normalize", norm_config.fn.__name__)
@@ -125,7 +123,6 @@ def run_preprocess_from_merged(
     run_preprocessing(
         input_dir=Path(merged.get("input_dir")),
         output_dir=Path(merged.get("output_dir")),
-        dataset_type=PreprocessingDatasetType(merged.get("dataset_type")),
         crop_config=crop_config,
         clamp_config=clamp_config,
         norm_config=norm_config,
@@ -140,6 +137,19 @@ def _require_train_values(merged: dict[str, object], *required_keys: str) -> Non
                 "missing value; provide it in the CLI or in --config",
                 param_hint=f"--{key.replace('_', '-')}",
             )
+
+
+def _require_existing_data_dir(merged: dict[str, object]) -> None:
+    data_dir = merged.get("data_dir")
+    if data_dir is None:
+        return
+
+    resolved = Path(data_dir)
+    if not resolved.is_dir():
+        raise typer.BadParameter(
+            f"dataset directory not found: {resolved}",
+            param_hint="--data-dir",
+        )
 
 
 def _merged_value(
@@ -206,7 +216,21 @@ def build_train_merged_config(
     from mimose.training.config import parse_kv_list
 
     yaml_config = load_yaml_config(config)
-    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
+    model_kwargs = (
+        parse_kv_list(custom_model_kwargs)
+        if custom_model_kwargs is not None
+        else None
+    )
+    loss_kwargs = (
+        parse_kv_list(custom_loss_kwargs)
+        if custom_loss_kwargs is not None
+        else None
+    )
+    trainer_kwargs = (
+        parse_kv_list(custom_trainer_kwargs)
+        if custom_trainer_kwargs is not None
+        else None
+    )
     merged = merge_cli_overrides(
         yaml_config,
         data_dir=data_dir,
@@ -214,8 +238,8 @@ def build_train_merged_config(
         trainer=trainer,
         model=model,
         loss=loss,
-        custom_model_kwargs=parse_kv_list(custom_model_kwargs),
-        custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
+        custom_model_kwargs=model_kwargs,
+        custom_loss_kwargs=loss_kwargs,
         loss_num_classes=loss_num_classes,
         fuse_weight=fuse_weight,
         sep_weight=sep_weight,
@@ -287,6 +311,7 @@ def build_train_merged_config(
             "missing value; provide it in the CLI or in --config",
             param_hint="--hf-repo",
         )
+    _require_existing_data_dir(merged)
     return merged
 
 
@@ -427,6 +452,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         build_model_config,
     )
     from mimose.training.trainers import DCSegTrainer, IMFuseTrainer
+    from mimose.training.transforms import build_transform_manager
 
     _require_train_values(
         merged,
@@ -493,14 +519,43 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         plateau_factor=float(_merged_value(merged, "plateau_factor", 0.1)),
         plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
     )
+    trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
+    default_transform_kind = (
+        TransformKind.DCSEG
+        if trainer_kind is TrainerKind.DCSEG
+        else TransformKind.IMFUSE
+    )
+    resolved_transform_kind = TransformKind(
+        trainer_kwargs.get(
+            "transform_kind",
+            merged.get("transform_kind", default_transform_kind),
+        )
+    )
+    if (
+        model_kind == TrainingModelKind.TINYMIMOSA
+        and resolved_transform_kind != TransformKind.TINYMIMOSA
+    ):
+        raise typer.BadParameter(
+            "TinyMimosa requires transform_kind=tinymimosa in config/overrides.\n"
+            f"resolved model={model_kind.value}\n"
+            f"resolved transform_kind={resolved_transform_kind.value}\n"
+            f"custom_trainer_kwargs={trainer_kwargs}",
+            param_hint="--transform-kind",
+        )
+    trainer_kwargs["transform_kind"] = resolved_transform_kind.value
+    transform_manager = build_transform_manager(
+        resolved_transform_kind,
+        model_kwargs=model_config.kwargs,
+    )
     trainer_instance = trainer_class(
         input_dir=Path(merged["data_dir"]),
         output_dir=Path(merged["art_dir"]),
-        custom_trainer_kwargs=dict(merged.get("custom_trainer_kwargs") or {}),
+        custom_trainer_kwargs=trainer_kwargs,
         model_config=model_config,
         loss_config=loss_config,
         optimizer_config=optimizer_config,
         scheduler_config=scheduler_config,
+        transform_manager=transform_manager,
         num_epochs=resolved_num_epochs,
         batch_size=int(merged.get("batch_size", 1)),
         num_workers=int(merged.get("num_workers", 8)),

@@ -1,5 +1,6 @@
 import re
 import shutil
+import zipfile
 from pathlib import Path
 
 import typer
@@ -8,6 +9,37 @@ from mimose.utils.cli_overrides import CONFIGS_DIR
 
 
 CONFIG_TEMPLATES_DIR = CONFIGS_DIR.parent / "config_templates"
+
+
+def zip_member_count(zip_path: Path) -> int:
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        return sum(1 for m in zf.infolist() if len(Path(m.filename).parts) > 1)
+
+
+def unzip_strip_root(zip_path: Path, dest: Path, *, on_file=None) -> None:
+    """Extract a ZIP, skipping its single root directory so its subfolders land directly in dest."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            parts = Path(member.filename).parts
+            if len(parts) <= 1:
+                continue  # the root dir entry itself
+            target = dest / Path(*parts[1:])
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, target.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+            if on_file is not None:
+                on_file()
+def unzip_worker(zip_path: Path, dest: Path, queue, task_id: int) -> None:
+    try:
+        unzip_strip_root(zip_path, dest, on_file=lambda: queue.put(task_id))
+        queue.put((task_id, None))
+    except Exception as exc:
+        queue.put((task_id, exc))
+
+
 HF_REPO_PLACEHOLDER_PREFIXES = ("/path/to/", "<", "__")
 
 
@@ -18,14 +50,9 @@ def config_run_tag(config_path: Path) -> str:
 def dataset_input_dir_for_config(
     config_name: str,
     *,
-    brats18_dir: Path | None,
-    brats23_dir: Path | None,
+    brats_data_dir: Path | None,
 ) -> str | None:
-    if config_name.endswith("_18.yaml"):
-        return str(brats18_dir) if brats18_dir is not None else None
-    if config_name.endswith("_23.yaml"):
-        return str(brats23_dir) if brats23_dir is not None else None
-    return None
+    return str(brats_data_dir) if brats_data_dir is not None else None
 
 
 def replace_yaml_line(
@@ -80,23 +107,22 @@ def is_placeholder_value(value: str | None) -> bool:
 def update_setup_config(
     *,
     config_path: Path,
-    brats18_dir: Path | None,
-    brats23_dir: Path | None,
+    brats_data_dir: Path | None,
     preprocessed_root_dir: Path,
     artifacts_root_dir: Path,
     hf_repo: str | None = None,
 ) -> None:
     content = config_path.read_text(encoding="utf-8")
     run_tag = config_run_tag(config_path)
-    preprocessed_dir = preprocessed_root_dir / f"{run_tag}-preprocessed"
+    preprocessed_folder = Path(get_yaml_line_value(content, key="output_dir").rstrip("/")).name
+    preprocessed_dir = preprocessed_root_dir / preprocessed_folder
     artifacts_dir = artifacts_root_dir / run_tag
     content = replace_yaml_line(
         content,
         key="input_dir",
         value=dataset_input_dir_for_config(
             config_path.name,
-            brats18_dir=brats18_dir,
-            brats23_dir=brats23_dir,
+            brats_data_dir=brats_data_dir,
         ),
     )
     content = replace_yaml_line(content, key="output_dir", value=str(preprocessed_dir))

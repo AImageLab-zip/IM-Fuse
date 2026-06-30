@@ -14,6 +14,7 @@ from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
 from mimose.training.trainers.base_trainer import BaseTrainer
 from mimose.training.transforms import build_transform_manager
+from mimose.training.transforms.base_transforms import TransformManager
 
 DEFAULT_PATCH_SIZE = 128
 
@@ -28,6 +29,7 @@ class IMFuseTrainer(BaseTrainer):
         loss_config: LossConfig | None = None,
         optimizer_config: OptimizerConfig | None = None,
         scheduler_config: SchedulerConfig | None = None,
+        transform_manager: TransformManager | None = None,
         num_epochs: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
@@ -38,18 +40,15 @@ class IMFuseTrainer(BaseTrainer):
         wandb_project: str | None = None,
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
-        dataset_type:str|None = None,
+        dataset_type: str | None = None,
         push_to_hf: bool = False,
         hf_repo: str | None = None,
     ) -> None:
         trainer_kwargs = dict(custom_trainer_kwargs or {})
-        self.dataset_type = self._resolve_dataset_type(
-             dataset_type
-        )
         self.dataname = str(
             trainer_kwargs.get(
                 "dataname",
-                "BRATS2023" if self.dataset_type is DatasetType.BRATS23 else "BRATS2018",
+                "BRATS2023",
             )
         )
         self.iter_per_epoch = (
@@ -85,6 +84,7 @@ class IMFuseTrainer(BaseTrainer):
             loss_config=loss_config,
             optimizer_config=optimizer_config,
             scheduler_config=scheduler_config,
+            transform_manager=transform_manager,
             num_epochs=num_epochs,
             batch_size=effective_batch_size,
             num_workers=effective_num_workers,
@@ -99,6 +99,7 @@ class IMFuseTrainer(BaseTrainer):
             push_to_hf=push_to_hf,
             hf_repo=hf_repo,
         )
+        self.dataset_type = self._resolve_dataset_type(dataset_type)
 
         if self.pretrain is not None and self.resume is None:
             self._load_pretrain()
@@ -109,7 +110,7 @@ class IMFuseTrainer(BaseTrainer):
 
         self.model.train()
         self._set_aux_training_flag(True)
-        steps = len(self.train_loader)
+        steps = self.iter_per_epoch if self.iter_per_epoch is not None else len(self.train_loader)
         totals = {
             "loss": 0.0,
             "fusecross": 0.0,
@@ -225,7 +226,12 @@ class IMFuseTrainer(BaseTrainer):
         if self.train_split is None or self.val_split is None:
             raise RuntimeError("train_split and val_split must be loaded before building datasets")
 
-        transform_manager = build_transform_manager(self.transform_kind)
+        transform_manager = self.transform_manager
+        if transform_manager is None:
+            transform_manager = build_transform_manager(
+                self.transform_kind,
+                model_kwargs=(self.model_config.kwargs if self.model_config is not None else None),
+            )
         train_set = IMFuseDataset(
             root=self.input_dir,
             masking_mode=self.train_masking_mode,
@@ -260,14 +266,25 @@ class IMFuseTrainer(BaseTrainer):
         images = batch["images"].to(self.device, non_blocking=True)
         seg = batch["seg"].to(self.device, non_blocking=True).long()
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
-        images, seg = self._crop_pair(images, seg, random_crop=True)
         with self._autocast_context():
             target = self._seg_to_one_hot(seg)
-            fuse_pred, sep_preds, prm_preds = self.model(images, mask)
+            try:
+                outputs = self.model(images, mask)
+            except RuntimeError as exc:
+                paired_transform = None
+                if self.transform_manager is not None:
+                    paired_transform = getattr(self.transform_manager, "train_transforms", {}).get("paired")
+                raise RuntimeError(
+                    "Training batch/model shape mismatch.\n"
+                    f"batch_images_shape={tuple(images.shape)}\n"
+                    f"batch_seg_shape={tuple(seg.shape)}\n"
+                    f"transform_manager={type(self.transform_manager).__name__ if self.transform_manager is not None else 'None'}\n"
+                    f"paired_transform={type(paired_transform).__name__ if paired_transform is not None else 'None'}\n"
+                    f"paired_crop_size={getattr(paired_transform, 'crop_size', None)}\n"
+                    f"paired_tile_shape={getattr(paired_transform, 'tile_shape', None)}"
+                ) from exc
             metrics = self._loss_impl().training_loss(
-                fuse_pred,
-                sep_preds,
-                prm_preds,
+                outputs,
                 target,
                 include_fuse=epoch >= self.region_fusion_start_epoch,
             )
@@ -283,14 +300,3 @@ class IMFuseTrainer(BaseTrainer):
             "prmcross": float(metrics["prmcross"].item()),
             "prmdice": float(metrics["prmdice"].item()),
         }
-
-    def _window_starts(self, size: int) -> list[int]:
-        if size <= self.patch_size:
-            return [0]
-
-        stride = self.patch_size // 2
-        starts = list(range(0, max(size - self.patch_size, 0), stride))
-        last_start = size - self.patch_size
-        if not starts or starts[-1] != last_start:
-            starts.append(last_start)
-        return starts

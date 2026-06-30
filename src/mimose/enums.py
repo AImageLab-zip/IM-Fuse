@@ -6,6 +6,7 @@ from mimose.utils.cli_overrides import CONFIG_NONE
 class DatasetType(StrEnum):
     BRATS18 = "brats18"
     BRATS23 = "brats23"
+    BRATS25 = "brats25"
 
 
 class CropMode(StrEnum):
@@ -37,12 +38,14 @@ class ModelKind(StrEnum):
     MMFORMER = "mmformer"
     DCSEG = "dcseg"
     RFNET = "rfnet"
+    TINYMIMOSA = "tinymimosa"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
     DCSEG = "dcseg"
     RFNET = "rfnet"
+    TINYMIMOSA = "tinymimosa"
 
 
 class OptimizerKind(StrEnum):
@@ -63,6 +66,7 @@ class SchedulerKind(StrEnum):
 class LossKind(StrEnum):
     IMFUSE = "imfuse"
     DCSEG = "dcseg"
+    TINYMIMOSA = "tinymimosa"
 
 
 class MaskingMode(StrEnum):

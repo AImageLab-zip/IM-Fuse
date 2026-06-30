@@ -237,6 +237,58 @@ class DCSegTransform(IMFuseTransform):
         return images, labels
 
 
+class TinyMimosaTransform(IMFuseTransform):
+    def __init__(
+        self,
+        *,
+        input_shape: tuple[int, int, int] = (182, 218, 182),
+        features_per_stage: tuple[int, ...] = (8, 16, 32, 64),
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        spatial_multiple = 2 ** (len(features_per_stage) - 1)
+        self.tile_shape = tuple(
+            self._round_up_to_multiple(int(dim), spatial_multiple)
+            for dim in input_shape
+        )
+        self.spatial_multiple = spatial_multiple
+
+    def __call__(
+        self,
+        images: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        images, labels = super().__call__(images, labels)
+        return self._pad_to_compatible_shape(images, labels)
+
+    def _pad_to_compatible_shape(
+        self,
+        images: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        current_shape = tuple(int(dim) for dim in images.shape[1:])
+        target_shape = tuple(
+            self._round_up_to_multiple(max(current, minimum), self.spatial_multiple)
+            for current, minimum in zip(current_shape, self.tile_shape)
+        )
+        pad_sizes: list[int] = []
+        for current, target in zip(reversed(current_shape), reversed(target_shape)):
+            total_pad = max(target - current, 0)
+            pad_before = total_pad // 2
+            pad_after = total_pad - pad_before
+            pad_sizes.extend((pad_before, pad_after))
+        if any(pad_sizes):
+            images = F.pad(images, tuple(pad_sizes))
+            labels = F.pad(labels, tuple(pad_sizes))
+        return images.contiguous(), labels.contiguous()
+
+    @staticmethod
+    def _round_up_to_multiple(value: int, multiple: int) -> int:
+        if multiple <= 0:
+            raise ValueError("multiple must be positive")
+        return ((value + multiple - 1) // multiple) * multiple
+
+
 class IMFuseTransformManager(TransformManager):
     def _setup_transforms(self) -> None:
         self.train_transforms = {
@@ -305,6 +357,40 @@ class RFNetTransformManager(TransformManager):
         self.test_transforms = {
             "paired": IMFuseTransform(
                 crop_size=None,
+                rotation_degrees=0.0,
+                intensity_factors=(0.0, 0.0),
+                flip_probabilities=(0.0, 0.0, 0.0),
+            ),
+        }
+
+
+class TinyMimosaTransformManager(TransformManager):
+    def __init__(
+        self,
+        *,
+        input_shape: tuple[int, int, int] = (182, 218, 182),
+        features_per_stage: tuple[int, ...] = (8, 16, 32, 64),
+    ) -> None:
+        self.input_shape = tuple(int(dim) for dim in input_shape)
+        self.features_per_stage = tuple(int(ch) for ch in features_per_stage)
+        super().__init__()
+
+    def _setup_transforms(self) -> None:
+        self.train_transforms = {
+            "paired": TinyMimosaTransform(
+                crop_size=None,
+                input_shape=self.input_shape,
+                features_per_stage=self.features_per_stage,
+                rotation_degrees=10.0,
+                intensity_factors=(0.1, 0.1),
+                flip_probabilities=(0.5, 0.5, 0.5),
+            ),
+        }
+        self.test_transforms = {
+            "paired": TinyMimosaTransform(
+                crop_size=None,
+                input_shape=self.input_shape,
+                features_per_stage=self.features_per_stage,
                 rotation_degrees=0.0,
                 intensity_factors=(0.0, 0.0),
                 flip_probabilities=(0.0, 0.0, 0.0),

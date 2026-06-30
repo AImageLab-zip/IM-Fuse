@@ -1,3 +1,4 @@
+import ast
 import yaml
 from pathlib import Path
 from typing import Any
@@ -49,13 +50,27 @@ def load_yaml_config(config_path: Path | None) -> dict[str, Any]:
     resolved_path = _resolve_config_path(config_path)
     with resolved_path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    for key,value in data.items():
-        if isinstance(value,list):
-            data[key] = tuple(value)
+    data = _normalize_config_value(data)
     if not isinstance(data, dict):
         raise typer.BadParameter("YAML config must contain a mapping at the top level.", param_hint="--config")
 
     return data
+
+
+def _normalize_config_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_config_value(inner) for key, inner in value.items()}
+    if isinstance(value, list):
+        return tuple(_normalize_config_value(inner) for inner in value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("(", "[", "{")) and stripped.endswith((")", "]", "}")):
+            try:
+                parsed = ast.literal_eval(stripped)
+            except (ValueError, SyntaxError):
+                return value
+            return _normalize_config_value(parsed)
+    return value
 
 def merge_cli_overrides(
     yaml_config: dict[str, Any],

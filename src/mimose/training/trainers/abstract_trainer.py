@@ -10,6 +10,7 @@ from torch.amp import GradScaler
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
+from mimose.training.transforms.base_transforms import TransformManager
 
 
 class AbstractTrainer(ABC):
@@ -22,6 +23,7 @@ class AbstractTrainer(ABC):
         loss_config: LossConfig | None = None,
         optimizer_config: OptimizerConfig | None = None,
         scheduler_config: SchedulerConfig | None = None,
+        transform_manager: TransformManager | None = None,
         num_epochs: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
@@ -44,6 +46,7 @@ class AbstractTrainer(ABC):
         self.custom_trainer_kwargs = custom_trainer_kwargs or {}
         self.optimizer_config = optimizer_config
         self.scheduler_config = scheduler_config
+        self.transform_manager = transform_manager
         self.num_epochs = int(num_epochs)
         self.batch_size = batch_size
         self.num_workers = num_workers

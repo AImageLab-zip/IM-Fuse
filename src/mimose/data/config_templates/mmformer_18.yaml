@@ -8,8 +8,8 @@
 # scheduler, and default optimization hyperparameters.
 
 # preprocess
-input_dir: /path/to/brats18
-output_dir: /path/to/preprocessed/mmformer18-preprocessed/
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/mmformer-preprocessed/
 dataset_type: brats18
 
 crop_mode: non_empty
@@ -29,7 +29,7 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /path/to/preprocessed/mmformer18-preprocessed
+data_dir: /path/to/preprocessed/mmformer-preprocessed
 art_dir: /path/to/artifacts/mmformer18
 
 trainer: imfuse

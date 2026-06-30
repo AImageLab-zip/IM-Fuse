@@ -35,6 +35,7 @@ from mimose.training.trainers.abstract_trainer import AbstractTrainer
 from mimose.losses.config import LossConfig
 from mimose.models.abstract_model import AbstractModel
 from mimose.models.config import ModelConfig
+from mimose.training.transforms.base_transforms import TransformManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class BaseTrainer(AbstractTrainer):
         loss_config: LossConfig | None = None,
         optimizer_config: OptimizerConfig | None = None,
         scheduler_config: SchedulerConfig | None = None,
+        transform_manager: TransformManager | None = None,
 
         num_epochs: int = 1,
         batch_size: int | None = None,
@@ -64,7 +66,7 @@ class BaseTrainer(AbstractTrainer):
         wandb_project: str | None = None,
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
-        dataset_type:str|None = None,
+        dataset_type: str | None = None,
         push_to_hf: bool = False,
         hf_repo: str | None = None,
     ) -> None:
@@ -76,6 +78,7 @@ class BaseTrainer(AbstractTrainer):
             loss_config=loss_config,
             optimizer_config=optimizer_config,
             scheduler_config=scheduler_config,
+            transform_manager=transform_manager,
             num_epochs=num_epochs,
             batch_size=batch_size,
             num_workers=num_workers,
@@ -234,8 +237,6 @@ class BaseTrainer(AbstractTrainer):
         last_path = self.checkpoint_dir / "model_last.pth"
         torch.save(checkpoint, last_path)
 
-        epoch_path = self.checkpoint_dir / f"model_{epoch}.pth"
-        #torch.save(checkpoint, epoch_path)
         if is_best:
             best_path = self.checkpoint_dir / "best.pth"
             torch.save(checkpoint, best_path)
@@ -429,7 +430,9 @@ class BaseTrainer(AbstractTrainer):
         return train_loader, val_loader
 
     @staticmethod
-    def _resolve_dataset_type(dataset_type: Any | None) -> DatasetType:
+    def _resolve_dataset_type(dataset_type: Any | None) -> DatasetType | None:
+        if dataset_type is None:
+            return None
         return DatasetType(str(dataset_type).lower())
 
     def _resolve_resume_path(self, resume: bool) -> Path | None:
@@ -564,12 +567,19 @@ class BaseTrainer(AbstractTrainer):
         self.wandb_run.log(payload)
 
     def _wandb_config_payload(self) -> dict[str, Any]:
-        config: dict[str, Any] = {"input_dir": str(self.input_dir), "output_dir": str(self.output_dir),
-                                  "num_epochs": self.num_epochs, "batch_size": self.batch_size,
-                                  "num_workers": self.num_workers, "fp16": self.fp16, "seed": self.seed,
-                                  "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
-                                  "model_class": self.model_config.model_class.__name__,
-                                  "model_kwargs": dict(self.model_config.kwargs)}
+        config: dict[str, Any] = {
+            "input_dir": str(self.input_dir),
+            "output_dir": str(self.output_dir),
+            "num_epochs": self.num_epochs,
+            "batch_size": self.batch_size,
+            "num_workers": self.num_workers,
+            "fp16": self.fp16,
+            "seed": self.seed,
+            "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
+        }
+        if self.model_config is not None:
+            config["model_class"] = self.model_config.model_class.__name__
+            config["model_kwargs"] = dict(self.model_config.kwargs)
         if self.optimizer_config is not None:
             config["optimizer_class"] = self.optimizer_config.optim_class.__name__
             config["optimizer"] = {
@@ -587,8 +597,6 @@ class BaseTrainer(AbstractTrainer):
             config["scheduler_kwargs"] = dict(self.scheduler_config.kwargs)
         if self.pretrain is not None:
             config["pretrain"] = str(self.pretrain)
-        if self.custom_trainer_kwargs:
-            config["custom_trainer_kwargs"] = dict(self.custom_trainer_kwargs)
         if self.push_to_hf:
             config["push_to_hf"] = self.push_to_hf
             config["hf_repo"] = self.hf_repo
@@ -884,42 +892,6 @@ class BaseTrainer(AbstractTrainer):
         with self._autocast_context():
             return model.predict(images, mask)
 
-    def _crop_pair(
-        self,
-        images: torch.Tensor,
-        seg: torch.Tensor,
-        *,
-        random_crop: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        _, _, height, width, depth = images.shape
-        if (height, width, depth) == (self.patch_size, self.patch_size, self.patch_size):
-            return images, seg
-
-        if min(height, width, depth) < self.patch_size:
-            raise RuntimeError(
-                f"{self.__class__.__name__} expects preprocessed crops to be at least "
-                f"{self.patch_size} voxels along each spatial dimension, got {(height, width, depth)}"
-            )
-
-        start_h = self._crop_start(height, self.patch_size, random_crop)
-        start_w = self._crop_start(width, self.patch_size, random_crop)
-        start_d = self._crop_start(depth, self.patch_size, random_crop)
-        images = images[
-            :,
-            :,
-            start_h : start_h + self.patch_size,
-            start_w : start_w + self.patch_size,
-            start_d : start_d + self.patch_size,
-        ]
-        seg = seg[
-            :,
-            :,
-            start_h : start_h + self.patch_size,
-            start_w : start_w + self.patch_size,
-            start_d : start_d + self.patch_size,
-        ]
-        return images, seg
-
     def _seg_to_one_hot(self, seg: torch.Tensor) -> torch.Tensor:
         labels = seg.squeeze(1).long()
         one_hot = torch.nn.functional.one_hot(labels, num_classes=self.num_classes)
@@ -971,15 +943,6 @@ class BaseTrainer(AbstractTrainer):
         model = self._model_for_state()
         if model is not None and hasattr(model, "is_training"):
             model.is_training = enabled
-
-    @staticmethod
-    def _crop_start(size: int, patch_size: int, random_crop: bool) -> int:
-        if size == patch_size:
-            return 0
-        max_start = size - patch_size
-        if not random_crop:
-            return max_start // 2
-        return int(torch.randint(max_start + 1, size=(1,)).item())
 
     def _loss_impl(self) -> Any:
         if self.loss_fn is None:

@@ -43,6 +43,8 @@ def _resolve_model(model_name: str) -> Any:
     for module_path in sorted(package_dir.glob("*.py")):
         if module_path.stem in {"__init__", "config"}:
             continue
+        if not module_path.stem.isidentifier():
+            continue
 
         module = importlib.import_module(f"mimose.models.{module_path.stem}")
         for attr_name in dir(module):

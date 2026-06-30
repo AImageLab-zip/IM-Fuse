@@ -18,6 +18,8 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "dynamic-network-architectures>=0.4.3",
+    "h5py>=3.16.0",
     "huggingface_hub>=0.34.0",
     "matplotlib>=3.10.9",
     "medpy>=0.5.2",
@@ -31,9 +33,11 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
     "safetensors>=0.6.2",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
     "thop>=0.1.1.post2209072238",
     "torch==2.9.1",
-    "torchvision>=0.24.1",
+    "torchvision==0.24.1",
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",

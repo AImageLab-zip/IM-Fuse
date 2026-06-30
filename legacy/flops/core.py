@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 import importlib
 import json
@@ -122,6 +122,16 @@ def _extract_primary_tensor(output: Any) -> torch.Tensor:
     raise TypeError(f"could not extract tensor from output of type {type(output)!r}")
 
 
+@contextmanager
+def _autocast_fp16_if_cuda(device: torch.device):
+    if device.type == "cuda":
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            yield
+    else:
+        with nullcontext():
+            yield
+
+
 def _mask_from_bool(batch_size: int, values: tuple[bool, bool, bool, bool], device: torch.device) -> torch.Tensor:
     return torch.tensor([values] * batch_size, dtype=torch.bool, device=device)
 
@@ -167,6 +177,8 @@ class _LegacyWrapper(nn.Module):
             result = self.model(images)
         elif self.adapter_kind == "d2net":
             result = self.model(images, complete_x=None, is_test=True)
+        elif self.adapter_kind == "xlstm_hved":
+            result = self.model(images, subset_idx_list=[14], valid=True)
         else:
             raise ValueError(f"unsupported adapter kind: {self.adapter_kind}")
 
@@ -314,7 +326,7 @@ def _estimate_macs_from_executed_layers(
             elif m.__class__.__name__ in {"LocalAttention", "AFNO1D_channelfirst", "AttentionBase"}:
                 hook_handles.append(m.register_forward_hook(conv_flops_counter_hook))
 
-        with torch.no_grad():
+        with torch.inference_mode(), _autocast_fp16_if_cuda(images.device):
             wrapper(images, mask)
         return float(total_macs), None
     except Exception as exc:
@@ -332,7 +344,7 @@ def _estimate_macs_from_executed_layers(
 def _estimate_macs_with_flopcount(wrapper: nn.Module, images: torch.Tensor, mask: torch.Tensor) -> float:
     try:
         from flopcount import get_flops
-        with torch.no_grad():
+        with torch.inference_mode(), _autocast_fp16_if_cuda(images.device):
             flops = get_flops(wrapper, (images, mask))
         if flops is not None and flops > 0:
             return float(flops) / 2.0
@@ -358,7 +370,7 @@ def _measure_macs(
     else:
         for backend in ("aten", "pytorch"):
             try:
-                with torch.no_grad():
+                with torch.inference_mode(), _autocast_fp16_if_cuda(images.device):
                     # Create a wrapper that stores mask in closure and accepts just images
                     class SingleArgWrapper(nn.Module):
                         def __init__(self, wrapped_model: nn.Module, mask_tensor: torch.Tensor) -> None:
@@ -396,7 +408,7 @@ def _measure_macs(
         failures.append(f"thop import failed: {exc}")
     else:
         try:
-            with torch.no_grad():
+            with torch.inference_mode(), _autocast_fp16_if_cuda(images.device):
                 macs, _ = profile(wrapper, inputs=(images, mask), verbose=False)
             if macs is None or macs == 0:
                 failures.append("thop: no MAC count returned")
@@ -421,7 +433,7 @@ def _measure_macs(
                 profile_memory=False,
                 with_flops=True,
             ) as prof:
-                with torch.no_grad():
+                with torch.inference_mode(), _autocast_fp16_if_cuda(images.device):
                     wrapper(images, mask)
 
             total_flops = sum(getattr(event, "flops", 0) or 0 for event in prof.key_averages())
@@ -471,7 +483,7 @@ def _initialize_lazy_parameters(
     wrapper = _LegacyWrapper(model, adapter_kind=adapter_kind).eval()
     images = _build_images(batch_size, spatial_shape, device)
     mask = _mask_from_bool(batch_size, (True, True, True, True), device)
-    with torch.no_grad():
+    with torch.inference_mode(), _autocast_fp16_if_cuda(device):
         wrapper(images, mask)
 
 
@@ -625,6 +637,73 @@ def _build_d2net_model() -> nn.Module:
         )
 
 
+def _build_a2fseg_model() -> nn.Module:
+    root = LEGACY_ROOT / "A2FSeg"
+    with _import_root(root):
+        from nnunet.network_architecture.initialization import InitWeights_He
+        from nnunet.network_architecture.my.generic_MAML3_channel_base import (
+            Generic_MAML_multi3_channel_base,
+        )
+
+        return Generic_MAML_multi3_channel_base(
+            4,
+            30,
+            3,
+            5,
+            2,
+            2,
+            nn.Conv3d,
+            nn.InstanceNorm3d,
+            {"eps": 1e-5, "affine": True},
+            nn.Dropout3d,
+            {"p": 0, "inplace": True},
+            nn.LeakyReLU,
+            {"negative_slope": 1e-2, "inplace": True},
+            True,
+            False,
+            lambda x: x,
+            InitWeights_He(1e-2),
+            [(2, 2, 2)] * 5,
+            [(3, 3, 3)] * 6,
+            False,
+            True,
+            True,
+        )
+
+
+def _build_clrs_model() -> nn.Module:
+    args = SimpleNamespace(
+        num_modality=4,
+        batch_size=1,
+        spec_normalization="batchnorm",
+    )
+    model = _construct_attr(
+        "networks.model",
+        "CLRSNet",
+        LEGACY_ROOT / "CLRS",
+        n_channels=4,
+        n_classes=3,
+        n_modality=4,
+        normalization="batchnorm",
+        has_dropout=False,
+        args=args,
+    )
+
+    class _CLRSInferenceWrapper(nn.Module):
+        def __init__(self, wrapped: nn.Module) -> None:
+            super().__init__()
+            self.wrapped = wrapped
+
+        def forward(self, images: torch.Tensor) -> torch.Tensor:
+            feature_list, *_ = self.wrapped.forward_encoder(images)
+            output = self.wrapped.forward_decoder(feature_list)
+            if isinstance(output, list):
+                return output[0]
+            return output
+
+    return _CLRSInferenceWrapper(model)
+
+
 def _build_lckd_model() -> nn.Module:
     return _construct_attr(
         "DualNet",
@@ -636,6 +715,32 @@ def _build_lckd_model() -> nn.Module:
         num_classes=3,
         self_att=False,
         cross_att=False,
+    )
+
+
+def _build_mcpl_model() -> nn.Module:
+    return _construct_attr(
+        "model.Unet_kmaxT",
+        "Unet_missing",
+        LEGACY_ROOT / "MCPL",
+        input_shape=[128, 128, 128],
+        out_channels=3,
+        mdp=3,
+        init_channels=16,
+        pre_train=False,
+        mask_modal=[],
+        patch_shape=128,
+    )
+
+
+def _build_mambavit_akd_model() -> nn.Module:
+    return _construct_attr(
+        "model_mamba_modalitys",
+        "Model",
+        LEGACY_ROOT / "MambaVit-AKD",
+        num_cls=4,
+        in_channels=1,
+        img_size=(96, 96, 96),
     )
 
 
@@ -719,7 +824,25 @@ def _build_srmnet_model() -> nn.Module:
             ) from exc
         raise
 
+def _build_xlstm_hved_model() -> nn.Module:
+    root = Path(__file__).parent.parent / "XLSTM-HVED"
 
+    with _import_root(root):
+        import classic_models
+
+        model_class = classic_models.find_model_using_name("XLSTM_HVED")
+        return model_class(
+            1,
+            3,
+            multi_stream=4,
+            fusion_level=4,
+            shared_recon=True,
+            recon_skip=True,
+            MVAE_reduction=True,
+            final_sigmoid=True,
+            f_maps=4,
+            layer_order="ilc",
+        )
 def _simple_builder(root_rel: str, module_name: str, attr_name: str, **kwargs: Any) -> Callable[[], nn.Module]:
     root = LEGACY_ROOT / root_rel
 
@@ -731,12 +854,16 @@ def _simple_builder(root_rel: str, module_name: str, attr_name: str, **kwargs: A
 
 def _registry() -> dict[str, MethodSpec]:
     return {
+        "A2FSeg": MethodSpec("A2FSeg", LEGACY_ROOT / "A2FSeg", "legacy/A2FSeg/nnunet/network_architecture/my/generic_MAML3_channel_base.py", "nnunet.network_architecture.my.generic_MAML3_channel_base.Generic_MAML_multi3_channel_base", _build_a2fseg_model, "images_only", (128, 128, 128), DEFAULT_LEGACY_NONEMPTY_CROP_SHAPE, FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "CLRS": MethodSpec("CLRS", LEGACY_ROOT / "CLRS", "legacy/CLRS/train.py", "networks.model.CLRSNet", _build_clrs_model, "images_only", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("direct")),
         "DC-Seg": MethodSpec("DC-Seg", LEGACY_ROOT / "DC-Seg", "legacy/DC-Seg/test.py", "models.DC_Seg", _simple_builder("DC-Seg", "models", "DC_Seg", num_cls=4, fusion_type="RFM"), "images_mask", (112, 112, 112), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (112, 112, 112), 0.5)),
         "IMFuse": MethodSpec("IMFuse", LEGACY_ROOT / "IMFuse", "legacy/IMFuse/test.py", "IMFuse.IMFuse", _simple_builder("IMFuse", "IMFuse", "IMFuse", num_cls=4, interleaved_tokenization=False, mamba_skip=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "IMS2Trans": MethodSpec("IMS2Trans", LEGACY_ROOT / "IMS2Trans", "legacy/IMS2Trans/test.py", "ims2trans.Model", _simple_builder("IMS2Trans", "ims2trans", "Model", num_cls=4, use_checkpoint=False), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "InOutFusion": MethodSpec("InOutFusion", LEGACY_ROOT / "InOutFusion", "legacy/InOutFusion/test.py", "net.Network_InOut.RsInOut_U_Hemis3D", _simple_builder("InOutFusion", "net.Network_InOut", "RsInOut_U_Hemis3D", in_channels=1, out_channels=4, levels=4, feature_maps=8, method="TF", phase="test"), "list_mask", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "LCKD": MethodSpec("LCKD", LEGACY_ROOT / "LCKD", "legacy/LCKD/test.py", "DualNet.DualNet", _build_lckd_model, "images_mode", (80, 160, 160), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 160, 160), overlap=1.0 / 3.0)),
         "M2FTrans": MethodSpec("M2FTrans", LEGACY_ROOT / "M2FTrans" / "M2FTrans_v1", "legacy/M2FTrans/M2FTrans_v1/test.py", "models.fusiontrans.Model", _simple_builder("M2FTrans/M2FTrans_v1", "models.fusiontrans", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
+        "MCPL": MethodSpec("MCPL", LEGACY_ROOT / "MCPL", "legacy/MCPL/test.py", "model.Unet_kmaxT.Unet_missing", _build_mcpl_model, "images_only", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
+        "MambaVit-AKD": MethodSpec("MambaVit-AKD", LEGACY_ROOT / "MambaVit-AKD", "legacy/MambaVit-AKD/predict.py", "model_mamba_modalitys.Model", _build_mambavit_akd_model, "images_mask", (96, 96, 96), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (96, 96, 96), 0.5)),
         "MIFPN": MethodSpec("MIFPN", LEGACY_ROOT / "MIFPN", "legacy/MIFPN/test.py", "models.PNT.Model", _simple_builder("MIFPN", "models.PNT", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
         "MMMViT": MethodSpec("MMMViT", LEGACY_ROOT / "MMMViT", "legacy/MMMViT/test.py", "mmmvit.Model", _simple_builder("MMMViT", "mmmvit", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "MST-KDNet": MethodSpec("MST-KDNet", LEGACY_ROOT / "MST-KDNet", "legacy/MST-KDNet/eval.py", "models.build_MSTKDNet()[1]", _build_mstkd_model, "images_only", (160, 192, 128), (160, 192, 128), FullVolumeStrategy("direct")),
@@ -749,6 +876,7 @@ def _registry() -> dict[str, MethodSpec]:
         "ShaSpec": MethodSpec("ShaSpec", LEGACY_ROOT / "ShaSpec", "legacy/ShaSpec/eval.py", "DualNet_SS.DualNet_SS", _build_shaspec_model, "images_mode", (80, 160, 160), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("patched", (80, 160, 160), overlap=1.0 / 3.0)),
         "UHVED": MethodSpec("UHVED", LEGACY_ROOT / "UHVED", "legacy/UHVED/test_uhved.py", "UHVED.U_HVED", _simple_builder("UHVED", "UHVED", "U_HVED", num_classes=4), "uhved", (112, 112, 112), (112, 112, 112), FullVolumeStrategy("patched", (112, 112, 112), 0.5)),
         "UNET-MFI": MethodSpec("UNET-MFI", LEGACY_ROOT / "UNET-MFI", "legacy/UNET-MFI/test.py", "Model.no_share_unet", _simple_builder("UNET-MFI", "Model", "no_share_unet", in_channel=1, out_channel=3, diff=True, deepSupvision=True), "split_mask", (120, 120, 120), (240, 240, 160), FullVolumeStrategy("patched", (120, 120, 120), stride=(40, 40, 40))),
+        "XLSTM-HVED": MethodSpec("XLSTM-HVED", LEGACY_ROOT / "XLSTM-HVED", "legacy/XLSTM-HVED/test.py", "classic_models.find_model_using_name('XLSTM_HVED')", _build_xlstm_hved_model, "xlstm_hved", (128, 192, 128), (128, 192, 128), FullVolumeStrategy("direct")),
         "m3ae": MethodSpec("m3ae", LEGACY_ROOT / "m3ae", "legacy/m3ae/test.py", "model.Unet.Unet_missing", _simple_builder("m3ae", "model.Unet", "Unet_missing", input_shape=[128, 128, 128], out_channels=3, mdp=3, init_channels=16, pre_train=False, mask_modal=[], patch_shape=128), "m3ae", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "mmFormer": MethodSpec("mmFormer", LEGACY_ROOT / "mmFormer" / "mmformer", "legacy/mmFormer/mmformer/test.py", "mmformer.Model", _simple_builder("mmFormer/mmformer", "mmformer", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "reverse": MethodSpec("reverse", LEGACY_ROOT / "reverse", "legacy/reverse/test.py", "reverse.Model", _simple_builder("reverse", "reverse", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),

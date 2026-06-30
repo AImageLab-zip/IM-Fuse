@@ -25,7 +25,6 @@ from rich.table import Table
 
 # Internal modules
 from mimose.preprocessing.config import CropConfig, ClampConfig, NormConfig
-from mimose.datasets.config import DatasetType
 
 CONSOLE = Console()
 
@@ -35,7 +34,6 @@ def preprocess_case(
     crop_config: CropConfig,
     clamp_config: ClampConfig,
     norm_config: NormConfig,
-    dataset_type: DatasetType
 ) -> str:
     output_file = output_dir / f"{file['name']}.npz"
 
@@ -50,13 +48,11 @@ def preprocess_case(
 
     seg, _ = medio.load(file["seg"]) # type: ignore[index]
     seg = np.expand_dims(seg,axis=0)
-    if dataset_type is DatasetType.BRATS18:
-        seg[seg==4] = 3
 
     images, seg = crop_config.fn(images,seg,crop_config)
     images = clamp_config.fn(images,clamp_config)
     images = norm_config.fn(images,norm_config)
-    np.savez_compressed(output_file, images=images, seg=seg)
+    np.savez_compressed(output_file, images=images.astype(np.float32), seg=seg.astype(np.uint8))
     return str(output_file)
 
 def run_preprocessing(
@@ -65,7 +61,6 @@ def run_preprocessing(
     crop_config: CropConfig,
     clamp_config: ClampConfig,
     norm_config: NormConfig,
-    dataset_type: DatasetType,
     yes: bool
 ) -> None:
     """Run the preprocessing pipeline with the selected crop configuration."""
@@ -118,40 +113,23 @@ def run_preprocessing(
     # Getting the file list:
     input_files = []
     try:
-        if dataset_type == DatasetType.BRATS18:
-            for folder in ['HGG','LGG']:
-                for sub in (input_dir / folder).iterdir():
-                    input_files.append({
-                        'name':sub.name,
-                        't1c':sub/f'{sub.name}_t1ce.nii',
-                        't1n':sub/f'{sub.name}_t1.nii',
-                        't2f':sub/f'{sub.name}_flair.nii',
-                        't2w':sub/f'{sub.name}_t2.nii',
-                        'seg':sub/f'{sub.name}_seg.nii'
-                    })
-        elif dataset_type == DatasetType.BRATS23:
-            for sub in input_dir.iterdir():
-                if sub.is_dir():
-                    input_files.append({
-                        'name':sub.name,
-                        't1c':sub/f'{sub.name}-t1c.nii.gz',
-                        't1n':sub/f'{sub.name}-t1n.nii.gz',
-                        't2f':sub/f'{sub.name}-t2f.nii.gz',
-                        't2w':sub/f'{sub.name}-t2w.nii.gz',
-                        'seg':sub/f'{sub.name}-seg.nii.gz'
-                    })
-        else:
-            raise click.BadParameter(
-                f"Unsupported dataset type: {dataset_type}",
-                param_hint="dataset_type",
-            )
+        for sub in input_dir.iterdir():
+            if sub.is_dir():
+                input_files.append({
+                    'name':sub.name,
+                    't1c':sub/f'{sub.name}-t1c.nii.gz',
+                    't1n':sub/f'{sub.name}-t1n.nii.gz',
+                    't2f':sub/f'{sub.name}-t2f.nii.gz',
+                    't2w':sub/f'{sub.name}-t2w.nii.gz',
+                    'seg':sub/f'{sub.name}-seg.nii.gz'
+                })
 
 
         num_workers = len(os.sched_getaffinity(0))
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [
-                executor.submit(preprocess_case, file, output_dir, crop_config,clamp_config,norm_config,dataset_type)
+                executor.submit(preprocess_case, file, output_dir, crop_config,clamp_config,norm_config)
                 for file in input_files
             ]
 

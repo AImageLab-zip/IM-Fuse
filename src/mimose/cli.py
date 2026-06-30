@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import re
+from pathlib import Path
 
 # External dependencies
 import typer
@@ -28,7 +29,6 @@ from mimose.utils.cli_overrides import (
     merge_cli_overrides,
     resolve_split_path,
 )
-from pathlib import Path
 
 # Lazy-load heavy modules on first use
 _cli_workflows_cache = None
@@ -286,8 +286,9 @@ def setup() -> None:
 
     console = cli_display.CONSOLE
     prompt_path = cli_display.prompt_path
-    prompt_optional_existing_directory = cli_display.prompt_optional_existing_directory
+    prompt_zip_file = cli_display.prompt_zip_file
     prompt_required_directory = cli_display.prompt_required_directory
+    prompt_required_existing_directory = cli_display.prompt_required_existing_directory
 
     CONFIG_TEMPLATES_DIR = cli_setup.CONFIG_TEMPLATES_DIR
     copy_config_templates = cli_setup.copy_config_templates
@@ -295,35 +296,55 @@ def setup() -> None:
 
     console.print(
         Panel(
-            "[bold white]Configure the packaged MiMoSe YAML files.[/bold white]\n"
-            "Leave a BraTS dataset path empty if you do not want to configure that dataset yet.",
+            "[bold white]Configure the packaged MiMoSe YAML files.[/bold white]",
             title="[bold green]MiMoSe Setup[/bold green]",
             border_style="green",
             expand=False,
         )
     )
 
-    brats23_dir = prompt_optional_existing_directory(
-        label="BraTS23",
-        prompt="Directory containing BraTS23",
-    )
-    brats18_dir = prompt_optional_existing_directory(
-        label="BraTS18",
-        prompt="Directory containing BraTS18",
-    )
-    if brats23_dir is None and brats18_dir is None:
-        raise typer.BadParameter(
-            "at least one dataset directory must be provided",
-            param_hint="mimose setup",
+    want_unpack = Confirm.ask("Do you want to unpack BraTS ZIP archives?", default=True)
+
+    if want_unpack:
+        gli_pre_zip = prompt_zip_file(
+            label="BraTS2025-GLI-pre ZIP",
+            prompt="Path to BraTS2025-GLI-pre ZIP",
+        )
+        
+        candidate_post = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-TrainingData.zip' 
+        post_dir = candidate_post if candidate_post.exists() else gli_pre_zip.parent
+        gli_post_zip = prompt_zip_file(
+            label="BraTS2024-GLI-post ZIP",
+            prompt="Path to BraTS2024-GLI-post ZIP",
+            default_dir=post_dir,
+        )
+            
+        candidate_post_extra = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-AdditionalTrainingData.zip' 
+        post_extra_dir = candidate_post_extra if candidate_post_extra.exists() else gli_pre_zip.parent
+        gli_post_extra_zip = prompt_zip_file(
+            label="BraTS2024-GLI-post-additional-data ZIP",
+            prompt="Path to BraTS2024-GLI-post-additional-data ZIP",
+            default_dir=post_extra_dir,
         )
 
-    preprocessed_root_dir = prompt_required_directory(
-        label="Preprocessed Root",
-        prompt="Root directory for preprocessed datasets",
-    )
+    if want_unpack:
+        data_root = prompt_required_directory(
+            label="Data Root",
+            prompt="Root directory for the unpacked data",
+        )
+        brats_data_dir = data_root / "unpacked"
+    else:
+        brats_data_dir = prompt_required_existing_directory(
+            label="Unpacked Data",
+            prompt="Path to the existing unpacked data directory",
+        )
+        data_root = brats_data_dir.parent
+    preprocessed_root_dir = data_root
+
     artifacts_root_dir = prompt_required_directory(
         label="Artifacts Root",
         prompt="Root directory for training artifacts",
+        default_dir = data_root / 'runs'
     )
     templates_require_hf_repo_prompt = cli_setup.templates_require_hf_repo_prompt
     hf_repo: str | None = None
@@ -336,9 +357,12 @@ def setup() -> None:
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", no_wrap=True)
     table.add_column(style="white")
-    table.add_row("BraTS23", str(brats23_dir) if brats23_dir is not None else "null")
-    table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
-    table.add_row("Preprocessed Root", str(preprocessed_root_dir))
+    if want_unpack:
+        table.add_row("BraTS2025-GLI-pre ZIP", str(gli_pre_zip))
+        table.add_row("BraTS2024-GLI-post ZIP", str(gli_post_zip))
+        table.add_row("BraTS2024-GLI-post-additional-data ZIP", str(gli_post_extra_zip))
+    table.add_row("Data Root", str(data_root))
+    table.add_row("Unpacked Data", str(brats_data_dir))
     table.add_row("Artifacts Root", str(artifacts_root_dir))
     table.add_row("HF Repo", hf_repo or "template-driven")
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
@@ -355,15 +379,79 @@ def setup() -> None:
         )
     )
 
+    if want_unpack and brats_data_dir.exists():
+        console.print(
+            Panel(
+                f"[bold yellow]{brats_data_dir}[/bold yellow] already exists.\n"
+                "Existing files with the same name will be overwritten; "
+                "other files will be left in place.",
+                title="[bold yellow]Warning: unpacked/ already exists[/bold yellow]",
+                border_style="yellow",
+                expand=False,
+            )
+        )
+        if not Confirm.ask("Overwrite existing files in unpacked/?", default=False):
+            raise typer.Abort()
+
     if not Confirm.ask("Copy templates and rewrite local MiMoSe configs?", default=True):
         raise typer.Abort()
+
+    if want_unpack:
+        import multiprocessing as mp
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            TextColumn,
+            TimeRemainingColumn,
+        )
+
+        brats_data_dir.mkdir(parents=True, exist_ok=True)
+        zip_files = [gli_pre_zip, gli_post_zip, gli_post_extra_zip]
+        totals = [cli_setup.zip_member_count(z) for z in zip_files]
+        queue: mp.Queue = mp.Queue()
+
+        with Progress(
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_ids = [
+                progress.add_task(zip_files[i].name, total=totals[i])
+                for i in range(len(zip_files))
+            ]
+
+            procs = [
+                mp.Process(
+                    target=cli_setup.unzip_worker,
+                    args=(zip_path, brats_data_dir, queue, i),
+                )
+                for i, zip_path in enumerate(zip_files)
+            ]
+            for p in procs:
+                p.start()
+
+            done_count = 0
+            while done_count < len(zip_files):
+                item = queue.get()
+                if isinstance(item, tuple):
+                    task_id, result = item
+                    done_count += 1
+                    if isinstance(result, Exception):
+                        raise result
+                else:
+                    progress.advance(task_ids[item])
+
+            for p in procs:
+                p.join()
 
     updated_files = copy_config_templates()
     for config_path in updated_files:
         update_setup_config(
             config_path=config_path,
-            brats18_dir=brats18_dir,
-            brats23_dir=brats23_dir,
+            brats_data_dir=brats_data_dir,
             preprocessed_root_dir=preprocessed_root_dir,
             artifacts_root_dir=artifacts_root_dir,
             hf_repo=hf_repo,
@@ -374,9 +462,8 @@ def setup() -> None:
     result_table.add_column(style="white")
     result_table.add_row("Updated", str(len(updated_files)))
     result_table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
-    result_table.add_row("BraTS23", str(brats23_dir) if brats23_dir is not None else "null")
-    result_table.add_row("BraTS18", str(brats18_dir) if brats18_dir is not None else "null")
-    result_table.add_row("Preprocessed Root", str(preprocessed_root_dir))
+    result_table.add_row("Data Root", str(data_root))
+    result_table.add_row("Unpacked Data", str(brats_data_dir))
     result_table.add_row("Artifacts Root", str(artifacts_root_dir))
     result_table.add_row("HF Repo", hf_repo or "template-driven")
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
@@ -429,7 +516,7 @@ def preprocess(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Input dataset type. Choose either brats18 or brats23",
+        help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
     crop_mode: str = typer.Option(
@@ -745,7 +832,6 @@ def train(
     custom_trainer_kwargs: list[str] | None = typer.Option(
         None,
         "--custom-trainer-kwargs",
-        "--costom--trainer--kwargs",
         help="Additional trainer kwargs in key=value form.",
         rich_help_panel="Trainer",
     ),
@@ -958,18 +1044,13 @@ def train(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Input dataset type. Choose either brats18 or brats23",
+        help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
     console = _get_cli_display().CONSOLE
     workflows = _get_cli_workflows()
-
-    # Keep these local so their imports don't affect startup/completion.
-    from mimose.training.config import parse_kv_list
-
-    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
 
     with console.status(
         "[bold cyan]Starting MiMoSe[/bold cyan]",
@@ -983,15 +1064,15 @@ def train(
             trainer=trainer,
             model=model,
             loss=loss,
-            custom_model_kwargs=parse_kv_list(custom_model_kwargs),
-            custom_loss_kwargs=parse_kv_list(custom_loss_kwargs),
+            custom_model_kwargs=custom_model_kwargs,
+            custom_loss_kwargs=custom_loss_kwargs,
             loss_num_classes=loss_num_classes,
             fuse_weight=fuse_weight,
             sep_weight=sep_weight,
             prm_weight=prm_weight,
             loss_eps=loss_eps,
             log_clamp_min=log_clamp_min,
-            custom_trainer_kwargs=trainer_kwargs,
+            custom_trainer_kwargs=custom_trainer_kwargs,
             split_file=split_file,
             optimizer=optimizer,
             betas=betas,
@@ -1027,10 +1108,10 @@ def train(
             push_to_hf=push_to_hf,
             hf_repo=hf_repo,
         )
-        workflows.maybe_relaunch_distributed(merged)
 
         status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]preparing training launch[/dim]")
 
+    workflows.maybe_relaunch_distributed(merged)
     workflows.run_train_from_merged(merged)
 
 
@@ -1136,7 +1217,7 @@ def test(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Input dataset type. Choose either brats18 or brats23",
+        help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
 ) -> None:
@@ -1159,7 +1240,7 @@ def test(
         hf_repo=hf_repo,
         hf_run_name=hf_run_name,
         model=model,
-        custom_model_kwargs=parse_kv_list(custom_model_kwargs),
+        custom_model_kwargs=parse_kv_list(custom_model_kwargs) if custom_model_kwargs else None,
         split_file=split_file,
         num_workers=num_workers,
         seed=seed,
@@ -1245,7 +1326,6 @@ def push(
     custom_trainer_kwargs: list[str] | None = typer.Option(
         None,
         "--custom-trainer-kwargs",
-        "--costom--trainer--kwargs",
         help="Additional trainer kwargs in key=value form.",
         rich_help_panel="Model",
     ),
@@ -1276,17 +1356,13 @@ def push(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Input dataset type. Choose either brats18 or brats23",
+        help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
 ) -> None:
     """Upload an existing local checkpoint to Hugging Face without training."""
     console = _get_cli_display().CONSOLE
     workflows = _get_cli_workflows()
-
-    from mimose.training.config import parse_kv_list
-
-    trainer_kwargs = parse_kv_list(custom_trainer_kwargs)
 
     with console.status(
         "[bold cyan]Preparing Hugging Face push[/bold cyan]",
@@ -1299,8 +1375,8 @@ def push(
             checkpoint_path=checkpoint_path,
             trainer=trainer,
             model=model,
-            custom_model_kwargs=parse_kv_list(custom_model_kwargs),
-            custom_trainer_kwargs=trainer_kwargs,
+            custom_model_kwargs=custom_model_kwargs,
+            custom_trainer_kwargs=custom_trainer_kwargs,
             num_workers=num_workers,
             seed=seed,
             wandb_run_name=wandb_run_name,

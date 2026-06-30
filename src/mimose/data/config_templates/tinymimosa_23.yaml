@@ -1,14 +1,16 @@
-# Combined RFNet reference config for BraTS 2023.
-# This mirrors legacy RFNet defaults under the current MiMoSe CLI/config API.
+# Combined TinyMimosa reference config for BraTS 2023.
+# TinyMimosa currently reuses the IMFuse-style trainer/data path, but uses its
+# own model and loss. This template reflects the current repo wiring for the
+# full-volume TinyMimosa path.
 
 # preprocess
 input_dir: /path/to/unpacked
-output_dir: /path/to/preprocessed/rfnet-preprocessed/
+output_dir: /path/to/preprocessed/tinymimosa-preprocessed/
 dataset_type: brats23
 
-crop_mode: non_empty
+crop_mode: none
 crop_size: null
-crop_min_size: [128, 128, 128]
+crop_min_size: null
 
 clamp_mode: none
 clamp_percentile: null
@@ -23,30 +25,24 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /path/to/preprocessed/rfnet-preprocessed
-art_dir: /path/to/artifacts/rfnet23
+data_dir: /path/to/preprocessed/tinymimosa-preprocessed
+art_dir: /path/to/artifacts/tinymimosa23
 
 trainer: imfuse
-model: rfnet
-loss: imfuse
+model: tinymimosa
+loss: tinymimosa
 
 custom_model_kwargs:
   num_cls: 4
+  features_per_stage: (8, 16, 32, 64)
 
-#custom_loss_kwargs: {}
-loss_num_classes: null
-fuse_weight: 1.0
-sep_weight: 1.0
-prm_weight: 1.0
-loss_eps: 0.0000001
-log_clamp_min: 0.005
+custom_loss_kwargs:
+  dice_weight: 0.5
+  ce_weight: 0.5
+  eps: 1e-4
 
 custom_trainer_kwargs:
-  iter_per_epoch: null
-  region_fusion_start_epoch: 20
-  patch_size: 80
-  debug: false
-  transform_kind: rfnet
+  transform_kind: tinymimosa
   train_masking_mode: random
   val_masking_mode: validation
 
@@ -55,7 +51,7 @@ betas: [0.9, 0.999]
 momentum: 0.9
 
 scheduler: poly
-poly_total_iters: 300
+poly_total_iters: 500
 poly_power: 0.9
 cosine_t_max: null
 cosine_eta_min: null
@@ -68,7 +64,7 @@ plateau_factor: null
 plateau_patience: null
 
 lr: 0.0002
-num_epochs: 300
+num_epochs: 500
 batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
@@ -80,10 +76,10 @@ seed: 999
 
 wandb_project: SegmentationMM
 wandb_mode: online
-wandb_run_name: rfnet23_training
-push_to_hf: false
+wandb_run_name: tinymimosa23_training
+push_to_hf: true
 hf_repo: /path/to/huggingface/owner-repo
 
 # testing
-checkpoint_path: /path/to/artifacts/rfnet23/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/rfnet23/results.txt
+checkpoint_path: /path/to/artifacts/tinymimosa23/checkpoints/final_weights_only.safetensors
+output_path: /path/to/artifacts/tinymimosa23/results.txt

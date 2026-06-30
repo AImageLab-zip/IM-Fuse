@@ -1,16 +1,15 @@
-# Combined mmFormer reference config for BraTS 2023.
-# This mirrors legacy mmFormer defaults as closely as possible under the current
+# Combined IMFuse reference config for BraTS 2025.
+# This mirrors legacy IMFuse defaults as closely as possible under the current
 # MiMoSe CLI/config API.
 #
-# Note: MiMoSe currently reuses the IMFuse-style trainer/loss/data pipeline
-# for mmFormer because the legacy training loop and loss decomposition are the
-# same. The key legacy differences reflected here are model selection, optimizer,
-# scheduler, and default optimization hyperparameters.
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
 
 # preprocess
 input_dir: /path/to/unpacked
-output_dir: /path/to/preprocessed/mmformer-preprocessed/
-dataset_type: brats23
+output_dir: /path/to/preprocessed/imfuse-preprocessed/
+dataset_type: brats25
 
 crop_mode: non_empty
 crop_size: null
@@ -29,15 +28,17 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /path/to/preprocessed/mmformer-preprocessed
-art_dir: /path/to/artifacts/mmformer23
+data_dir: /path/to/preprocessed/imfuse-preprocessed
+art_dir: /path/to/artifacts/imfuse25
 
 trainer: imfuse
-model: mmformer
+model: imfuse
 loss: imfuse
 
 custom_model_kwargs:
-  num_cls: 4
+  interleaved_tokenization: false
+  mamba_skip: false
+  num_cls: 5
 
 #custom_loss_kwargs: {}
 loss_num_classes: null
@@ -56,7 +57,7 @@ custom_trainer_kwargs:
   train_masking_mode: random
   val_masking_mode: validation
 
-optimizer: adam
+optimizer: radam
 betas: [0.9, 0.999]
 momentum: 0.9
 
@@ -75,10 +76,10 @@ plateau_patience: null
 
 lr: 0.0008
 num_epochs: 1000
-batch_size: 4
-weight_decay: 0.0001
-num_workers: 8
-fp16: true
+batch_size: 2
+weight_decay: 0.00003
+num_workers: 16
+fp16: false
 
 resume: false
 pretrain: null
@@ -86,10 +87,9 @@ seed: 999
 
 wandb_project: SegmentationMM
 wandb_mode: online
-wandb_run_name: mmformer23_training
-push_to_hf: false
+wandb_run_name: imfuse25_training
+push_to_hf: true
 hf_repo: /path/to/huggingface/owner-repo
-
 # testing
-checkpoint_path: /path/to/artifacts/mmformer23/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/mmformer23/results.txt
+checkpoint_path: /path/to/artifacts/imfuse25/checkpoints/final_weights_only.safetensors
+output_path: /path/to/artifacts/imfuse25/results.txt

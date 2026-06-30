@@ -7,7 +7,7 @@ export MAX_JOBS=$(nproc)
 export NVCC_THREADS=$(nproc)
 
 uv sync
-#uv cache clean
+uv cache clean
 
 CUDA_BUILD_START=$(date +%s)
 

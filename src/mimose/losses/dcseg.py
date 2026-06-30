@@ -19,7 +19,8 @@ def kl_divergence(
         logvar2 = torch.log(mu1.new_ones(mu1.shape))
         eps = 0.0
 
-    assert logvar2 is not None
+    if logvar2 is None:
+        raise ValueError("logvar2 must be provided when mu2 is provided")
     var1 = logvar1.exp()
     var2 = logvar2.exp()
     return 0.5 * torch.mean(-1 + logvar2 - logvar1 + (var1 + (mu1 - mu2).pow(2)) / (var2 + eps))

@@ -101,6 +101,23 @@ def _normalize_loss_kwargs(loss_name: str, loss_kwargs: dict[str, Any]) -> dict[
                 )
             kwargs["log_clamp_min"] = log_clamp_min
 
+    if target_name in {"tinymimosa"}:
+        for key, param_hint in (
+            ("dice_weight", "--dice-weight"),
+            ("ce_weight", "--ce-weight"),
+        ):
+            if kwargs.get(key) is not None:
+                value = float(kwargs[key])
+                if value < 0:
+                    raise typer.BadParameter(f"{key} must be >= 0", param_hint=param_hint)
+                kwargs[key] = value
+
+        if kwargs.get("eps") is not None:
+            eps = float(kwargs["eps"])
+            if eps <= 0:
+                raise typer.BadParameter("loss eps must be > 0", param_hint="--loss-eps")
+            kwargs["eps"] = eps
+
     return kwargs
 
 

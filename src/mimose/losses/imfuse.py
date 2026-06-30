@@ -96,13 +96,12 @@ class IMFuseLoss:
 
     def training_loss(
         self,
-        fuse_pred: torch.Tensor,
-        sep_preds: Sequence[torch.Tensor],
-        prm_preds: Sequence[torch.Tensor],
+        outputs: tuple[torch.Tensor, Sequence[torch.Tensor], Sequence[torch.Tensor]],
         target: torch.Tensor,
-        *,
         include_fuse: bool,
     ) -> dict[str, torch.Tensor]:
+        fuse_pred, sep_preds, prm_preds = outputs
+
         fuse = self._branch_loss(fuse_pred, target)
         sep = self._multi_branch_loss(sep_preds, target)
         prm = self._multi_branch_loss(prm_preds, target)

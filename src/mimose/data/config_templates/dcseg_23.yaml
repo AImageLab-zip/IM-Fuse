@@ -7,8 +7,8 @@
 # both commands can consume directly.
 
 # preprocess
-input_dir: /path/to/brats23
-output_dir: /path/to/preprocessed/dcseg23-preprocessed/
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/dcseg-preprocessed/
 dataset_type: brats23
 
 crop_mode: non_empty
@@ -28,7 +28,7 @@ norm_std: null
 yes: false
 
 # training
-data_dir: /path/to/preprocessed/dcseg23-preprocessed
+data_dir: /path/to/preprocessed/dcseg-preprocessed
 art_dir: /path/to/artifacts/dcseg23
 
 trainer: dcseg
