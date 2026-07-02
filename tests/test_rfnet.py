@@ -10,7 +10,7 @@ from mimose.flops import resolve_2023_config_paths
 from mimose.models.config import build_model_config
 from mimose.models.rfnet import RFNet, input_patch_size
 from mimose.training.transforms import (
-    RFNetTransformManager,
+    IMFuseTransformManager,
     build_transform_manager,
 )
 from mimose.utils.cli_overrides import load_yaml_config
@@ -88,9 +88,10 @@ def test_rfnet_resolves_from_model_config_builder() -> None:
 
 
 def test_rfnet_transform_manager_resolves_from_kind() -> None:
-    transform_manager = build_transform_manager(TransformKind.RFNET)
+    transform_manager = build_transform_manager(TransformKind.IMFUSE, crop_size=(80, 80, 80))
 
-    assert isinstance(transform_manager, RFNetTransformManager)
+    assert isinstance(transform_manager, IMFuseTransformManager)
+    assert transform_manager.crop_size == (80, 80, 80)
 
 
 @pytest.mark.parametrize("config_name", ["rfnet_18.yaml", "rfnet_23.yaml"])
@@ -108,7 +109,7 @@ def test_packaged_rfnet_configs_use_imfuse_training_contract(config_name: str) -
     assert config["crop_min_size"] == (128, 128, 128)
     assert config["custom_trainer_kwargs"]["patch_size"] == 80
     assert config["custom_trainer_kwargs"]["region_fusion_start_epoch"] == 20
-    assert config["custom_trainer_kwargs"]["transform_kind"] == "rfnet"
+    assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
 
 
 def test_packaged_2023_configs_include_rfnet_for_flops_all() -> None:

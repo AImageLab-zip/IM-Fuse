@@ -4,9 +4,7 @@ from typing import Any
 from mimose.enums import TransformKind
 from mimose.training.transforms.base_transforms import TransformManager
 from mimose.training.transforms.imfuse import (
-    DCSegTransformManager,
     IMFuseTransformManager,
-    RFNetTransformManager,
     TinyMimosaTransformManager,
 )
 
@@ -31,15 +29,14 @@ def build_transform_manager(
     kind: TransformKind,
     *,
     model_kwargs: dict[str, Any] | None = None,
+    crop_size: tuple[int, int, int] | None = None,
 ) -> TransformManager:
     resolved_kind = kind if isinstance(kind, TransformKind) else TransformKind(str(kind).lower())
 
     if resolved_kind == TransformKind.IMFUSE:
+        if crop_size is not None:
+            return IMFuseTransformManager(crop_size=crop_size)
         return IMFuseTransformManager()
-    if resolved_kind == TransformKind.DCSEG:
-        return DCSegTransformManager()
-    if resolved_kind == TransformKind.RFNET:
-        return RFNetTransformManager()
     if resolved_kind == TransformKind.TINYMIMOSA:
         resolved_model_kwargs = model_kwargs or {}
         return TinyMimosaTransformManager(
@@ -58,9 +55,7 @@ def build_transform_manager(
 
 __all__ = [
     "TransformManager",
-    "DCSegTransformManager",
     "IMFuseTransformManager",
-    "RFNetTransformManager",
     "TinyMimosaTransformManager",
     "TransformKind",
     "build_transform_manager",

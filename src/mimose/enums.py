@@ -31,6 +31,8 @@ class NormMode(StrEnum):
 class TrainerKind(StrEnum):
     IMFUSE = "imfuse"
     DCSEG = "dcseg"
+    A2FSEG = "a2fseg"
+    CLRS = "clrs"
 
 
 class ModelKind(StrEnum):
@@ -39,12 +41,12 @@ class ModelKind(StrEnum):
     DCSEG = "dcseg"
     RFNET = "rfnet"
     TINYMIMOSA = "tinymimosa"
+    A2FSEG = "a2fseg"
+    CLRS = "clrs"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
-    DCSEG = "dcseg"
-    RFNET = "rfnet"
     TINYMIMOSA = "tinymimosa"
 
 
@@ -65,8 +67,9 @@ class SchedulerKind(StrEnum):
 
 class LossKind(StrEnum):
     IMFUSE = "imfuse"
-    DCSEG = "dcseg"
     TINYMIMOSA = "tinymimosa"
+    A2FSEG = "a2fseg"
+    CLRS = "clrs"
 
 
 class MaskingMode(StrEnum):

@@ -6,18 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch.optim.lr_scheduler import PolynomialLR
 
-from mimose.datasets import DatasetType, IMFuseDataset, MaskingMode
+from mimose.datasets import IMFuseDataset, MaskingMode
 from mimose.enums import TransformKind
 from mimose.losses.config import LossConfig
-from mimose.losses.dcseg import (
-    AnatomyContrastiveLoss,
-    ModalityContrastiveLoss,
-    kl_divergence,
-)
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
 from mimose.training.trainers.base_trainer import BaseTrainer
@@ -25,10 +19,10 @@ from mimose.training.transforms import build_transform_manager
 from mimose.training.transforms.base_transforms import TransformManager
 
 
-DEFAULT_PATCH_SIZE = 112
+DEFAULT_PATCH_SIZE = 80
 
 
-class DCSegTrainer(BaseTrainer):
+class A2FSegTrainer(BaseTrainer):
     def __init__(
         self,
         input_dir: Path,
@@ -55,18 +49,12 @@ class DCSegTrainer(BaseTrainer):
         hf_repo: str | None = None,
     ) -> None:
         trainer_kwargs = dict(custom_trainer_kwargs or {})
-        self.dataname = str(
-            trainer_kwargs.get(
-                "dataname",
-                "BRATS2023",
-            )
-        )
+        self.dataname = str(trainer_kwargs.get("dataname", "BRATS2023"))
         self.iter_per_epoch = (
             int(trainer_kwargs["iter_per_epoch"])
             if trainer_kwargs.get("iter_per_epoch") is not None
             else None
         )
-        self.region_fusion_start_epoch = int(trainer_kwargs.get("region_fusion_start_epoch", 20))
         self.patch_size = int(trainer_kwargs.get("patch_size", DEFAULT_PATCH_SIZE))
         self.debug = bool(trainer_kwargs.get("debug", False))
         self.transform_kind = TransformKind(
@@ -78,12 +66,7 @@ class DCSegTrainer(BaseTrainer):
         self.val_masking_mode = MaskingMode(
             trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION)
         )
-        self.use_recon_loss = bool(trainer_kwargs.get("use_recon_loss", False))
-        self.use_reg_loss = bool(trainer_kwargs.get("use_reg_loss", False))
-        self.use_ana_contrastive = bool(trainer_kwargs.get("use_ana_contrastive", False))
-        self.use_mod_contrastive = bool(trainer_kwargs.get("use_mod_contrastive", False))
-        self.regularization_alpha = float(trainer_kwargs.get("regularization_alpha", 0.1))
-        self.anatomy_contrastive_method = str(trainer_kwargs.get("anatomy_contrastive_method", "ssim"))
+        self.include_sep = bool(trainer_kwargs.get("include_sep", True))
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -93,10 +76,7 @@ class DCSegTrainer(BaseTrainer):
         ):
             scheduler_config = replace(
                 scheduler_config,
-                kwargs={
-                    **scheduler_config.kwargs,
-                    "total_iters": num_epochs,
-                },
+                kwargs={**scheduler_config.kwargs, "total_iters": num_epochs},
             )
 
         effective_batch_size = 1 if batch_size is None else batch_size
@@ -126,8 +106,6 @@ class DCSegTrainer(BaseTrainer):
             hf_repo=hf_repo,
         )
         self.dataset_type = self._resolve_dataset_type(dataset_type)
-        self.anatomy_contrastive_loss = AnatomyContrastiveLoss(method=self.anatomy_contrastive_method).to(self.device)
-        self.modality_contrastive_loss = ModalityContrastiveLoss().to(self.device)
 
         if self.pretrain is not None and self.resume is None:
             self._load_pretrain()
@@ -145,12 +123,8 @@ class DCSegTrainer(BaseTrainer):
             "fusedice": 0.0,
             "sepcross": 0.0,
             "sepdice": 0.0,
-            "prmcross": 0.0,
-            "prmdice": 0.0,
-            "kl_loss": 0.0,
-            "recon_loss": 0.0,
-            "anatomical_contrastive_loss": 0.0,
-            "modality_contrastive_loss": 0.0,
+            "fusiondscross": 0.0,
+            "fusiondsdice": 0.0,
         }
 
         iterations = 0
@@ -163,7 +137,7 @@ class DCSegTrainer(BaseTrainer):
             )
             for _ in range(steps):
                 batch = self._next_train_batch()
-                metrics = self._train_step(batch, epoch)
+                metrics = self._train_step(batch)
                 iterations += 1
                 for key, value in metrics.items():
                     totals[key] += value
@@ -274,87 +248,31 @@ class DCSegTrainer(BaseTrainer):
             {
                 "dataset_type": self.dataset_type,
                 "iter_per_epoch": self.iter_per_epoch,
-                "region_fusion_start_epoch": self.region_fusion_start_epoch,
                 "patch_size": self.patch_size,
                 "debug": self.debug,
                 "train_masking_mode": self.train_masking_mode,
                 "val_masking_mode": self.val_masking_mode,
                 "split_file": str(self.split_file),
-                "use_recon_loss": self.use_recon_loss,
-                "use_reg_loss": self.use_reg_loss,
-                "use_ana_contrastive": self.use_ana_contrastive,
-                "use_mod_contrastive": self.use_mod_contrastive,
-                "regularization_alpha": self.regularization_alpha,
-                "anatomy_contrastive_method": self.anatomy_contrastive_method,
+                "include_sep": self.include_sep,
             }
         )
         return payload
 
-    def _train_step(self, batch: dict[str, Any], epoch: int) -> dict[str, float]:
+    def _train_step(self, batch: dict[str, Any]) -> dict[str, float]:
         images = batch["images"].to(self.device, non_blocking=True)
         seg = batch["seg"].to(self.device, non_blocking=True).long()
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
-        include_fuse = epoch >= self.region_fusion_start_epoch
         with self._autocast_context():
             target = self._seg_to_one_hot(seg)
-            (
-                fuse_pred,
-                sep_preds,
-                prm_preds,
-                recon_out,
-                mu_list,
-                sigma_list,
-                contents,
-                styles,
-            ) = self.model(images, mask)
-
-            # Detach any branch that won't be backpropagated. This breaks the
-            # grad_fn chain for that decoder, allowing its activation buffers to
-            # be freed during backward instead of lingering until the function
-            # returns. The legacy avoided this by including every branch in
-            # loss with a 0.0 coefficient so backward would traverse them all.
-            # NOTE: outputs are unpacked directly (no intermediate tuple) so
-            # that each detach() below can actually decrement the refcount to 0
-            # and release the GPU buffers.
-            if not include_fuse:
-                fuse_pred = fuse_pred.detach()
-            if not self.use_reg_loss:
-                sep_preds = [p.detach() for p in sep_preds]
-            if not self.use_recon_loss:
-                recon_out = recon_out.detach()
-
+            outputs = self.model(images, mask)
             metrics = self._loss_impl().training_loss(
-                (fuse_pred, sep_preds, prm_preds),
+                outputs,
                 target,
-                include_fuse=include_fuse,
-                include_sep=self.use_reg_loss,
+                include_fuse=True,
+                include_sep=self.include_sep,
+                mask=mask,
             )
             loss = metrics["loss"]
 
-            recon_loss = F.mse_loss(recon_out, images)
-            kl_loss = target.new_tensor(0.0)
-            for modal_index in range(4):
-                kl_loss = kl_loss + kl_divergence(mu_list[modal_index], torch.log(torch.square(sigma_list[modal_index])))
-
-            if self.use_recon_loss:
-                loss = loss + (self.regularization_alpha * recon_loss * 4)
-            loss = loss + (self.regularization_alpha * kl_loss)
-
-        with torch.no_grad():
-            anatomical_contrastive_loss = self.anatomy_contrastive_loss(contents.detach())
-            modality_contrastive_loss = self.modality_contrastive_loss(styles.detach())
-
         self._backward_step(loss)
-        return {
-            "loss": float(loss.item()),
-            "fusecross": float(metrics["fusecross"].item()),
-            "fusedice": float(metrics["fusedice"].item()),
-            "sepcross": float(metrics["sepcross"].item()),
-            "sepdice": float(metrics["sepdice"].item()),
-            "prmcross": float(metrics["prmcross"].item()),
-            "prmdice": float(metrics["prmdice"].item()),
-            "kl_loss": float(kl_loss.item()),
-            "recon_loss": float(recon_loss.item()),
-            "anatomical_contrastive_loss": float(anatomical_contrastive_loss.item()),
-            "modality_contrastive_loss": float(modality_contrastive_loss.item()),
-        }
+        return {key: float(value.item()) for key, value in metrics.items()}

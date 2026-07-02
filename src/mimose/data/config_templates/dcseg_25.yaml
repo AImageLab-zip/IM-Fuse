@@ -33,7 +33,7 @@ art_dir: /path/to/artifacts/dcseg25
 
 trainer: dcseg
 model: dcseg
-loss: dcseg
+loss: imfuse
 
 custom_model_kwargs:
   num_cls: 5
@@ -50,9 +50,9 @@ log_clamp_min: 0.005
 custom_trainer_kwargs:
   iter_per_epoch: null
   region_fusion_start_epoch: 20
-  patch_size: 112
+  patch_size: 80
   debug: false
-  transform_kind: dcseg
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
   use_recon_loss: true

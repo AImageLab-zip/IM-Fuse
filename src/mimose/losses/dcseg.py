@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mimose.losses.imfuse import IMFuseLoss
-
 
 def kl_divergence(
     mu1: torch.Tensor,
@@ -104,13 +102,8 @@ class ModalityContrastiveLoss(nn.Module):
         return F.binary_cross_entropy_with_logits(logits, target)
 
 
-class DCSegLoss(IMFuseLoss):
-    pass
-
-
 __all__ = [
     "AnatomyContrastiveLoss",
-    "DCSegLoss",
     "ModalityContrastiveLoss",
     "kl_divergence",
 ]

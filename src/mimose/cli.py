@@ -25,6 +25,7 @@ from mimose.enums import (
 from mimose.paths import CONFIGS_DIR, SPLITS_DIR
 from mimose.update_check import maybe_notify_about_update
 from mimose.utils.cli_overrides import (
+    apply_run_suffix,
     load_yaml_config,
     merge_cli_overrides,
     resolve_split_path,
@@ -863,6 +864,12 @@ def train(
         help="SGD momentum.",
         rich_help_panel="Optimization",
     ),
+    nesterov: bool | None = typer.Option(
+        None,
+        "--nesterov/--no-nesterov",
+        help="Enable Nesterov momentum for SGD.",
+        rich_help_panel="Optimization",
+    ),
     scheduler: SchedulerKind | None = typer.Option(
         None,
         "--scheduler",
@@ -996,6 +1003,12 @@ def train(
         help="Resume training from <output_dir>/model_last.pth.",
         rich_help_panel="Checkpointing",
     ),
+    try_resume: bool = typer.Option(
+        False,
+        "--try-resume",
+        help="Resume from <output_dir>/model_last.pth if it exists, otherwise train from scratch.",
+        rich_help_panel="Checkpointing",
+    ),
     seed: int = typer.Option(
         69,
         "--seed",
@@ -1047,6 +1060,16 @@ def train(
         help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir, wandb_run_name, and hf_run_name "
+            "(e.g. a seed) so repeated runs of the same config don't overwrite "
+            "each other's artifacts."
+        ),
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
     console = _get_cli_display().CONSOLE
@@ -1077,6 +1100,7 @@ def train(
             optimizer=optimizer,
             betas=betas,
             momentum=momentum,
+            nesterov=nesterov,
             scheduler=scheduler,
             poly_total_iters=poly_total_iters,
             poly_power=poly_power,
@@ -1099,6 +1123,7 @@ def train(
             nproc_per_node=nproc_per_node,
             fp16=fp16,
             resume=resume,
+            try_resume=try_resume,
             pretrain=pretrain,
             seed=seed,
             wandb_project=wandb_project,
@@ -1107,6 +1132,7 @@ def train(
             dataset_type=dataset_type,
             push_to_hf=push_to_hf,
             hf_repo=hf_repo,
+            run_suffix=run_suffix,
         )
 
         status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]preparing training launch[/dim]")
@@ -1220,6 +1246,16 @@ def test(
         help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir, hf_run_name, and output_path (e.g. a "
+            "seed) so this matches the same suffixed run produced by "
+            "`mimose train --run-suffix` and keeps repeated test reports separate."
+        ),
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Run mask-sweep testing from CLI overrides and YAML configuration."""
     from mimose.models.config import (
@@ -1243,6 +1279,7 @@ def test(
         custom_model_kwargs=parse_kv_list(custom_model_kwargs) if custom_model_kwargs else None,
         split_file=split_file,
         num_workers=num_workers,
+        run_suffix=run_suffix,
         seed=seed,
         dataset_type=dataset_type,
     )
@@ -1254,6 +1291,7 @@ def test(
         "output_path",
         "dataset_type",
     )
+    apply_run_suffix(merged)
     resolved_checkpoint_path = _resolve_test_checkpoint(merged)
     merged["checkpoint_path"] = str(resolved_checkpoint_path)
 
@@ -1274,6 +1312,11 @@ def test(
         seed=int(merged.get("seed", 42)),
     )
     typer.echo(f"Test report written to {output_file}")
+    typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
+    typer.echo(
+        f"Per-subject scores written to "
+        f"{output_file.with_name(f'{output_file.stem}_per_subject.csv')}"
+    )
 
 
 @app.command()
@@ -1359,6 +1402,15 @@ def push(
         help="Dataset split to use. One of: brats18, brats23, brats25",
         rich_help_panel="Input/Output",
     ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir and wandb_run_name (e.g. a seed) so this "
+            "matches the same suffixed run produced by `mimose train --run-suffix`."
+        ),
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Upload an existing local checkpoint to Hugging Face without training."""
     console = _get_cli_display().CONSOLE
@@ -1382,6 +1434,7 @@ def push(
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
             hf_repo=hf_repo,
+            run_suffix=run_suffix,
         )
         status.update("[bold cyan]Preparing Hugging Face push[/bold cyan]  [dim]building export objects[/dim]")
 

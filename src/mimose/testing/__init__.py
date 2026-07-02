@@ -5,6 +5,7 @@ from mimose.testing.pipeline import (
     run_testing,
     set_seed,
     softmax_output_dice_class4,
+    softmax_output_hd95_class4,
 )
 
 
@@ -15,4 +16,5 @@ __all__ = [
     "run_testing",
     "set_seed",
     "softmax_output_dice_class4",
+    "softmax_output_hd95_class4",
 ]

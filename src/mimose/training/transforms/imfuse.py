@@ -96,7 +96,7 @@ class IMFuseTransform:
         rotated_images = F.grid_sample(
             images_5d,
             grid,
-            mode="bilinear",
+            mode="nearest",
             padding_mode="zeros",
             align_corners=False,
         )
@@ -108,7 +108,7 @@ class IMFuseTransform:
             align_corners=False,
         )
 
-        rotated_images = rotated_images.masked_fill(~valid, 0)
+        rotated_images = rotated_images.masked_fill(~valid, -1.0)
         rotated_labels = rotated_labels.masked_fill(~valid, 0)
 
         images = rotated_images.permute(0, 1, 3, 4, 2).squeeze(0)
@@ -181,62 +181,6 @@ class IMFuseTransform:
         return images, labels
 
 
-class DCSegTransform(IMFuseTransform):
-    def _random_rotation(
-        self,
-        images: torch.Tensor,
-        labels: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        axis = torch.randint(0, 3, ()).item()
-        angle = torch.empty((), dtype=images.dtype).uniform_(
-            -self.rotation_degrees, self.rotation_degrees
-        ).item()
-        theta = self._build_affine_matrix(
-            math.radians(angle),
-            axis,
-            images.device,
-            images.dtype,
-        )
-
-        images_5d = images.unsqueeze(0).permute(0, 1, 4, 2, 3)
-        labels_5d = labels.unsqueeze(0).permute(0, 1, 4, 2, 3).to(images.dtype)
-
-        grid = F.affine_grid(theta.unsqueeze(0), images_5d.shape, align_corners=False)
-        valid = F.grid_sample(
-            torch.ones(
-                (1, 1, *images_5d.shape[2:]),
-                device=images.device,
-                dtype=images.dtype,
-            ),
-            grid,
-            mode="nearest",
-            padding_mode="zeros",
-            align_corners=False,
-        ) > 0.5
-
-        rotated_images = F.grid_sample(
-            images_5d,
-            grid,
-            mode="nearest",
-            padding_mode="zeros",
-            align_corners=False,
-        )
-        rotated_labels = F.grid_sample(
-            labels_5d,
-            grid,
-            mode="nearest",
-            padding_mode="zeros",
-            align_corners=False,
-        )
-
-        rotated_images = rotated_images.masked_fill(~valid, -1.0)
-        rotated_labels = rotated_labels.masked_fill(~valid, 0)
-
-        images = rotated_images.permute(0, 1, 3, 4, 2).squeeze(0)
-        labels = rotated_labels.permute(0, 1, 3, 4, 2).squeeze(0)
-        return images, labels
-
-
 class TinyMimosaTransform(IMFuseTransform):
     def __init__(
         self,
@@ -290,10 +234,14 @@ class TinyMimosaTransform(IMFuseTransform):
 
 
 class IMFuseTransformManager(TransformManager):
+    def __init__(self, crop_size: tuple[int, int, int] = (128, 128, 128)) -> None:
+        self.crop_size = tuple(int(dim) for dim in crop_size)
+        super().__init__()
+
     def _setup_transforms(self) -> None:
         self.train_transforms = {
             "paired": IMFuseTransform(
-                crop_size=(128, 128, 128),
+                crop_size=self.crop_size,
                 rotation_degrees=10.0,
                 intensity_factors=(0.1, 0.1),
                 flip_probabilities=(0.5, 0.5, 0.5),
@@ -322,46 +270,6 @@ class IMFuseTransformManager(TransformManager):
         transformed_images, transformed_labels = transforms["paired"](images, labels)
         transformed_extras = list(extra_tensors)
         return (transformed_images, transformed_labels, *transformed_extras)
-
-
-class DCSegTransformManager(TransformManager):
-    def _setup_transforms(self) -> None:
-        self.train_transforms = {
-            "paired": DCSegTransform(
-                crop_size=(112, 112, 112),
-                rotation_degrees=10.0,
-                intensity_factors=(0.1, 0.1),
-                flip_probabilities=(0.5, 0.5, 0.5),
-            ),
-        }
-        self.test_transforms = {
-            "paired": IMFuseTransform(
-                crop_size=None,
-                rotation_degrees=0.0,
-                intensity_factors=(0.0, 0.0),
-                flip_probabilities=(0.0, 0.0, 0.0),
-            ),
-        }
-
-
-class RFNetTransformManager(TransformManager):
-    def _setup_transforms(self) -> None:
-        self.train_transforms = {
-            "paired": DCSegTransform(
-                crop_size=(80, 80, 80),
-                rotation_degrees=10.0,
-                intensity_factors=(0.1, 0.1),
-                flip_probabilities=(0.5, 0.5, 0.5),
-            ),
-        }
-        self.test_transforms = {
-            "paired": IMFuseTransform(
-                crop_size=None,
-                rotation_degrees=0.0,
-                intensity_factors=(0.0, 0.0),
-                flip_probabilities=(0.0, 0.0, 0.0),
-            ),
-        }
 
 
 class TinyMimosaTransformManager(TransformManager):

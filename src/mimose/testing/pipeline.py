@@ -9,6 +9,7 @@ import click
 import numpy as np
 import pandas as pd
 import torch
+from medpy.metric import binary as medpy_binary
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -143,6 +144,61 @@ def softmax_output_dice_class4(
     return dice_separate.cpu().numpy(), dice_evaluate.cpu().numpy()
 
 
+def _hd95_or_penalty(prediction: np.ndarray, target: np.ndarray, penalty: float) -> float:
+    prediction_empty = not prediction.any()
+    target_empty = not target.any()
+    if prediction_empty and target_empty:
+        return 0.0
+    if prediction_empty or target_empty:
+        return penalty
+    return float(medpy_binary.hd95(prediction, target, voxelspacing=None))
+
+
+def softmax_output_hd95_class4(
+    output: torch.Tensor,
+    target: torch.Tensor,
+) -> np.ndarray:
+    """BraTS-style HD95 for WT/TC/ET/ETpp, mirroring softmax_output_dice_class4.
+
+    Falls back to 0.0 when both masks are empty (no error) and to the
+    volume's spatial diagonal as a fixed penalty when only one of the two
+    masks is empty (undefined surface distance), matching the BraTS
+    challenge convention.
+    """
+    if output.ndim != 4 or target.ndim != 4:
+        raise ValueError(
+            "Expected output and target to have shape [B, H, W, D], "
+            f"got {tuple(output.shape)} and {tuple(target.shape)}"
+        )
+
+    output_np = output.cpu().numpy()
+    target_np = target.cpu().numpy()
+    batch_size = output_np.shape[0]
+    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+
+    results = np.zeros((batch_size, 4), dtype=np.float64)
+    for index in range(batch_size):
+        o1 = output_np[index] == 1
+        t1 = target_np[index] == 1
+        o2 = output_np[index] == 2
+        t2 = target_np[index] == 2
+        o3 = output_np[index] == 3
+        t3 = target_np[index] == 3
+
+        o_whole = o1 | o2 | o3
+        t_whole = t1 | t2 | t3
+        o_core = o1 | o3
+        t_core = t1 | t3
+        o4 = np.zeros_like(o3) if o3.sum() < 500 else o3
+
+        results[index, 0] = _hd95_or_penalty(o_whole, t_whole, penalty)
+        results[index, 1] = _hd95_or_penalty(o_core, t_core, penalty)
+        results[index, 2] = _hd95_or_penalty(o3, t3, penalty)
+        results[index, 3] = _hd95_or_penalty(o4, t3, penalty)
+
+    return results
+
+
 def run_testing(
     *,
     data_dir: Path,
@@ -197,6 +253,8 @@ def run_testing(
             output_path.unlink()
 
         total_score = AverageMeter()
+        total_hd95 = AverageMeter()
+        subject_records: list[dict[str, Any]] = []
         total_steps = len(MASKS) * len(test_loader)
         with torch.no_grad():
             with Progress(
@@ -216,7 +274,9 @@ def run_testing(
                 )
                 for mask in MASKS:
                     mask_specific_score = AverageMeter()
+                    mask_specific_hd95 = AverageMeter()
                     mask_tensor = torch.tensor(mask, dtype=torch.bool, device=device).unsqueeze(0)
+                    mask_label = _mask_name(mask)
 
                     for batch in test_loader:
                         images = batch["images"].to(device, non_blocking=True)
@@ -227,13 +287,32 @@ def run_testing(
                             output=prediction,
                             target=target,
                         )
+                        brats_hd95 = softmax_output_hd95_class4(
+                            output=prediction,
+                            target=target,
+                        )
                         mask_specific_score.update(brats_dice)
+                        mask_specific_hd95.update(brats_hd95)
+                        subject_records.append(
+                            {
+                                "subject": str(batch["sub"][0]),
+                                "modalities": mask_label,
+                                "WT_dice": float(brats_dice[0, 0]),
+                                "TC_dice": float(brats_dice[0, 1]),
+                                "ET_dice": float(brats_dice[0, 2]),
+                                "ETpp_dice": float(brats_dice[0, 3]),
+                                "WT_hd95": float(brats_hd95[0, 0]),
+                                "TC_hd95": float(brats_hd95[0, 1]),
+                                "ET_hd95": float(brats_hd95[0, 2]),
+                                "ETpp_hd95": float(brats_hd95[0, 3]),
+                            }
+                        )
                         current_avg = np.asarray(mask_specific_score.avg)[0]
                         progress.update(
                             task_id,
                             advance=1,
                             metrics=(
-                                f"{_mask_name(mask)}  "
+                                f"{mask_label}  "
                                 f"WT {current_avg[0]:.4f}  "
                                 f"TC {current_avg[1]:.4f}  "
                                 f"ET {current_avg[2]:.4f}"
@@ -241,19 +320,26 @@ def run_testing(
                         )
 
                     mask_score_avg = np.asarray(mask_specific_score.avg)[0]
+                    mask_hd95_avg = np.asarray(mask_specific_hd95.avg)[0]
                     total_score.update(mask_score_avg)
+                    total_hd95.update(mask_hd95_avg)
                     _append_report_line(
                         output_path,
                         (
-                            f"Available modals = {_mask_name(mask):<21}--> "
+                            f"Available modals = {mask_label:<21}--> "
                             f"WT = {mask_score_avg[0]:.4f}, "
                             f"TC = {mask_score_avg[1]:.4f}, "
                             f"ET = {mask_score_avg[2]:.4f}, "
-                            f"ETpp = {mask_score_avg[3]:.4f}"
+                            f"ETpp = {mask_score_avg[3]:.4f}, "
+                            f"WT_hd95 = {mask_hd95_avg[0]:.4f}, "
+                            f"TC_hd95 = {mask_hd95_avg[1]:.4f}, "
+                            f"ET_hd95 = {mask_hd95_avg[2]:.4f}, "
+                            f"ETpp_hd95 = {mask_hd95_avg[3]:.4f}"
                         ),
                     )
 
         avg_total_score = np.asarray(total_score.avg)
+        avg_total_hd95 = np.asarray(total_hd95.avg)
         _append_report_line(
             output_path,
             (
@@ -261,10 +347,15 @@ def run_testing(
                 f"WT = {avg_total_score[0]:.4f}, "
                 f"TC = {avg_total_score[1]:.4f}, "
                 f"ET = {avg_total_score[2]:.4f}, "
-                f"ETpp = {avg_total_score[3]:.4f}"
+                f"ETpp = {avg_total_score[3]:.4f}, "
+                f"WT_hd95 = {avg_total_hd95[0]:.4f}, "
+                f"TC_hd95 = {avg_total_hd95[1]:.4f}, "
+                f"ET_hd95 = {avg_total_hd95[2]:.4f}, "
+                f"ETpp_hd95 = {avg_total_hd95[3]:.4f}"
             ),
         )
         _write_excel_summary(output_path)
+        _write_per_subject_report(output_path, subject_records)
         return output_path
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from None
@@ -293,37 +384,37 @@ def _append_report_line(output_path: Path, line: str) -> None:
 
 def _write_excel_summary(results_path: Path) -> Path:
     excel_path = results_path.with_suffix(".xlsx")
-    scores = {
-        "ET": [],
-        "TC": [],
-        "WT": [],
-        "order": [],
-    }
+    dice_keys = ("ET", "TC", "WT")
+    hd95_keys = ("ET_hd95", "TC_hd95", "WT_hd95")
+    scores: dict[str, list[float]] = {key: [] for key in (*dice_keys, *hd95_keys)}
+    order: list[int] = []
 
     with results_path.open("r", encoding="utf-8") as handle:
         for line in handle:
-            if "Avg" in line:
-                parsed = _parse_avg_line(line)
-                scores["order"].append(15)
-                scores["ET"].append(parsed["ET"])
-                scores["WT"].append(parsed["WT"])
-                scores["TC"].append(parsed["TC"])
-            else:
-                parsed = _parse_result_line(line)
-                scores["order"].append(_string_to_order(parsed["modals"]))
-                scores["ET"].append(parsed["ET"] * 100)
-                scores["WT"].append(parsed["WT"] * 100)
-                scores["TC"].append(parsed["TC"] * 100)
+            is_avg = "Avg" in line
+            parsed = _parse_avg_line(line) if is_avg else _parse_result_line(line)
+            order.append(15 if is_avg else _string_to_order(parsed["modals"]))
+            dice_multiplier = 1.0 if is_avg else 100.0
+            for key in dice_keys:
+                scores[key].append(parsed[key] * dice_multiplier)
+            for key in hd95_keys:
+                scores[key].append(parsed[key])
 
-    scores_sorted = {"ET": [], "TC": [], "WT": []}
-    for key in scores_sorted:
-        scores_sorted[key] = [value for _, value in sorted(zip(scores["order"], scores[key]))]
+    scores_sorted = {
+        key: [value for _, value in sorted(zip(order, values))] for key, values in scores.items()
+    }
 
-    for key, values in scores_sorted.items():
+    for values in scores_sorted.values():
         values[-1] = sum(values[:-1]) / len(values[:-1])
 
     pd.DataFrame(scores_sorted).to_excel(excel_path, index=False)
     return excel_path
+
+
+def _write_per_subject_report(results_path: Path, records: list[dict[str, Any]]) -> Path:
+    per_subject_path = results_path.with_name(f"{results_path.stem}_per_subject.csv")
+    pd.DataFrame(records).to_csv(per_subject_path, index=False)
+    return per_subject_path
 
 
 def _parse_result_line(line: str) -> dict[str, float | str]:
@@ -403,4 +494,5 @@ __all__ = [
     "run_testing",
     "set_seed",
     "softmax_output_dice_class4",
+    "softmax_output_hd95_class4",
 ]

@@ -83,3 +83,35 @@ def merge_cli_overrides(
             merged[key] = value
 
     return merged
+
+
+def apply_run_suffix(merged: dict[str, Any]) -> None:
+    """Append `run_suffix` to art_dir, wandb_run_name, hf_run_name, and output_path in place.
+
+    Lets the same config/CLI invocation be reused for repeated runs (e.g. multiple
+    seeds for a std computation) without each run clobbering the previous one's
+    artifacts, W&B run, HF upload path, or test report.
+    """
+    run_suffix = merged.get("run_suffix")
+    if not run_suffix:
+        return
+
+    art_dir = merged.get("art_dir")
+    if art_dir is not None:
+        art_dir_path = Path(art_dir)
+        merged["art_dir"] = str(art_dir_path.with_name(f"{art_dir_path.name}_{run_suffix}"))
+
+    wandb_run_name = merged.get("wandb_run_name")
+    if wandb_run_name:
+        merged["wandb_run_name"] = f"{wandb_run_name}_{run_suffix}"
+
+    hf_run_name = merged.get("hf_run_name")
+    if hf_run_name:
+        merged["hf_run_name"] = f"{hf_run_name}_{run_suffix}"
+
+    output_path = merged.get("output_path")
+    if output_path is not None:
+        output_path_obj = Path(output_path)
+        merged["output_path"] = str(
+            output_path_obj.with_name(f"{output_path_obj.stem}_{run_suffix}{output_path_obj.suffix}")
+        )

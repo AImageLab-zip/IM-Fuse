@@ -99,14 +99,24 @@ class IMFuseLoss:
         outputs: tuple[torch.Tensor, Sequence[torch.Tensor], Sequence[torch.Tensor]],
         target: torch.Tensor,
         include_fuse: bool,
+        include_sep: bool = True,
     ) -> dict[str, torch.Tensor]:
         fuse_pred, sep_preds, prm_preds = outputs
 
-        fuse = self._branch_loss(fuse_pred, target)
-        sep = self._multi_branch_loss(sep_preds, target)
+        zero = target.new_tensor(0.0)
+
+        # Only build the computation graph for branches that will actually be
+        # backpropagated. Skipped branches return zeros so the caller always
+        # gets the same dict shape, but their activation buffers are never
+        # allocated — preventing the OOM that occurs when fuse/sep graphs are
+        # built but then excluded from loss.backward().
+        fuse = self._branch_loss(fuse_pred, target) if include_fuse else {"cross": zero, "dice": zero, "total": zero}
+        sep = self._multi_branch_loss(sep_preds, target) if include_sep else {"cross": zero, "dice": zero, "total": zero}
         prm = self._multi_branch_loss(prm_preds, target)
 
-        total = (self.sep_weight * sep["total"]) + (self.prm_weight * prm["total"])
+        total = self.prm_weight * prm["total"]
+        if include_sep:
+            total = total + (self.sep_weight * sep["total"])
         if include_fuse:
             total = total + (self.fuse_weight * fuse["total"])
 

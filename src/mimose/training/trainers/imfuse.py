@@ -35,6 +35,7 @@ class IMFuseTrainer(BaseTrainer):
         num_workers: int | None = None,
         fp16: bool = False,
         resume: bool = False,
+        try_resume: bool = False,
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
@@ -90,6 +91,7 @@ class IMFuseTrainer(BaseTrainer):
             num_workers=effective_num_workers,
             fp16=fp16,
             resume=resume,
+            try_resume=try_resume,
             seed=seed,
             pretrain=pretrain,
             wandb_project=wandb_project,
@@ -231,6 +233,7 @@ class IMFuseTrainer(BaseTrainer):
             transform_manager = build_transform_manager(
                 self.transform_kind,
                 model_kwargs=(self.model_config.kwargs if self.model_config is not None else None),
+                crop_size=(self.patch_size, self.patch_size, self.patch_size),
             )
         train_set = IMFuseDataset(
             root=self.input_dir,

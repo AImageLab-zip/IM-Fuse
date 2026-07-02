@@ -46,7 +46,7 @@ custom_trainer_kwargs:
   region_fusion_start_epoch: 20
   patch_size: 80
   debug: false
-  transform_kind: rfnet
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
 

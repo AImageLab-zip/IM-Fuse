@@ -29,6 +29,7 @@ class AbstractTrainer(ABC):
         num_workers: int | None = None,
         fp16: bool = False,
         resume: bool = False,
+        try_resume: bool = False,
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
@@ -52,6 +53,7 @@ class AbstractTrainer(ABC):
         self.num_workers = num_workers
         self.fp16 = bool(fp16)
         self.resume_requested = bool(resume)
+        self.try_resume_requested = bool(try_resume)
 
         self.seed = seed
         self.pretrain = Path(pretrain) if pretrain is not None else None

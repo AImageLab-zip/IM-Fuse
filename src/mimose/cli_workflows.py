@@ -24,6 +24,7 @@ from mimose.enums import (
     TrainerKind,
 )
 from mimose.utils.cli_overrides import (
+    apply_run_suffix,
     load_yaml_config,
     merge_cli_overrides,
     resolve_split_path,
@@ -182,6 +183,7 @@ def build_train_merged_config(
     optimizer: OptimizerKind | None,
     betas: tuple[float, float] | None,
     momentum: float | None,
+    nesterov: bool | None,
     scheduler: SchedulerKind | None,
     poly_total_iters: int | None,
     poly_power: float | None,
@@ -204,6 +206,7 @@ def build_train_merged_config(
     nproc_per_node: int | None,
     fp16: bool | None,
     resume: bool,
+    try_resume: bool,
     seed: int,
     pretrain: Path | None,
     wandb_project: str | None,
@@ -212,6 +215,7 @@ def build_train_merged_config(
     dataset_type: DatasetType | None,
     push_to_hf: bool | None,
     hf_repo: str | None,
+    run_suffix: str | None = None,
 ) -> dict[str, object]:
     from mimose.training.config import parse_kv_list
 
@@ -251,6 +255,7 @@ def build_train_merged_config(
         optimizer=optimizer,
         betas=betas,
         momentum=momentum,
+        nesterov=nesterov,
         scheduler=scheduler,
         poly_total_iters=poly_total_iters,
         poly_power=poly_power,
@@ -273,6 +278,7 @@ def build_train_merged_config(
         nproc_per_node=nproc_per_node,
         fp16=fp16,
         resume=resume,
+        try_resume=try_resume,
         pretrain=pretrain,
         seed=seed,
         wandb_project=wandb_project,
@@ -281,6 +287,7 @@ def build_train_merged_config(
         dataset_type=dataset_type,
         push_to_hf=push_to_hf,
         hf_repo=hf_repo,
+        run_suffix=run_suffix,
     )
     merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
     explicit_loss_kwargs = {
@@ -312,6 +319,7 @@ def build_train_merged_config(
             param_hint="--hf-repo",
         )
     _require_existing_data_dir(merged)
+    apply_run_suffix(merged)
     return merged
 
 
@@ -337,6 +345,7 @@ def build_push_merged_config(
     wandb_run_name: str | None,
     dataset_type: DatasetType | None,
     hf_repo: str | None,
+    run_suffix: str | None = None,
 ) -> dict[str, object]:
     merged = build_train_merged_config(
         config=config,
@@ -358,6 +367,7 @@ def build_push_merged_config(
         optimizer=None,
         betas=None,
         momentum=None,
+        nesterov=None,
         scheduler=None,
         poly_total_iters=None,
         poly_power=None,
@@ -388,6 +398,7 @@ def build_push_merged_config(
         dataset_type=dataset_type,
         push_to_hf=True,
         hf_repo=hf_repo,
+        run_suffix=run_suffix,
     )
     if checkpoint_path is not None:
         merged["checkpoint_path"] = str(checkpoint_path)
@@ -451,7 +462,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         ModelKind as TrainingModelKind,
         build_model_config,
     )
-    from mimose.training.trainers import DCSegTrainer, IMFuseTrainer
+    from mimose.training.trainers import A2FSegTrainer, CLRSTrainer, DCSegTrainer, IMFuseTrainer
     from mimose.training.transforms import build_transform_manager
 
     _require_train_values(
@@ -467,6 +478,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
     trainer_map = {
         TrainerKind.IMFUSE: IMFuseTrainer,
         TrainerKind.DCSEG: DCSegTrainer,
+        TrainerKind.A2FSEG: A2FSegTrainer,
+        TrainerKind.CLRS: CLRSTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -479,9 +492,17 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
     default_model = (
         TrainingModelKind.DCSEG
         if trainer_kind is TrainerKind.DCSEG
+        else TrainingModelKind.A2FSEG
+        if trainer_kind is TrainerKind.A2FSEG
+        else TrainingModelKind.CLRS
+        if trainer_kind is TrainerKind.CLRS
         else TrainingModelKind.IMFUSE
     )
-    default_loss = "dcseg" if trainer_kind is TrainerKind.DCSEG else "imfuse"
+    default_loss = (
+        "a2fseg" if trainer_kind is TrainerKind.A2FSEG
+        else "clrs" if trainer_kind is TrainerKind.CLRS
+        else "imfuse"
+    )
     model_kind = TrainingModelKind(merged.get("model", default_model))
     optimizer_kind = TrainingOptimizerKind(
         merged.get("optimizer", TrainingOptimizerKind.RADAM)
@@ -504,6 +525,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         weight_decay=float(_merged_value(merged, "weight_decay", 3e-5)),
         betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
         momentum=float(_merged_value(merged, "momentum", 0.9)),
+        nesterov=bool(_merged_value(merged, "nesterov", False)),
     )
     scheduler_config = build_scheduler_config(
         scheduler_kind=scheduler_kind,
@@ -520,11 +542,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         plateau_patience=int(_merged_value(merged, "plateau_patience", 10)),
     )
     trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
-    default_transform_kind = (
-        TransformKind.DCSEG
-        if trainer_kind is TrainerKind.DCSEG
-        else TransformKind.IMFUSE
-    )
+    default_transform_kind = TransformKind.IMFUSE
     resolved_transform_kind = TransformKind(
         trainer_kwargs.get(
             "transform_kind",
@@ -561,6 +579,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         num_workers=int(merged.get("num_workers", 8)),
         fp16=bool(merged.get("fp16", False)),
         resume=bool(merged.get("resume", False)),
+        try_resume=bool(merged.get("try_resume", False)),
         seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
         pretrain=merged.get("pretrain"),
         wandb_project=merged.get("wandb_project"),

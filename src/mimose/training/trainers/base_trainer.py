@@ -61,6 +61,7 @@ class BaseTrainer(AbstractTrainer):
         num_workers: int | None = None,
         fp16: bool = False,
         resume: bool = False,
+        try_resume: bool = False,
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
@@ -84,6 +85,7 @@ class BaseTrainer(AbstractTrainer):
             num_workers=num_workers,
             fp16=fp16,
             resume=resume,
+            try_resume=try_resume,
             seed=seed,
             pretrain=pretrain,
             wandb_project=wandb_project,
@@ -103,7 +105,10 @@ class BaseTrainer(AbstractTrainer):
         self._train_iterator = getattr(self, "_train_iterator", None)
         self.amp_enabled = self.fp16 and self.device.type == "cuda"
         self.grad_scaler = GradScaler("cuda", enabled=self.amp_enabled)
-        self.resume = self._resolve_resume_path(self.resume_requested)
+        self.resume = self._resolve_resume_path(
+            self.resume_requested or self.try_resume_requested,
+            strict=self.resume_requested,
+        )
         self._setup_distributed()
         self.model = self._build_model()
         self.wrap_model_for_distributed()
@@ -289,6 +294,10 @@ class BaseTrainer(AbstractTrainer):
             optimizer_kwargs["momentum"] = self.optimizer_config.momentum
         if self.optimizer_config.eps is not None:
             optimizer_kwargs["eps"] = self.optimizer_config.eps
+        if self.optimizer_config.amsgrad is not None:
+            optimizer_kwargs["amsgrad"] = self.optimizer_config.amsgrad
+        if self.optimizer_config.nesterov is not None:
+            optimizer_kwargs["nesterov"] = self.optimizer_config.nesterov
 
         self.optimizer = self.optimizer_config.optim_class(
             target_model.parameters(),
@@ -435,14 +444,16 @@ class BaseTrainer(AbstractTrainer):
             return None
         return DatasetType(str(dataset_type).lower())
 
-    def _resolve_resume_path(self, resume: bool) -> Path | None:
+    def _resolve_resume_path(self, resume: bool, strict: bool = True) -> Path | None:
         if not resume:
             return None
         checkpoint_path = self.checkpoint_dir / "model_last.pth"
         if not checkpoint_path.is_file():
-            raise click.ClickException(
-                f"resume checkpoint not found at {checkpoint_path}"
-            )
+            if strict:
+                raise click.ClickException(
+                    f"resume checkpoint not found at {checkpoint_path}"
+                )
+            return None
         return checkpoint_path
 
 

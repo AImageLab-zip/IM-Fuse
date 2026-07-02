@@ -31,6 +31,8 @@ class OptimizerConfig:
     betas: tuple[float, float] | None = None
     momentum: float | None = None
     eps: float | None = None
+    amsgrad: bool | None = None
+    nesterov: bool | None = None
 
 def build_optimizer_config(
     optimizer_kind: OptimizerKind,
@@ -38,6 +40,7 @@ def build_optimizer_config(
     weight_decay: float,
     betas: tuple[float, float] | None,
     momentum: float,
+    nesterov: bool = False,
 ) -> OptimizerConfig:
     if lr <= 0:
         raise ValueError("lr must be > 0")
@@ -60,6 +63,7 @@ def build_optimizer_config(
             weight_decay=weight_decay,
             betas=betas,
             eps=1e-8,
+            amsgrad=True if optimizer_kind is OptimizerKind.ADAM else None,
         )
     if optimizer_kind is OptimizerKind.SGD:
         return OptimizerConfig(
@@ -67,6 +71,7 @@ def build_optimizer_config(
             lr=lr,
             weight_decay=weight_decay,
             momentum=momentum,
+            nesterov=nesterov if nesterov else None,
         )
     raise typer.BadParameter(
         f"Unsupported optimizer: {optimizer_kind}",
