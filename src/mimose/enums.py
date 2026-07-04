@@ -31,8 +31,16 @@ class NormMode(StrEnum):
 class TrainerKind(StrEnum):
     IMFUSE = "imfuse"
     DCSEG = "dcseg"
-    A2FSEG = "a2fseg"
-    CLRS = "clrs"
+    UHVED = "uhved"
+    ROBUSTSEG = "robustseg"
+    SHASPEC = "shaspec"
+    M3AE = "m3ae"
+    MAM = "mam"
+    SRMNET = "srmnet"
+    IMS2TRANS = "ims2trans"
+    MSTKDNET = "mstkdnet"
+    MIFPN = "mifpn"
+    REVERSE = "reverse"
 
 
 class ModelKind(StrEnum):
@@ -41,8 +49,19 @@ class ModelKind(StrEnum):
     DCSEG = "dcseg"
     RFNET = "rfnet"
     TINYMIMOSA = "tinymimosa"
-    A2FSEG = "a2fseg"
-    CLRS = "clrs"
+    UHVED = "uhved"
+    ROBUSTSEG = "robustseg"
+    M2FTRANS = "m2ftrans"
+    SFUSION = "sfusion"
+    SHASPEC = "shaspec"
+    M3AE = "m3ae"
+    MAM = "mam"
+    SRMNET = "srmnet"
+    MMMVIT = "mmmvit"
+    IMS2TRANS = "ims2trans"
+    MSTKDNET = "mstkdnet"
+    MIFPN = "mifpn"
+    REVERSE = "reverse"
 
 
 class TransformKind(StrEnum):
@@ -68,8 +87,16 @@ class SchedulerKind(StrEnum):
 class LossKind(StrEnum):
     IMFUSE = "imfuse"
     TINYMIMOSA = "tinymimosa"
-    A2FSEG = "a2fseg"
-    CLRS = "clrs"
+    UHVED = "uhved"
+    ROBUSTSEG = "robustseg"
+    SHASPEC = "shaspec"
+    M3AE = "m3ae"
+    MAM = "mam"
+    SRMNET = "srmnet"
+    IMS2TRANS = "ims2trans"
+    MSTKDNET = "mstkdnet"
+    MIFPN = "mifpn"
+    REVERSE = "reverse"
 
 
 class MaskingMode(StrEnum):

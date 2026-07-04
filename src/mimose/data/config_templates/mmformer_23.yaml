@@ -39,13 +39,13 @@ loss: imfuse
 custom_model_kwargs:
   num_cls: 4
 
-#custom_loss_kwargs: {}
-loss_num_classes: null
-fuse_weight: 1.0
-sep_weight: 1.0
-prm_weight: 1.0
-loss_eps: 0.0000001
-log_clamp_min: 0.005
+custom_loss_kwargs:
+  num_classes: null
+  fuse_weight: 1.0
+  sep_weight: 1.0
+  prm_weight: 1.0
+  eps: 0.0000001
+  log_clamp_min: 0.005
 
 custom_trainer_kwargs:
   iter_per_epoch: null

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import ClassVar
 
 import torch
+
+from mimose.losses.config import (
+    KwargField,
+    nonneg_float,
+    positive_float,
+    positive_int,
+    unit_interval_float,
+)
 
 
 def dice_loss(
@@ -63,6 +72,15 @@ def softmax_weighted_loss(
 
 class IMFuseLoss:
     """Loss wrapper matching the branch-wise training logic from legacy IMFuse."""
+
+    KWARG_SPEC: ClassVar[dict[str, KwargField]] = {
+        "num_classes": positive_int(),
+        "fuse_weight": nonneg_float(),
+        "sep_weight": nonneg_float(),
+        "prm_weight": nonneg_float(),
+        "eps": positive_float(),
+        "log_clamp_min": unit_interval_float(),
+    }
 
     def __init__(
         self,

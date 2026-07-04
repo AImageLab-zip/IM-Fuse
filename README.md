@@ -69,12 +69,14 @@ MiMoSe currently provides:
 - dataset-aware preprocessing for BraTS-style datasets
 - a Typer CLI with `preprocess`, `train`, and `test`
 - YAML-driven execution with CLI overrides
-- active model integrations for `imfuse`, `mmformer`, `dcseg`, and `rfnet`
+- active model integrations for `imfuse`, `mmformer`, `dcseg`, `rfnet`, and `tinymimosa`
 
 Supported dataset types:
 
 - `brats18`
 - `brats23`
+- `brats25`
+
 ## Preprocessing Quick Start
 
 This copies the packaged templates from `src/mimose/data/config_templates` into `src/mimose/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.

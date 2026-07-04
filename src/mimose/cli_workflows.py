@@ -172,12 +172,6 @@ def build_train_merged_config(
     loss: str | None,
     custom_model_kwargs: list[str] | None,
     custom_loss_kwargs: list[str] | None,
-    loss_num_classes: int | None,
-    fuse_weight: float | None,
-    sep_weight: float | None,
-    prm_weight: float | None,
-    loss_eps: float | None,
-    log_clamp_min: float | None,
     custom_trainer_kwargs: list[str] | None,
     split_file: Path | None,
     optimizer: OptimizerKind | None,
@@ -244,12 +238,6 @@ def build_train_merged_config(
         loss=loss,
         custom_model_kwargs=model_kwargs,
         custom_loss_kwargs=loss_kwargs,
-        loss_num_classes=loss_num_classes,
-        fuse_weight=fuse_weight,
-        sep_weight=sep_weight,
-        prm_weight=prm_weight,
-        loss_eps=loss_eps,
-        log_clamp_min=log_clamp_min,
         custom_trainer_kwargs=trainer_kwargs,
         split_file=split_file,
         optimizer=optimizer,
@@ -289,19 +277,6 @@ def build_train_merged_config(
         hf_repo=hf_repo,
         run_suffix=run_suffix,
     )
-    merged_loss_kwargs = dict(merged.get("custom_loss_kwargs") or {})
-    explicit_loss_kwargs = {
-        "num_classes": merged.get("loss_num_classes"),
-        "fuse_weight": merged.get("fuse_weight"),
-        "sep_weight": merged.get("sep_weight"),
-        "prm_weight": merged.get("prm_weight"),
-        "eps": merged.get("loss_eps"),
-        "log_clamp_min": merged.get("log_clamp_min"),
-    }
-    for key, value in explicit_loss_kwargs.items():
-        if value is not None:
-            merged_loss_kwargs[key] = value
-    merged["custom_loss_kwargs"] = merged_loss_kwargs
     merged_trainer_kwargs = dict(merged.get("custom_trainer_kwargs") or {})
     split_file_value = merged.get("split_file")
     if split_file_value is None:
@@ -356,12 +331,6 @@ def build_push_merged_config(
         loss=None,
         custom_model_kwargs=custom_model_kwargs,
         custom_loss_kwargs=None,
-        loss_num_classes=None,
-        fuse_weight=None,
-        sep_weight=None,
-        prm_weight=None,
-        loss_eps=None,
-        log_clamp_min=None,
         custom_trainer_kwargs=custom_trainer_kwargs,
         split_file=None,
         optimizer=None,
@@ -462,7 +431,20 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         ModelKind as TrainingModelKind,
         build_model_config,
     )
-    from mimose.training.trainers import A2FSegTrainer, CLRSTrainer, DCSegTrainer, IMFuseTrainer
+    from mimose.training.trainers import (
+        DCSegTrainer,
+        IMFuseTrainer,
+        IMS2TransTrainer,
+        M3AETrainer,
+        MaMTrainer,
+        MIFPNTrainer,
+        MSTKDTrainer,
+        ReverseTrainer,
+        RobustSegTrainer,
+        ShaSpecTrainer,
+        SRMNetTrainer,
+        UHVEDTrainer,
+    )
     from mimose.training.transforms import build_transform_manager
 
     _require_train_values(
@@ -478,8 +460,16 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
     trainer_map = {
         TrainerKind.IMFUSE: IMFuseTrainer,
         TrainerKind.DCSEG: DCSegTrainer,
-        TrainerKind.A2FSEG: A2FSegTrainer,
-        TrainerKind.CLRS: CLRSTrainer,
+        TrainerKind.UHVED: UHVEDTrainer,
+        TrainerKind.ROBUSTSEG: RobustSegTrainer,
+        TrainerKind.SHASPEC: ShaSpecTrainer,
+        TrainerKind.M3AE: M3AETrainer,
+        TrainerKind.MAM: MaMTrainer,
+        TrainerKind.SRMNET: SRMNetTrainer,
+        TrainerKind.IMS2TRANS: IMS2TransTrainer,
+        TrainerKind.MSTKDNET: MSTKDTrainer,
+        TrainerKind.MIFPN: MIFPNTrainer,
+        TrainerKind.REVERSE: ReverseTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -489,20 +479,33 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
             param_hint="--trainer",
         ) from exc
 
-    default_model = (
-        TrainingModelKind.DCSEG
-        if trainer_kind is TrainerKind.DCSEG
-        else TrainingModelKind.A2FSEG
-        if trainer_kind is TrainerKind.A2FSEG
-        else TrainingModelKind.CLRS
-        if trainer_kind is TrainerKind.CLRS
-        else TrainingModelKind.IMFUSE
-    )
-    default_loss = (
-        "a2fseg" if trainer_kind is TrainerKind.A2FSEG
-        else "clrs" if trainer_kind is TrainerKind.CLRS
-        else "imfuse"
-    )
+    default_model_map = {
+        TrainerKind.DCSEG: TrainingModelKind.DCSEG,
+        TrainerKind.UHVED: TrainingModelKind.UHVED,
+        TrainerKind.ROBUSTSEG: TrainingModelKind.ROBUSTSEG,
+        TrainerKind.SHASPEC: TrainingModelKind.SHASPEC,
+        TrainerKind.M3AE: TrainingModelKind.M3AE,
+        TrainerKind.MAM: TrainingModelKind.MAM,
+        TrainerKind.SRMNET: TrainingModelKind.SRMNET,
+        TrainerKind.IMS2TRANS: TrainingModelKind.IMS2TRANS,
+        TrainerKind.MSTKDNET: TrainingModelKind.MSTKDNET,
+        TrainerKind.MIFPN: TrainingModelKind.MIFPN,
+        TrainerKind.REVERSE: TrainingModelKind.REVERSE,
+    }
+    default_loss_map = {
+        TrainerKind.UHVED: "uhved",
+        TrainerKind.ROBUSTSEG: "robustseg",
+        TrainerKind.SHASPEC: "shaspec",
+        TrainerKind.M3AE: "m3ae",
+        TrainerKind.MAM: "mam",
+        TrainerKind.SRMNET: "srmnet",
+        TrainerKind.IMS2TRANS: "ims2trans",
+        TrainerKind.MSTKDNET: "mstkdnet",
+        TrainerKind.MIFPN: "mifpn",
+        TrainerKind.REVERSE: "reverse",
+    }
+    default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)
+    default_loss = default_loss_map.get(trainer_kind, "imfuse")
     model_kind = TrainingModelKind(merged.get("model", default_model))
     optimizer_kind = TrainingOptimizerKind(
         merged.get("optimizer", TrainingOptimizerKind.RADAM)

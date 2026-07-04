@@ -10,7 +10,7 @@ MiMoSe uses a flat YAML style. One file can contain fields for:
 - training
 - testing
 
-Each command reads only the keys it needs and ignores the rest. While it is possible to have 3 different yaml files, it is strongly consigliato to use a unified config, since there a
+Each command reads only the keys it needs and ignores the rest. One YAML file can hold preprocess, train, and test fields together, and that is the recommended setup for most runs.
 
 ## General Rules
 
@@ -34,6 +34,7 @@ The easiest workflow is:
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `crop_mode`: string enum
   - `none`
   - `center`
@@ -64,14 +65,49 @@ The easiest workflow is:
 - `trainer`: string enum
   - `imfuse`
   - `dcseg`
+  - `uhved`
+  - `robustseg`
+  - `shaspec`
+  - `m3ae`
+  - `mam`
+  - `srmnet`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `reverse`
 - `model`: string enum
   - `imfuse`
   - `mmformer`
   - `dcseg`
   - `rfnet`
-- `loss`: string enum
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `m2ftrans`
+  - `sfusion`
+  - `shaspec`
+  - `m3ae`
+  - `mam`
+  - `srmnet`
+  - `mmmvit`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `reverse`
+- `loss`: built-in string choice
   - `imfuse`
   - `dcseg`
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `shaspec`
+  - `m3ae`
+  - `mam`
+  - `srmnet`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `reverse`
 - `optimizer`: string enum
   - `radam`
   - `adamw`
@@ -94,6 +130,8 @@ The easiest workflow is:
 - `multistep_milestones`: list of integers or `null`
 - `multistep_gamma`: float or `null`
 - `plateau_mode`: string or `null`
+  - `min`
+  - `max`
 - `plateau_factor`: float or `null`
 - `plateau_patience`: integer or `null`
 - `lr`: float
@@ -107,15 +145,18 @@ The easiest workflow is:
 - `seed`: integer or `null`
 - `wandb_project`: string or `null`
 - `wandb_mode`: string or `null`
+  - `online`
+  - `offline`
+  - `disabled`
 - `wandb_run_name`: string or `null`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `split_file`: path or `null`
 - `transform_kind`: string enum or `null`
   - `imfuse`
-  - `dcseg`
-  - `rfnet`
+  - `tinymimosa`
 
 ### Testing
 
@@ -127,9 +168,24 @@ The easiest workflow is:
   - `mmformer`
   - `dcseg`
   - `rfnet`
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `m2ftrans`
+  - `sfusion`
+  - `shaspec`
+  - `m3ae`
+  - `mam`
+  - `srmnet`
+  - `mmmvit`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `reverse`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `num_workers`: integer
 - `seed`: integer or `null`
 - `split_file`: path or `null`
@@ -159,6 +215,8 @@ Enum-like values are written as lowercase strings:
 trainer: dcseg
 optimizer: adam
 dataset_type: brats23
+transform_kind: tinymimosa
+wandb_mode: offline
 ```
 
 ### Booleans
@@ -232,7 +290,7 @@ custom_model_kwargs:
 
 custom_trainer_kwargs:
   patch_size: 112
-  transform_kind: dcseg
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
   use_recon_loss: true
@@ -315,7 +373,7 @@ Type: dictionary with trainer-specific keys.
 ```yaml
 custom_trainer_kwargs:
   patch_size: 112
-  transform_kind: dcseg
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
 ```
@@ -327,6 +385,9 @@ Common trainer-specific keys and types:
 - `patch_size`: integer
 - `debug`: boolean
 - `transform_kind`: string enum
+- `transform_kind` values:
+  - `imfuse`
+  - `tinymimosa`
 - `train_masking_mode`: string enum
   - `random`
   - `validation`
@@ -341,6 +402,8 @@ Common trainer-specific keys and types:
 - `use_mod_contrastive`: boolean
 - `regularization_alpha`: float
 - `anatomy_contrastive_method`: string
+  - `cos_sim`
+  - `ssim`
 
 ## Nulls and Lists
 
@@ -377,6 +440,32 @@ Recommended examples:
 - `src/mimose/data/configs/dcseg_23.yaml`
 - `src/mimose/data/configs/rfnet_18.yaml`
 - `src/mimose/data/configs/rfnet_23.yaml`
+- `src/mimose/data/configs/uhved_18.yaml`
+- `src/mimose/data/configs/uhved_23.yaml`
+- `src/mimose/data/configs/robustseg_18.yaml`
+- `src/mimose/data/configs/robustseg_23.yaml`
+- `src/mimose/data/configs/m2ftrans_18.yaml`
+- `src/mimose/data/configs/m2ftrans_23.yaml`
+- `src/mimose/data/configs/sfusion_18.yaml`
+- `src/mimose/data/configs/sfusion_23.yaml`
+- `src/mimose/data/configs/shaspec_18.yaml`
+- `src/mimose/data/configs/shaspec_23.yaml`
+- `src/mimose/data/configs/m3ae_18.yaml`
+- `src/mimose/data/configs/m3ae_23.yaml`
+- `src/mimose/data/configs/mam_18.yaml`
+- `src/mimose/data/configs/mam_23.yaml`
+- `src/mimose/data/configs/srmnet_18.yaml`
+- `src/mimose/data/configs/srmnet_23.yaml`
+- `src/mimose/data/configs/mmmvit_18.yaml`
+- `src/mimose/data/configs/mmmvit_23.yaml`
+- `src/mimose/data/configs/ims2trans_18.yaml`
+- `src/mimose/data/configs/ims2trans_23.yaml`
+- `src/mimose/data/configs/mstkdnet_18.yaml`
+- `src/mimose/data/configs/mstkdnet_23.yaml`
+- `src/mimose/data/configs/mifpn_18.yaml`
+- `src/mimose/data/configs/mifpn_23.yaml`
+- `src/mimose/data/configs/reverse_18.yaml`
+- `src/mimose/data/configs/reverse_23.yaml`
 
 ## Related Docs
 

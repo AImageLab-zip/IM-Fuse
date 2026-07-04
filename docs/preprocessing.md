@@ -91,6 +91,7 @@ These values are required for preprocessing:
 
 - `brats18`
 - `brats23`
+- `brats25`
 
 ## Output Format
 

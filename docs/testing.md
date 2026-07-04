@@ -33,8 +33,9 @@ Run from CLI with an online checkpoint cache:
 mimose test \
   --data-dir /path/to/preprocessed \
   --art-dir /path/to/artifacts/run1 \
-  --checkpoint-link https://example.com/final_weights_only.safetensors \
   --online \
+  --hf-repo owner/repo \
+  --hf-run-name run1 \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
   --model dcseg
@@ -51,7 +52,7 @@ The test command requires:
 Use one of these checkpoint inputs:
 
 - `checkpoint_path` for a local `.safetensors` weights file
-- `checkpoint_link` together with `online=true` and `art_dir` for a downloaded cached checkpoint
+- `hf_repo` together with `hf_run_name`, `online=true`, and `art_dir` for a downloaded cached checkpoint
 - `art_dir` by itself to auto-resolve `art_dir/checkpoints/final_weights_only.safetensors`
 
 `model` is optional in the CLI because it defaults to `imfuse`, but for a real run you should set it explicitly unless the config already does.
@@ -65,6 +66,13 @@ Active tested model choices currently include:
 - `mmformer`
 - `dcseg`
 - `rfnet`
+- `tinymimosa`
+
+Dataset type choices:
+
+- `brats18`
+- `brats23`
+- `brats25`
 
 ## What It Produces
 
@@ -97,7 +105,7 @@ The current metrics reported are:
 
 If a checkpoint is missing, the command raises a clean CLI error.
 
-If `online` is enabled, MiMoSe downloads the checkpoint from `checkpoint_link` into `art_dir/checkpoints/online_checkpoint.<ext>` and reuses that cached file on later runs if it is already present. The testing path expects that downloaded file to be a `.safetensors` weights checkpoint.
+If `online` is enabled, MiMoSe downloads the checkpoint from Hugging Face using `hf_repo` and `hf_run_name`, stores it at `art_dir/checkpoints/hf/<repo>/<run>/final_weights_only.safetensors`, and reuses that cached file on later runs if it is already present.
 
 ## YAML Fields
 
@@ -106,8 +114,9 @@ The test command reads these fields from the combined config files:
 - `data_dir`
 - `checkpoint_path`
 - `art_dir`
-- `checkpoint_link`
 - `online`
+- `hf_repo`
+- `hf_run_name`
 - `output_path`
 - `model`
 - `custom_model_kwargs`
@@ -136,8 +145,9 @@ Online-checkpoint example:
 ```yaml
 data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
 art_dir: /work/grana_neuro/mimose/runs/dcseg23
-checkpoint_link: https://example.com/final_weights_only.safetensors
 online: true
+hf_repo: owner/repo
+hf_run_name: dcseg23
 output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg
 dataset_type: brats23

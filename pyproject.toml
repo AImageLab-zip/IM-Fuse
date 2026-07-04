@@ -18,6 +18,8 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "causal-conv1d>=1.4.0",
+    "mamba-ssm",
     "dynamic-network-architectures>=0.4.3",
     "h5py>=3.16.0",
     "huggingface_hub>=0.34.0",
@@ -71,6 +73,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+causal-conv1d = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl" }
+mamba-ssm = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl" }
 
 [tool.ruff]
 line-length = 88

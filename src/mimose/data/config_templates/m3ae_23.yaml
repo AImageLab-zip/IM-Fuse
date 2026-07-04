@@ -1,0 +1,91 @@
+# Combined M3AE reference config for BraTS 2023.
+# This mirrors legacy M3AE fine-tuning defaults as closely as possible under
+# the current MiMoSe CLI/config API. Legacy M3AE also has a separate
+# masked-autoencoder pretraining stage and a cross-view consistency loss
+# during fine-tuning; neither is reproduced here (see docs/training.md).
+#
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
+
+# preprocess
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/m3ae-preprocessed/
+dataset_type: brats23
+
+crop_mode: non_empty
+crop_size: null
+crop_min_size: [128, 128, 128]
+
+clamp_mode: none
+clamp_percentile: null
+clamp_min: null
+clamp_max: null
+
+norm_mode: subject_zscore
+norm_min_max_range: null
+norm_mean: null
+norm_std: null
+
+yes: false
+
+# training
+data_dir: /path/to/preprocessed/m3ae-preprocessed
+art_dir: /path/to/artifacts/m3ae23
+
+trainer: m3ae
+model: m3ae
+loss: m3ae
+
+custom_model_kwargs:
+  num_cls: 4
+
+custom_loss_kwargs:
+  num_classes: null
+  log_clamp_min: 0.005
+
+custom_trainer_kwargs:
+  iter_per_epoch: null
+  patch_size: 128
+  debug: false
+  transform_kind: imfuse
+  train_masking_mode: random
+  val_masking_mode: validation
+
+optimizer: adam
+betas: [0.9, 0.999]
+momentum: 0.9
+
+scheduler: cosine
+poly_total_iters: null
+poly_power: null
+cosine_t_max: 300
+cosine_eta_min: 0.0
+step_step_size: null
+step_gamma: null
+multistep_milestones: null
+multistep_gamma: null
+plateau_mode: null
+plateau_factor: null
+plateau_patience: null
+
+lr: 0.0003
+num_epochs: 300
+batch_size: 1
+weight_decay: 0.00001
+num_workers: 8
+fp16: false
+
+resume: false
+pretrain: null
+seed: 999
+
+wandb_project: SegmentationMM
+wandb_mode: online
+wandb_run_name: m3ae23_training
+push_to_hf: false
+hf_repo: /path/to/huggingface/owner-repo
+
+# testing
+checkpoint_path: /path/to/artifacts/m3ae23/checkpoints/final_weights_only.safetensors
+output_path: /path/to/artifacts/m3ae23/results.txt

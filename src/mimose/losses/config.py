@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import importlib
 from pathlib import Path
@@ -12,6 +13,31 @@ from mimose.enums import LossKind
 class LossConfig:
     loss_class: Any
     kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class KwargField:
+    """Describes how to cast/validate a single loss constructor kwarg."""
+
+    caster: Callable[[Any], Any]
+    validator: Callable[[Any], bool] | None = None
+    error: str = "is invalid"
+
+
+def positive_int(error: str = "must be > 0") -> KwargField:
+    return KwargField(caster=int, validator=lambda value: value > 0, error=error)
+
+
+def nonneg_float(error: str = "must be >= 0") -> KwargField:
+    return KwargField(caster=float, validator=lambda value: value >= 0, error=error)
+
+
+def positive_float(error: str = "must be > 0") -> KwargField:
+    return KwargField(caster=float, validator=lambda value: value > 0, error=error)
+
+
+def unit_interval_float(error: str = "must be in the range (0, 1]") -> KwargField:
+    return KwargField(caster=float, validator=lambda value: 0 < value <= 1, error=error)
 
 
 def build_loss_config(
@@ -30,7 +56,7 @@ def build_loss_config(
         )
 
     loss_class = _resolve_loss(resolved_loss_name)
-    resolved_kwargs = _normalize_loss_kwargs(resolved_loss_name, loss_kwargs or {})
+    resolved_kwargs = _normalize_loss_kwargs(loss_class, loss_kwargs or {})
     return LossConfig(
         loss_class=loss_class,
         kwargs=resolved_kwargs,
@@ -64,125 +90,21 @@ def _resolve_loss(loss_name: str) -> Any:
     )
 
 
-def _normalize_loss_kwargs(loss_name: str, loss_kwargs: dict[str, Any]) -> dict[str, Any]:
-    target_name = _normalize_name(loss_name)
+def _normalize_loss_kwargs(loss_class: Any, loss_kwargs: dict[str, Any]) -> dict[str, Any]:
+    kwarg_spec: dict[str, KwargField] = getattr(loss_class, "KWARG_SPEC", {})
     kwargs = dict(loss_kwargs)
 
-    if target_name == "imfuse":
-        if kwargs.get("num_classes") is not None:
-            num_classes = int(kwargs["num_classes"])
-            if num_classes <= 0:
-                raise typer.BadParameter("loss num_classes must be > 0", param_hint="--loss-num-classes")
-            kwargs["num_classes"] = num_classes
+    for key, kwarg_field in kwarg_spec.items():
+        if kwargs.get(key) is None:
+            continue
 
-        for key, param_hint in (
-            ("fuse_weight", "--fuse-weight"),
-            ("sep_weight", "--sep-weight"),
-            ("prm_weight", "--prm-weight"),
-        ):
-            if kwargs.get(key) is not None:
-                value = float(kwargs[key])
-                if value < 0:
-                    raise typer.BadParameter(f"{key} must be >= 0", param_hint=param_hint)
-                kwargs[key] = value
-
-        if kwargs.get("eps") is not None:
-            eps = float(kwargs["eps"])
-            if eps <= 0:
-                raise typer.BadParameter("loss eps must be > 0", param_hint="--loss-eps")
-            kwargs["eps"] = eps
-
-        if kwargs.get("log_clamp_min") is not None:
-            log_clamp_min = float(kwargs["log_clamp_min"])
-            if not 0 < log_clamp_min <= 1:
-                raise typer.BadParameter(
-                    "log_clamp_min must be in the range (0, 1]",
-                    param_hint="--log-clamp-min",
-                )
-            kwargs["log_clamp_min"] = log_clamp_min
-
-    if target_name == "a2fseg":
-        if kwargs.get("num_classes") is not None:
-            num_classes = int(kwargs["num_classes"])
-            if num_classes <= 0:
-                raise typer.BadParameter("loss num_classes must be > 0", param_hint="--loss-num-classes")
-            kwargs["num_classes"] = num_classes
-
-        for key, param_hint in (
-            ("fuse_weight", "--fuse-weight"),
-            ("sep_weight", "--sep-weight"),
-            ("fusion_ds_weight", "--fusion-ds-weight"),
-        ):
-            if kwargs.get(key) is not None:
-                value = float(kwargs[key])
-                if value < 0:
-                    raise typer.BadParameter(f"{key} must be >= 0", param_hint=param_hint)
-                kwargs[key] = value
-
-        if kwargs.get("eps") is not None:
-            eps = float(kwargs["eps"])
-            if eps <= 0:
-                raise typer.BadParameter("loss eps must be > 0", param_hint="--loss-eps")
-            kwargs["eps"] = eps
-
-        if kwargs.get("log_clamp_min") is not None:
-            log_clamp_min = float(kwargs["log_clamp_min"])
-            if not 0 < log_clamp_min <= 1:
-                raise typer.BadParameter(
-                    "log_clamp_min must be in the range (0, 1]",
-                    param_hint="--log-clamp-min",
-                )
-            kwargs["log_clamp_min"] = log_clamp_min
-
-    if target_name == "clrs":
-        if kwargs.get("num_classes") is not None:
-            num_classes = int(kwargs["num_classes"])
-            if num_classes <= 0:
-                raise typer.BadParameter("loss num_classes must be > 0", param_hint="--loss-num-classes")
-            kwargs["num_classes"] = num_classes
-
-        for key, param_hint in (
-            ("coe_specloss", "--coe-specloss"),
-            ("coe_consist", "--coe-consist"),
-            ("temperature", "--temperature"),
-        ):
-            if kwargs.get(key) is not None:
-                value = float(kwargs[key])
-                if value < 0:
-                    raise typer.BadParameter(f"{key} must be >= 0", param_hint=param_hint)
-                kwargs[key] = value
-
-        if kwargs.get("eps") is not None:
-            eps = float(kwargs["eps"])
-            if eps <= 0:
-                raise typer.BadParameter("loss eps must be > 0", param_hint="--loss-eps")
-            kwargs["eps"] = eps
-
-        if kwargs.get("log_clamp_min") is not None:
-            log_clamp_min = float(kwargs["log_clamp_min"])
-            if not 0 < log_clamp_min <= 1:
-                raise typer.BadParameter(
-                    "log_clamp_min must be in the range (0, 1]",
-                    param_hint="--log-clamp-min",
-                )
-            kwargs["log_clamp_min"] = log_clamp_min
-
-    if target_name in {"tinymimosa"}:
-        for key, param_hint in (
-            ("dice_weight", "--dice-weight"),
-            ("ce_weight", "--ce-weight"),
-        ):
-            if kwargs.get(key) is not None:
-                value = float(kwargs[key])
-                if value < 0:
-                    raise typer.BadParameter(f"{key} must be >= 0", param_hint=param_hint)
-                kwargs[key] = value
-
-        if kwargs.get("eps") is not None:
-            eps = float(kwargs["eps"])
-            if eps <= 0:
-                raise typer.BadParameter("loss eps must be > 0", param_hint="--loss-eps")
-            kwargs["eps"] = eps
+        value = kwarg_field.caster(kwargs[key])
+        if kwarg_field.validator is not None and not kwarg_field.validator(value):
+            raise typer.BadParameter(
+                f"loss {key} {kwarg_field.error}",
+                param_hint=f"--{key.replace('_', '-')}",
+            )
+        kwargs[key] = value
 
     return kwargs
 

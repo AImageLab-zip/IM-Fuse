@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import torch
 import torch.nn.functional as F
+
+from mimose.losses.config import KwargField, nonneg_float, positive_float
 
 
 def dice_loss(
@@ -26,6 +30,12 @@ def dice_loss(
 
 
 class TinyMimosaLoss:
+    KWARG_SPEC: ClassVar[dict[str, KwargField]] = {
+        "dice_weight": nonneg_float(),
+        "ce_weight": nonneg_float(),
+        "eps": positive_float(),
+    }
+
     def __init__(
         self,
         *,
