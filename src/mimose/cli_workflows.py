@@ -435,6 +435,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         DCSegTrainer,
         IMFuseTrainer,
         IMS2TransTrainer,
+        LCKDTrainer,
         M3AETrainer,
         MaMTrainer,
         MIFPNTrainer,
@@ -470,6 +471,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MSTKDNET: MSTKDTrainer,
         TrainerKind.MIFPN: MIFPNTrainer,
         TrainerKind.REVERSE: ReverseTrainer,
+        TrainerKind.LCKD: LCKDTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -491,6 +493,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MSTKDNET: TrainingModelKind.MSTKDNET,
         TrainerKind.MIFPN: TrainingModelKind.MIFPN,
         TrainerKind.REVERSE: TrainingModelKind.REVERSE,
+        TrainerKind.LCKD: TrainingModelKind.LCKD,
     }
     default_loss_map = {
         TrainerKind.UHVED: "uhved",
@@ -503,6 +506,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MSTKDNET: "mstkdnet",
         TrainerKind.MIFPN: "mifpn",
         TrainerKind.REVERSE: "reverse",
+        TrainerKind.LCKD: "lckd",
     }
     default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)
     default_loss = default_loss_map.get(trainer_kind, "imfuse")

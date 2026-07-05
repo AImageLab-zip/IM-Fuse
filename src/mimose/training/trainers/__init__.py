@@ -3,6 +3,7 @@ from mimose.training.trainers.base_trainer import BaseTrainer
 from mimose.training.trainers.dcseg import DCSegTrainer
 from mimose.training.trainers.imfuse import IMFuseTrainer
 from mimose.training.trainers.ims2trans import IMS2TransTrainer
+from mimose.training.trainers.lckd import LCKDTrainer
 from mimose.training.trainers.m3ae import M3AETrainer
 from mimose.training.trainers.mam import MaMTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
@@ -20,6 +21,7 @@ __all__ = [
     "DCSegTrainer",
     "IMFuseTrainer",
     "IMS2TransTrainer",
+    "LCKDTrainer",
     "M3AETrainer",
     "MaMTrainer",
     "MIFPNTrainer",

@@ -71,7 +71,7 @@ num_epochs: 300
 batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
-fp16: false
+fp16: true
 
 resume: false
 pretrain: null

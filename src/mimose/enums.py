@@ -41,6 +41,7 @@ class TrainerKind(StrEnum):
     MSTKDNET = "mstkdnet"
     MIFPN = "mifpn"
     REVERSE = "reverse"
+    LCKD = "lckd"
 
 
 class ModelKind(StrEnum):
@@ -62,6 +63,9 @@ class ModelKind(StrEnum):
     MSTKDNET = "mstkdnet"
     MIFPN = "mifpn"
     REVERSE = "reverse"
+    UNETMFI = "unetmfi"
+    LCKD = "lckd"
+    INOUTFUSION = "inoutfusion"
 
 
 class TransformKind(StrEnum):
@@ -97,6 +101,8 @@ class LossKind(StrEnum):
     MSTKDNET = "mstkdnet"
     MIFPN = "mifpn"
     REVERSE = "reverse"
+    LCKD = "lckd"
+    INOUTFUSION = "inoutfusion"
 
 
 class MaskingMode(StrEnum):

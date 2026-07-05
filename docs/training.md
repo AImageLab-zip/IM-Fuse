@@ -11,6 +11,8 @@ The active training stack currently includes:
   - `tinymimosa`
   - `m2ftrans`
   - `mmmvit`
+  - `unetmfi`
+  - `inoutfusion`
 - `DCSegTrainer` for:
   - `dcseg`
 - `UHVEDTrainer` for:
@@ -34,6 +36,8 @@ The active training stack currently includes:
   - `mifpn`
 - `ReverseTrainer` for:
   - `reverse`
+- `LCKDTrainer` for:
+  - `lckd`
 
 The runtime still shares common checkpointing, DDP, WandB, and Rich progress infrastructure across trainers, but the DC-Seg path now has its own trainer and transform wiring.
 
@@ -110,6 +114,12 @@ The repo currently ships these reference training configs:
 - `src/mimose/data/configs/mifpn_23.yaml`
 - `src/mimose/data/configs/reverse_18.yaml`
 - `src/mimose/data/configs/reverse_23.yaml`
+- `src/mimose/data/configs/unetmfi_18.yaml`
+- `src/mimose/data/configs/unetmfi_23.yaml`
+- `src/mimose/data/configs/lckd_18.yaml`
+- `src/mimose/data/configs/lckd_23.yaml`
+- `src/mimose/data/configs/inoutfusion_18.yaml`
+- `src/mimose/data/configs/inoutfusion_23.yaml`
 
 They are combined reference files that include preprocess, train, and test sections/fields. The train command reads the training-relevant keys and ignores the rest.
 
@@ -160,6 +170,7 @@ Trainer values:
 - `mstkdnet`
 - `mifpn`
 - `reverse`
+- `lckd`
 
 Model values:
 
@@ -181,6 +192,9 @@ Model values:
 - `mstkdnet`
 - `mifpn`
 - `reverse`
+- `unetmfi`
+- `lckd`
+- `inoutfusion`
 
 Loss values:
 
@@ -197,6 +211,8 @@ Loss values:
 - `mstkdnet`
 - `mifpn`
 - `reverse`
+- `lckd`
+- `inoutfusion`
 
 Optimizer values:
 
@@ -321,7 +337,12 @@ The training loss combines segmentation cross-entropy and Dice with a KL
 divergence term (inter-modality and prior, averaged over all 15 non-empty
 modality subsets) and a modality reconstruction MSE term. The KL and
 reconstruction loss weights are hardcoded to `0.1` each, matching the legacy
-U-HVED defaults, and are not exposed as YAML kwargs.
+U-HVED defaults, and are not exposed as YAML kwargs. The reconstruction term
+averages (not sums) the 4 per-modality MSE means before applying that
+weight, matching legacy's own single `torch.mean` over one concatenated
+4-channel reconstruction tensor — summing the 4 per-modality means without
+dividing (an earlier bug in this port) made the term ~4x heavier than
+intended relative to its `0.1` weight.
 
 ### RobustSeg-specific notes
 
@@ -494,15 +515,31 @@ PRM/RFM machinery like the DCSeg/RFNet family.
 The training loss adds an MSE "feature reconstruction" term, computed only
 over modalities that were actually missing in that sample's mask (the
 reconstructed bottleneck feature vs. that modality's own true — detached —
-encoder output), unweighted (matching legacy, which just adds `mseloss` to
-the segmentation loss with weight 1). Legacy's own `train_step`/`validation_step`
-picked one shared missing-modality pattern for the whole batch (`random.choice`
-over the same 15 combinations used by DCSeg/RFNet/RobustSeg/ShaSpec); this
-port instead respects MiMoSe's per-sample `[B, 4]` masks, so the
-reconstruction loss is averaged only over each sample's own missing channels.
-MaM trains at `patch_size: 128` (matching legacy's `3d_fullres` plan) with
+encoder output), unweighted (conceptually matching legacy, which adds
+`mseloss` to the segmentation loss with weight 1 — see caveat below).
+Legacy's own `train_step`/`validation_step` picked one shared
+missing-modality pattern for the whole batch (`random.choice` over the same
+15 combinations used by DCSeg/RFNet/RobustSeg/ShaSpec); this port instead
+respects MiMoSe's per-sample `[B, 4]` masks, so the reconstruction loss is
+averaged only over each sample's own missing channels. MaM trains at
+`patch_size: 128` (matching legacy's `3d_fullres` plan) with
 `optimizer: sgd`, `momentum: 0.99`, `nesterov: true`, and a `poly` LR
 schedule, matching nnU-Net's (unmodified) default trainer hyperparameters.
+
+**Caveat on "matching legacy"**: legacy's `nnUNetTrainerMissingRecon` only
+backprops the combined seg+MSE loss on the non-AMP (`grad_scaler is None`)
+code path; its normal CUDA/AMP training path (`grad_scaler` set) only calls
+`.backward()` on the plain segmentation loss — the reconstruction MSE is
+computed every step but never actually contributes gradient in legacy's own
+standard training runs. Legacy's `calculate_mse_loss` also zips its
+reconstruction tensor (indexed along the batch dimension) against the
+4-element modality-presence list, so for batch sizes other than 4 the
+"missing" flags line up against the wrong axis — a distinct bug in legacy
+itself. This port implements the clean, paper-intended semantics (MSE over
+missing modalities, gradients always flowing, per-sample masks) rather than
+literally reproducing either of legacy's runtime quirks above — a
+deliberate improvement, not a literal one-to-one port of what legacy's
+script actually does at runtime.
 
 ### SRMNet-specific notes
 
@@ -736,6 +773,178 @@ not ported. Reverse trains at `patch_size: 128` with `optimizer: adam`
 (`amsgrad=True` matched via MiMoSe's `adam`), `lr: 0.0002`, `batch_size: 1`,
 and a `poly` LR schedule.
 
+### UNET-MFI-specific notes
+
+UNET-MFI (`trainer: imfuse`, `model: unetmfi`, `loss: imfuse`) is
+architecturally the odd one out in this family: instead of per-modality
+encoders sharing a common bottleneck fusion stage, legacy builds 4 fully
+**independent** 3D U-Net towers (no shared weights at all) and cross-informs
+them at 5 resolutions (encoder stages at 64/128/256 channels, decoder stages
+at 128/64 channels) via a "Modality-adaptive Feature Interaction" (`MFIBlock`)
+module: each tower's feature map is updated with a per-channel softmax
+combination of all 4 towers' globally-pooled features, conditioned on the
+`[B, 4]` modality-availability code, added residually. There is no
+cross-modal attention or shared bottleneck — each tower otherwise stays
+private. Each tower produces 2 internal deep-supervision predictions plus
+its own final prediction; the final fused prediction comes from a small
+conv over the 4 towers' final logits. This maps directly onto MiMoSe's
+IMFuse-style contract (`fuse_pred`, 4 `sep_preds`, 8 `prm_preds` — 4
+modalities x 2 deep-supervision stages), so this port reuses
+`IMFuseTrainer`/`IMFuseLoss` verbatim.
+
+Legacy's `fianl_diff_code_block` constructs 4 independent `Relation1..
+Relation4` submodules (one per branch) but its `forward` calls
+`self.Relation1` for all 4 branches — `Relation2/3/4` are constructed but
+never receive gradient (dead weights). This port fixes that, giving each
+branch its own independent relation network, matching what the 4 separate
+constructors evidently intended. Legacy also zeroes each modality's raw
+input once per sample inside the *dataset* rather than the model; this port
+applies the same zero-fill inside the model instead (`MaskModal`), since
+MiMoSe's dataset hands the model the full raw tensor plus a separate mask.
+Finally, legacy outputs 3 sigmoid BraTS-region channels (WT/TC/ET) trained
+with a BCE+Dice loss and a `class_nums` hardcoded to 3 in `train.py`; like
+every other model in this framework, this port instead uses a standard
+softmax `num_cls`-channel head (reusing `softmax_weighted_loss`/`dice_loss`)
+so it generalizes to BraTS25's 5 classes. UNET-MFI trains at
+`patch_size: 128` with `optimizer: adam`, `lr: 0.00005`,
+`weight_decay: 0.00001`, `batch_size: 1`, `num_epochs: 1200`, and a `poly`
+LR schedule, matching legacy's defaults.
+
+### LCKD-specific notes
+
+LCKD (`trainer: lckd`, `model: lckd`, `loss: lckd` — the legacy repo folder
+is named "LCKD", but its live model class, the one actually imported by its
+own `train.py`, is called `DualNet`) needed its own new trainer/loss because
+its training contract genuinely differs from the IMFuse family: instead of
+fuse/sep/prm decoder branches, legacy returns a single segmentation
+prediction plus a scalar feature-distillation loss term computed inside the
+forward pass itself.
+
+Despite the "KD" in the name, LCKD is **not** a teacher-student pair of full
+networks like MST-KDNet. It is a single weight-shared, per-modality
+ResNet50+ASPP encoder / U-Net decoder: all 4 modalities are batch-folded
+through the *same* encoder (`[N, 4, D, H, W] -> [N*4, 1, D, H, W]`),
+producing one 256-channel bottleneck feature map per modality (zero-filled
+first for any missing modality). The namesake mechanism is a
+**feature-level self-distillation regularizer**: legacy pulls each present
+modality's bottleneck feature (detached, as a "teacher") toward every other
+present modality's feature via an L1 loss, where the *set* of teacher
+modalities is chosen dynamically — legacy re-runs validation-set Dice
+scoring every `val_pred_every` training iterations and picks whichever
+modality currently scores best per region as the next chunk's teacher(s).
+That curriculum requires a mid-training, non-differentiable validation loop
+wired directly into the optimization step, which has no natural place in
+MiMoSe's per-batch trainer contract, so this port replaces it with a fixed,
+symmetric scheme: **every modality present in a sample distills into every
+other present modality present in that same sample, equally, every training
+step** (an all-pairs L1 over the currently-present subset). This keeps the
+actual distinguishing mechanism — cross-modal feature-consistency
+regularization that compensates for missing modalities — without depending
+on an external, dice-score-driven teacher schedule. After distillation, any
+still-missing modality's feature is filled with the mean of that sample's
+present-modality features (legacy's "fts fill in process"), and all 4
+modality feature maps are channel-concatenated (bottleneck and every
+skip-connection scale alike) before a single shared U-Net decoder produces
+the final prediction.
+
+Two real issues were fixed rather than faithfully reproduced:
+- Legacy applies one global `mode` string (which modalities are considered
+  "available") to an entire training batch, the same batch-level masking
+  bug found in ShaSpec/MMMViT/MIFPN. This port respects MiMoSe's true
+  per-sample `[B, 4]` mask for both the missing-modality fill-in and the
+  distillation loss, looping over the batch dimension (cheap at the small
+  batch sizes 3D segmentation uses).
+- Legacy's segmentation head outputs 3 BraTS-region (ET/WT/TC) channels
+  trained with sigmoid BCE + Dice — a hardcoded assumption that never
+  generalizes to a disjoint `num_cls`-class one-hot target and would
+  silently break for BraTS25 (5 classes). This port's head instead outputs
+  `num_cls` channels with a softmax, reusing `softmax_weighted_loss`/
+  `dice_loss` from `losses/imfuse.py`, matching every other model here.
+
+Legacy's optional self-/cross-attention bottleneck refinement
+(`nn.MultiheadAttention`) is constructed by the model class but never
+enabled by legacy's own `train.py` entrypoint (always called with
+`self_att=False, cross_att=False`) — dead code, not ported. Legacy's
+`loss_Dual.py` also defines several loss classes (`KDLoss`, `DomainClsLoss`,
+`DomainBCELoss`, `CELoss4MOTS`, `DiceLoss4MOTS`, `BCELossBoud`) that
+`train.py` never imports; only `DiceLoss4BraTS`/`BCELoss4BraTS` (replaced
+here by the softmax+Dice terms above) are on the live training path.
+
+Legacy trains at a non-cubic `(80, 160, 160)` (D, H, W) patch — its ResNet
+stem downsamples depth by 16x but height/width by 32x, with a final decoder
+upsample that only doubles height/width to compensate. That asymmetry is
+self-consistent for any patch shape divisible appropriately, including a
+cubic one, so this port trains at the standard cubic `patch_size: 128`
+(divisible by 32) without changing the architecture at all. LCKD trains
+with `optimizer: sgd`, `momentum: 0.99`, `nesterov: true`, `lr: 0.01`,
+`weight_decay: 0.0005` (all matching legacy's actual `train.py` defaults
+exactly) and a `poly` LR schedule. The distillation term is weighted by
+`kd_weight: 0.1`, matching legacy's `kd_wt`.
+
+### InOutFusion-specific notes
+
+InOutFusion (`trainer: imfuse`, `model: inoutfusion`, `loss: inoutfusion` —
+the only model class legacy's `train.py` actually wires up is
+`RsInOut_U_Hemis3D`; legacy's `Network_RMBTS.py`/`Network_LMCR.py` define
+entirely separate model/loss families that are never selected by the
+default training command and are not ported) reuses `IMFuseTrainer`'s
+generic training loop with a bespoke `InOutFusionLoss` whose
+`training_loss` returns a dict with the same keys `IMFuseTrainer` reads
+(`fusecross`/`fusedice`/`sepcross`/`sepdice`/`prmcross`/`prmdice`) — the
+unused `sep`/`prm` slots are always zero, since legacy's `U_Hemis_loss` is a
+single weighted multi-class Dice term with no cross-entropy term, no
+per-modality decoders, and no deep supervision (matching `forward()`, which
+only ever returns one segmentation tensor plus two empty tuples).
+
+Architecture ("Hierarchical In-Out Fusion"): 4 independent per-modality
+encoders (`RSEncoder`, a 4-level stack of Restormer-style blocks — a
+channel-wise self-attention branch, cheap regardless of spatial resolution,
+fused with a local residual-conv branch via a small conv FFN). At the
+bottleneck and at each of the 3 encoder skip levels, `OutFusion` tokenizes
+every modality's feature map (average-pooled to a fixed grid), mixes the
+per-modality tokens with a cross-modality mixer, and reprojects the mixed
+tokens into a per-modality spatial attention map used to softmax-combine
+the original per-modality features. The bottleneck uses a "deep" mixer
+(self-attention + a frequency-domain spectral-gating branch combined via a
+learned gate); the 3 skip levels use a cheaper "shallow" mixer (a single
+self-attention layer). A single U-Net-style decoder consumes the fused
+bottleneck and 3 fused skip connections.
+
+Legacy resolves the batch's missing-modality pattern from a single scalar
+(`m_d[0]`, since legacy's dataloader hard-asserts `batch_size == 1`) and
+only ever encodes the *present* modalities (a variable-length list), which
+cannot be batched with MiMoSe's true per-sample `[B, 4]` masks. This port
+always runs all 4 encoders and instead zero-fills token blocks plus masks
+attention keys and the final modality-softmax logits for modalities missing
+on a per-sample basis, which is equivalent to legacy's exclusion behavior
+under `batch_size == 1` and generalizes correctly to batched, per-sample
+masks. Legacy's `general_dice_loss` also hardcodes per-class Dice weights
+`[0.1, 0.2, 0.3, 0.4]` tied to exactly 4 classes — the same
+`num_cls`-vs.-class-count conflation bug found in several other ported
+models, here living in the loss rather than a module constructor — this
+port generalizes it to `weight_i = (i + 1) / sum(1..num_classes)`, which
+reproduces legacy's exact weights for 4 classes and extends sensibly to
+BraTS25's 5.
+
+Two legacy dependencies are not portable to this environment and are
+replaced with self-contained plain-torch equivalents preserving the same
+idea: the bottleneck mixer's frequency-domain branch (`AF_3d`) vendors a
+CVNets/AFFNet `AFNO1D_channelfirst` block requiring an unrelated `opts`
+argparse configuration object, replaced with a self-contained real-FFT
+spectral-gating unit; the skip-level mixer (`LTEncoderLayer`) wraps a pip
+`local-attention` package configured as *causal* with `window_size=128`
+(causal windowing has no meaning for volumetric tokens with no sequential
+order — an artifact of reusing an NLP-oriented library without adapting
+its settings), replaced with plain non-causal, full-sequence masked
+self-attention. InOutFusion trains at `patch_size: 128` with
+`optimizer: adamw`, `lr: 0.0003`, `weight_decay: 0.0001`, `batch_size: 1`,
+`num_epochs: 200` (matching legacy's `train.py` defaults). Legacy's LR
+schedule linearly decays from `lr` to `min_lr` over the last `decay_epoch`
+epochs, but with legacy's own default (`decay_epoch: 0`) this condition
+never triggers within a normal run — i.e. legacy trains at a constant LR in
+practice, reproduced here via `scheduler: poly` with `poly_power: 0.0`
+(a "poly" multiplier of `(1 - progress)**0 == 1` for the whole run).
+
 ## Model Kwargs
 
 `custom_model_kwargs` are passed directly to the selected model class.
@@ -871,6 +1080,27 @@ custom_model_kwargs:
 ```
 
 For `reverse`:
+
+```yaml
+custom_model_kwargs:
+  num_cls: 4
+```
+
+For `unetmfi`:
+
+```yaml
+custom_model_kwargs:
+  num_cls: 4
+```
+
+For `lckd`:
+
+```yaml
+custom_model_kwargs:
+  num_cls: 4
+```
+
+For `inoutfusion`:
 
 ```yaml
 custom_model_kwargs:

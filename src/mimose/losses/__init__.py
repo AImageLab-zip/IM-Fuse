@@ -1,6 +1,8 @@
 from mimose.losses.config import LossConfig, LossKind, build_loss_config
 from mimose.losses.imfuse import IMFuseLoss
 from mimose.losses.ims2trans import IMS2TransLoss
+from mimose.losses.inoutfusion import InOutFusionLoss
+from mimose.losses.lckd import LCKDLoss
 from mimose.losses.m3ae import M3AELoss
 from mimose.losses.mam import MaMLoss
 from mimose.losses.mifpn import MIFPNLoss
@@ -18,6 +20,8 @@ __all__ = [
     "LossKind",
     "IMFuseLoss",
     "IMS2TransLoss",
+    "InOutFusionLoss",
+    "LCKDLoss",
     "M3AELoss",
     "MaMLoss",
     "MIFPNLoss",

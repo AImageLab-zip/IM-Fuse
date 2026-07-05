@@ -75,6 +75,7 @@ The easiest workflow is:
   - `mstkdnet`
   - `mifpn`
   - `reverse`
+  - `lckd`
 - `model`: string enum
   - `imfuse`
   - `mmformer`
@@ -94,6 +95,9 @@ The easiest workflow is:
   - `mstkdnet`
   - `mifpn`
   - `reverse`
+  - `unetmfi`
+  - `lckd`
+  - `inoutfusion`
 - `loss`: built-in string choice
   - `imfuse`
   - `dcseg`
@@ -108,6 +112,8 @@ The easiest workflow is:
   - `mstkdnet`
   - `mifpn`
   - `reverse`
+  - `lckd`
+  - `inoutfusion`
 - `optimizer`: string enum
   - `radam`
   - `adamw`
@@ -182,6 +188,9 @@ The easiest workflow is:
   - `mstkdnet`
   - `mifpn`
   - `reverse`
+  - `unetmfi`
+  - `lckd`
+  - `inoutfusion`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
@@ -466,6 +475,12 @@ Recommended examples:
 - `src/mimose/data/configs/mifpn_23.yaml`
 - `src/mimose/data/configs/reverse_18.yaml`
 - `src/mimose/data/configs/reverse_23.yaml`
+- `src/mimose/data/configs/unetmfi_18.yaml`
+- `src/mimose/data/configs/unetmfi_23.yaml`
+- `src/mimose/data/configs/lckd_18.yaml`
+- `src/mimose/data/configs/lckd_23.yaml`
+- `src/mimose/data/configs/inoutfusion_18.yaml`
+- `src/mimose/data/configs/inoutfusion_23.yaml`
 
 ## Related Docs
 

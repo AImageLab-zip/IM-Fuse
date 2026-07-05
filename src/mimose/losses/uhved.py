@@ -188,6 +188,11 @@ class UHVEDLoss:
         recon = outputs["seg"].new_tensor(0.0)
         for key in MODALITIES:
             recon = recon + torch.mean(torch.square(outputs[key] - images[key]))
+        # Legacy builds one 4-channel tensor and takes a single `torch.mean`
+        # over it, which equals the average (not sum) of the 4 per-modality
+        # means -- divide to match, otherwise this term is ~4x too heavy
+        # relative to RECON_WEIGHT.
+        recon = recon / len(MODALITIES)
 
         kld = outputs["seg"].new_tensor(0.0)
         for level in post_param:
