@@ -135,6 +135,10 @@ class UHVEDTrainer(BaseTrainer):
         tc_sum = 0.0
         et_sum = 0.0
         etpp_sum = 0.0
+        wt_hd95_sum = 0.0
+        tc_hd95_sum = 0.0
+        et_hd95_sum = 0.0
+        etpp_hd95_sum = 0.0
         sample_count = 0
 
         with torch.no_grad():
@@ -154,7 +158,10 @@ class UHVEDTrainer(BaseTrainer):
                         pred = self._predict_volume(images, mask)
                         target = self._seg_to_one_hot(seg)
                         seg_loss = self._segmentation_loss(pred, target)
-                    wt, tc, et, etpp = self._evaluate_scores(pred.argmax(dim=1), seg.squeeze(1))
+                    prediction = pred.argmax(dim=1)
+                    target_labels = seg.squeeze(1)
+                    wt, tc, et, etpp = self._evaluate_scores(prediction, target_labels)
+                    wt_hd95, tc_hd95, et_hd95, etpp_hd95 = self._evaluate_hd95(prediction, target_labels)
 
                     batch_size = images.shape[0]
                     sample_count += batch_size
@@ -163,6 +170,10 @@ class UHVEDTrainer(BaseTrainer):
                     tc_sum += float(tc.sum().item())
                     et_sum += float(et.sum().item())
                     etpp_sum += float(etpp.sum().item())
+                    wt_hd95_sum += float(wt_hd95.sum().item())
+                    tc_hd95_sum += float(tc_hd95.sum().item())
+                    et_hd95_sum += float(et_hd95.sum().item())
+                    etpp_hd95_sum += float(etpp_hd95.sum().item())
                     progress.update(
                         task_id,
                         advance=1,
@@ -187,6 +198,10 @@ class UHVEDTrainer(BaseTrainer):
             "et": et_score,
             "etpp": etpp_sum / divisor,
             "dice": dice_score,
+            "wt_hd95": wt_hd95_sum / divisor,
+            "tc_hd95": tc_hd95_sum / divisor,
+            "et_hd95": et_hd95_sum / divisor,
+            "etpp_hd95": etpp_hd95_sum / divisor,
         }
 
     def build_datasets(self) -> tuple[Dataset, Dataset]:

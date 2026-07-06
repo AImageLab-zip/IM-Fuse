@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 import click
+import numpy as np
 import torch
 import torch.distributed as dist
+from medpy.metric import binary as medpy_binary
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -949,6 +951,64 @@ class BaseTrainer(AbstractTrainer):
         intersection = 2 * (pred * target).sum(dim=(1, 2, 3)) + eps
         denominator = pred.sum(dim=(1, 2, 3)) + target.sum(dim=(1, 2, 3)) + eps
         return intersection / denominator
+
+    def _evaluate_hd95(
+        self,
+        output: torch.Tensor,
+        target: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """BraTS-style HD95 for WT/TC/ET/ETpp, mirroring _evaluate_scores.
+
+        Falls back to 0.0 when both masks are empty (no error) and to the
+        volume's spatial diagonal as a fixed penalty when only one of the
+        two masks is empty (undefined surface distance), matching the
+        BraTS challenge convention used in mimose.testing.pipeline.
+        """
+        if self.num_classes != 4:
+            raise RuntimeError(f"{self.__class__.__name__} currently supports 4-class BraTS labels only")
+
+        output_np = output.detach().cpu().numpy()
+        target_np = target.detach().cpu().numpy()
+        batch_size = output_np.shape[0]
+        penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+
+        results = np.zeros((batch_size, 4), dtype=np.float64)
+        for index in range(batch_size):
+            o1 = output_np[index] == 1
+            t1 = target_np[index] == 1
+            o2 = output_np[index] == 2
+            t2 = target_np[index] == 2
+            o3 = output_np[index] == 3
+            t3 = target_np[index] == 3
+
+            o_whole = o1 | o2 | o3
+            t_whole = t1 | t2 | t3
+            o_core = o1 | o3
+            t_core = t1 | t3
+            o3_post = np.zeros_like(o3) if o3.sum() < 500 else o3
+
+            results[index, 0] = self._hd95_or_penalty(o_whole, t_whole, penalty)
+            results[index, 1] = self._hd95_or_penalty(o_core, t_core, penalty)
+            results[index, 2] = self._hd95_or_penalty(o3, t3, penalty)
+            results[index, 3] = self._hd95_or_penalty(o3_post, t3, penalty)
+
+        results_tensor = torch.from_numpy(results)
+        return (
+            results_tensor[:, 0],
+            results_tensor[:, 1],
+            results_tensor[:, 2],
+            results_tensor[:, 3],
+        )
+
+    @staticmethod
+    def _hd95_or_penalty(prediction: np.ndarray, target: np.ndarray, penalty: float) -> float:
+        prediction_empty = not prediction.any()
+        target_empty = not target.any()
+        if prediction_empty and target_empty:
+            return 0.0
+        if prediction_empty or target_empty:
+            return penalty
+        return float(medpy_binary.hd95(prediction, target, voxelspacing=None))
 
     def _set_aux_training_flag(self, enabled: bool) -> None:
         model = self._model_for_state()
