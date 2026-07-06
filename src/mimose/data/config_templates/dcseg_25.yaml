@@ -78,9 +78,9 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0002
+lr: 0.0003
 num_epochs: 500
-batch_size: 2
+batch_size: 3
 weight_decay: 0.0001
 num_workers: 8
 fp16: true

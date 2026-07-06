@@ -109,3 +109,4 @@ class MaskingMode(StrEnum):
     RANDOM = "random"
     VALIDATION = "validation"
     TEST = "test"
+    FULL = "full"

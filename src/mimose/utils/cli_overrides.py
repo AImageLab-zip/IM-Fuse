@@ -115,3 +115,12 @@ def apply_run_suffix(merged: dict[str, Any]) -> None:
         merged["output_path"] = str(
             output_path_obj.with_name(f"{output_path_obj.stem}_{run_suffix}{output_path_obj.suffix}")
         )
+
+    checkpoint_path = merged.get("checkpoint_path")
+    if checkpoint_path is not None:
+        checkpoint_path_obj = Path(checkpoint_path)
+        run_dir = checkpoint_path_obj.parent.parent
+        suffixed_run_dir = run_dir.with_name(f"{run_dir.name}_{run_suffix}")
+        merged["checkpoint_path"] = str(
+            suffixed_run_dir / checkpoint_path_obj.parent.name / checkpoint_path_obj.name
+        )

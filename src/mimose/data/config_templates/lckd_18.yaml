@@ -17,6 +17,12 @@
 # softmax_weighted_loss/dice_loss from losses/imfuse.py), and legacy's
 # batch-global modality "mode" string is replaced with MiMoSe's true
 # per-sample [B, 4] mask. See docs/training.md for the full rationale.
+# The full-modality warmup phase is kept, though: custom_trainer_kwargs.
+# warmup_fraction (0-1) sets how much of num_epochs is spent training with
+# all modalities present (masking_mode forced to "full") before switching
+# to train_masking_mode for the rest of training.
+# LCKDTrainer infers the current phase from the epoch index alone, so it
+# also resumes into the correct phase automatically.
 
 # preprocess
 input_dir: /path/to/unpacked
@@ -63,6 +69,7 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  warmup_fraction: 0.41
 
 optimizer: sgd
 betas: [0.9, 0.999]
@@ -70,7 +77,7 @@ momentum: 0.99
 nesterov: true
 
 scheduler: poly
-poly_total_iters: 300
+poly_total_iters: 980
 poly_power: 0.9
 cosine_t_max: null
 cosine_eta_min: null
@@ -83,8 +90,8 @@ plateau_factor: null
 plateau_patience: null
 
 lr: 0.01
-num_epochs: 300
-batch_size: 2
+num_epochs: 980
+batch_size: 12
 weight_decay: 0.0005
 num_workers: 8
 fp16: true

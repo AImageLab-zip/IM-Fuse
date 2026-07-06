@@ -12,7 +12,7 @@ from mimose.enums import TransformKind
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
-from mimose.training.trainers.base_trainer import BaseTrainer
+from mimose.training.trainers.base_trainer import CONSOLE, BaseTrainer
 from mimose.training.transforms import build_transform_manager
 from mimose.training.transforms.base_transforms import TransformManager
 
@@ -62,6 +62,13 @@ class LCKDTrainer(BaseTrainer):
         self.val_masking_mode = MaskingMode(
             trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION)
         )
+        self.warmup_fraction = float(trainer_kwargs.get("warmup_fraction", 0.0))
+        if not 0.0 <= self.warmup_fraction <= 1.0:
+            raise ValueError(
+                f"warmup_fraction must be between 0 and 1, got {self.warmup_fraction}"
+            )
+        self.warmup_epochs = round(self.warmup_fraction * num_epochs)
+        self._in_warmup: bool | None = None
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -97,10 +104,26 @@ class LCKDTrainer(BaseTrainer):
         if self.pretrain is not None and self.resume is None:
             self._load_pretrain()
 
+    def _apply_training_phase(self, epoch: int) -> None:
+        in_warmup = epoch < self.warmup_epochs
+        if in_warmup == self._in_warmup:
+            return
+
+        self._in_warmup = in_warmup
+        phase_mode = MaskingMode.FULL if in_warmup else self.train_masking_mode
+        self.train_set.masking_mode = phase_mode
+        if self.is_main_process:
+            phase_name = "warmup (full modalities)" if in_warmup else "missing-modality"
+            CONSOLE.print(
+                f"[bold cyan]LCKD[/bold cyan] entering {phase_name} phase at epoch "
+                f"{epoch + 1}/{self.num_epochs} (warmup_epochs={self.warmup_epochs})"
+            )
+
     def train_epoch(self, epoch: int) -> dict[str, float]:
         if self.train_loader is None:
             raise RuntimeError("train_loader must be initialized before training")
 
+        self._apply_training_phase(epoch)
         self.model.train()
         self._set_aux_training_flag(True)
         steps = self.iter_per_epoch if self.iter_per_epoch is not None else len(self.train_loader)
@@ -247,6 +270,8 @@ class LCKDTrainer(BaseTrainer):
                 "debug": self.debug,
                 "train_masking_mode": self.train_masking_mode,
                 "val_masking_mode": self.val_masking_mode,
+                "warmup_fraction": self.warmup_fraction,
+                "warmup_epochs": self.warmup_epochs,
                 "split_file": str(self.split_file),
             }
         )

@@ -144,6 +144,29 @@ def softmax_output_dice_class4(
     return dice_separate.cpu().numpy(), dice_evaluate.cpu().numpy()
 
 
+def softmax_output_dice_class5(
+    output: torch.Tensor,
+    target: torch.Tensor,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Like softmax_output_dice_class4, plus a standalone RC (label 4) dice.
+
+    WT/TC/ET/ETpp are computed exactly as in the class4 variant (RC is not
+    folded into any of them); RC is appended as a 4th, independent raw-label
+    column alongside NCR/NET, edema, and enhancing.
+    """
+    eps = 1e-8
+    dice_separate, dice_evaluate = softmax_output_dice_class4(output, target)
+
+    o4 = (output == 4).float()
+    t4 = (target == 4).float()
+    intersect4 = torch.sum(2 * (o4 * t4), dim=(1, 2, 3)) + eps
+    union4 = torch.sum(o4, dim=(1, 2, 3)) + torch.sum(t4, dim=(1, 2, 3)) + eps
+    rc_dice = (intersect4 / union4).cpu().numpy()
+
+    dice_separate = np.concatenate((dice_separate, rc_dice[:, None]), axis=1)
+    return dice_separate, dice_evaluate
+
+
 def _hd95_or_penalty(prediction: np.ndarray, target: np.ndarray, penalty: float) -> float:
     prediction_empty = not prediction.any()
     target_empty = not target.any()
@@ -199,6 +222,47 @@ def softmax_output_hd95_class4(
     return results
 
 
+def softmax_output_hd95_separate_class4(
+    output: torch.Tensor,
+    target: torch.Tensor,
+) -> np.ndarray:
+    """Raw per-label HD95 for NCR/NET, edema, enhancing, mirroring dice_separate."""
+    output_np = output.cpu().numpy()
+    target_np = target.cpu().numpy()
+    batch_size = output_np.shape[0]
+    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+
+    results = np.zeros((batch_size, 3), dtype=np.float64)
+    for index in range(batch_size):
+        for column, label in enumerate((1, 2, 3)):
+            o = output_np[index] == label
+            t = target_np[index] == label
+            results[index, column] = _hd95_or_penalty(o, t, penalty)
+
+    return results
+
+
+def softmax_output_hd95_separate_class5(
+    output: torch.Tensor,
+    target: torch.Tensor,
+) -> np.ndarray:
+    """Like softmax_output_hd95_separate_class4, plus a standalone RC (label 4) HD95."""
+    results_class4 = softmax_output_hd95_separate_class4(output, target)
+
+    output_np = output.cpu().numpy()
+    target_np = target.cpu().numpy()
+    batch_size = output_np.shape[0]
+    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+
+    rc_results = np.zeros((batch_size, 1), dtype=np.float64)
+    for index in range(batch_size):
+        o4 = output_np[index] == 4
+        t4 = target_np[index] == 4
+        rc_results[index, 0] = _hd95_or_penalty(o4, t4, penalty)
+
+    return np.concatenate((results_class4, rc_results), axis=1)
+
+
 def run_testing(
     *,
     data_dir: Path,
@@ -252,8 +316,18 @@ def run_testing(
         if output_path.exists():
             output_path.unlink()
 
+        include_rc = dataset_type == DatasetType.BRATS25
+        evaluate_labels = ("WT", "TC", "ET", "ETpp")
+        separate_labels = ("NCR_NET", "Edema", "Enhancing") + (("RC",) if include_rc else ())
+        dice_fn = softmax_output_dice_class5 if include_rc else softmax_output_dice_class4
+        hd95_separate_fn = (
+            softmax_output_hd95_separate_class5 if include_rc else softmax_output_hd95_separate_class4
+        )
+
         total_score = AverageMeter()
         total_hd95 = AverageMeter()
+        total_separate_score = AverageMeter()
+        total_separate_hd95 = AverageMeter()
         subject_records: list[dict[str, Any]] = []
         total_steps = len(MASKS) * len(test_loader)
         with torch.no_grad():
@@ -275,6 +349,8 @@ def run_testing(
                 for mask in MASKS:
                     mask_specific_score = AverageMeter()
                     mask_specific_hd95 = AverageMeter()
+                    mask_specific_separate_score = AverageMeter()
+                    mask_specific_separate_hd95 = AverageMeter()
                     mask_tensor = torch.tensor(mask, dtype=torch.bool, device=device).unsqueeze(0)
                     mask_label = _mask_name(mask)
 
@@ -283,7 +359,7 @@ def run_testing(
                         target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
                         output = model.predict(images, mask_tensor)
                         prediction = torch.argmax(output, dim=1)
-                        _, brats_dice = softmax_output_dice_class4(
+                        brats_dice_separate, brats_dice = dice_fn(
                             output=prediction,
                             target=target,
                         )
@@ -291,67 +367,112 @@ def run_testing(
                             output=prediction,
                             target=target,
                         )
+                        brats_hd95_separate = hd95_separate_fn(
+                            output=prediction,
+                            target=target,
+                        )
                         mask_specific_score.update(brats_dice)
                         mask_specific_hd95.update(brats_hd95)
+                        mask_specific_separate_score.update(brats_dice_separate)
+                        mask_specific_separate_hd95.update(brats_hd95_separate)
                         subject_records.append(
                             {
                                 "subject": str(batch["sub"][0]),
                                 "modalities": mask_label,
-                                "WT_dice": float(brats_dice[0, 0]),
-                                "TC_dice": float(brats_dice[0, 1]),
-                                "ET_dice": float(brats_dice[0, 2]),
-                                "ETpp_dice": float(brats_dice[0, 3]),
-                                "WT_hd95": float(brats_hd95[0, 0]),
-                                "TC_hd95": float(brats_hd95[0, 1]),
-                                "ET_hd95": float(brats_hd95[0, 2]),
-                                "ETpp_hd95": float(brats_hd95[0, 3]),
+                                **{
+                                    f"{label}_dice": float(brats_dice[0, index])
+                                    for index, label in enumerate(evaluate_labels)
+                                },
+                                **{
+                                    f"{label}_dice": float(brats_dice_separate[0, index])
+                                    for index, label in enumerate(separate_labels)
+                                },
+                                **{
+                                    f"{label}_hd95": float(brats_hd95[0, index])
+                                    for index, label in enumerate(evaluate_labels)
+                                },
+                                **{
+                                    f"{label}_hd95": float(brats_hd95_separate[0, index])
+                                    for index, label in enumerate(separate_labels)
+                                },
                             }
                         )
                         current_avg = np.asarray(mask_specific_score.avg)[0]
-                        progress.update(
-                            task_id,
-                            advance=1,
-                            metrics=(
-                                f"{mask_label}  "
-                                f"WT {current_avg[0]:.4f}  "
-                                f"TC {current_avg[1]:.4f}  "
-                                f"ET {current_avg[2]:.4f}"
-                            ),
+                        current_hd95_avg = np.asarray(mask_specific_hd95.avg)[0]
+                        metrics_text = (
+                            f"{mask_label}"
+                            f"  |  DS: WT {current_avg[0]:.4f}  "
+                            f"TC {current_avg[1]:.4f}  "
+                            f"ET {current_avg[2]:.4f}  |  "
+                            f"HD95: WT {current_hd95_avg[0]:.4f}  "
+                            f"TC {current_hd95_avg[1]:.4f}  "
+                            f"ET {current_hd95_avg[2]:.4f}"
                         )
+                        if include_rc:
+                            current_separate_avg = np.asarray(mask_specific_separate_score.avg)[0]
+                            current_separate_hd95_avg = np.asarray(mask_specific_separate_hd95.avg)[0]
+                            metrics_text += (
+                                f"  |  RC: DS {current_separate_avg[-1]:.4f}  "
+                                f"HD95 {current_separate_hd95_avg[-1]:.4f}"
+                            )
+                        progress.update(task_id, advance=1, metrics=metrics_text)
 
                     mask_score_avg = np.asarray(mask_specific_score.avg)[0]
                     mask_hd95_avg = np.asarray(mask_specific_hd95.avg)[0]
+                    mask_separate_score_avg = np.asarray(mask_specific_separate_score.avg)[0]
+                    mask_separate_hd95_avg = np.asarray(mask_specific_separate_hd95.avg)[0]
                     total_score.update(mask_score_avg)
                     total_hd95.update(mask_hd95_avg)
+                    total_separate_score.update(mask_separate_score_avg)
+                    total_separate_hd95.update(mask_separate_hd95_avg)
+                    evaluate_fields = ", ".join(
+                        f"{label} = {value:.4f}" for label, value in zip(evaluate_labels, mask_score_avg)
+                    )
+                    evaluate_hd95_fields = ", ".join(
+                        f"{label}_hd95 = {value:.4f}"
+                        for label, value in zip(evaluate_labels, mask_hd95_avg)
+                    )
+                    separate_fields = ", ".join(
+                        f"{label}_dice = {value:.4f}"
+                        for label, value in zip(separate_labels, mask_separate_score_avg)
+                    )
+                    separate_hd95_fields = ", ".join(
+                        f"{label}_hd95 = {value:.4f}"
+                        for label, value in zip(separate_labels, mask_separate_hd95_avg)
+                    )
                     _append_report_line(
                         output_path,
                         (
                             f"Available modals = {mask_label:<21}--> "
-                            f"WT = {mask_score_avg[0]:.4f}, "
-                            f"TC = {mask_score_avg[1]:.4f}, "
-                            f"ET = {mask_score_avg[2]:.4f}, "
-                            f"ETpp = {mask_score_avg[3]:.4f}, "
-                            f"WT_hd95 = {mask_hd95_avg[0]:.4f}, "
-                            f"TC_hd95 = {mask_hd95_avg[1]:.4f}, "
-                            f"ET_hd95 = {mask_hd95_avg[2]:.4f}, "
-                            f"ETpp_hd95 = {mask_hd95_avg[3]:.4f}"
+                            f"{evaluate_fields}, {evaluate_hd95_fields}, "
+                            f"{separate_fields}, {separate_hd95_fields}"
                         ),
                     )
 
         avg_total_score = np.asarray(total_score.avg)
         avg_total_hd95 = np.asarray(total_hd95.avg)
+        avg_total_separate_score = np.asarray(total_separate_score.avg)
+        avg_total_separate_hd95 = np.asarray(total_separate_hd95.avg)
+        avg_evaluate_fields = ", ".join(
+            f"{label} = {value:.4f}" for label, value in zip(evaluate_labels, avg_total_score)
+        )
+        avg_evaluate_hd95_fields = ", ".join(
+            f"{label}_hd95 = {value:.4f}" for label, value in zip(evaluate_labels, avg_total_hd95)
+        )
+        avg_separate_fields = ", ".join(
+            f"{label}_dice = {value:.4f}"
+            for label, value in zip(separate_labels, avg_total_separate_score)
+        )
+        avg_separate_hd95_fields = ", ".join(
+            f"{label}_hd95 = {value:.4f}"
+            for label, value in zip(separate_labels, avg_total_separate_hd95)
+        )
         _append_report_line(
             output_path,
             (
                 f"Avg scores {'':<29}--> "
-                f"WT = {avg_total_score[0]:.4f}, "
-                f"TC = {avg_total_score[1]:.4f}, "
-                f"ET = {avg_total_score[2]:.4f}, "
-                f"ETpp = {avg_total_score[3]:.4f}, "
-                f"WT_hd95 = {avg_total_hd95[0]:.4f}, "
-                f"TC_hd95 = {avg_total_hd95[1]:.4f}, "
-                f"ET_hd95 = {avg_total_hd95[2]:.4f}, "
-                f"ETpp_hd95 = {avg_total_hd95[3]:.4f}"
+                f"{avg_evaluate_fields}, {avg_evaluate_hd95_fields}, "
+                f"{avg_separate_fields}, {avg_separate_hd95_fields}"
             ),
         )
         _write_excel_summary(output_path)
@@ -384,9 +505,7 @@ def _append_report_line(output_path: Path, line: str) -> None:
 
 def _write_excel_summary(results_path: Path) -> Path:
     excel_path = results_path.with_suffix(".xlsx")
-    dice_keys = ("ET", "TC", "WT")
-    hd95_keys = ("ET_hd95", "TC_hd95", "WT_hd95")
-    scores: dict[str, list[float]] = {key: [] for key in (*dice_keys, *hd95_keys)}
+    scores: dict[str, list[float]] = {}
     order: list[int] = []
 
     with results_path.open("r", encoding="utf-8") as handle:
@@ -394,11 +513,11 @@ def _write_excel_summary(results_path: Path) -> Path:
             is_avg = "Avg" in line
             parsed = _parse_avg_line(line) if is_avg else _parse_result_line(line)
             order.append(15 if is_avg else _string_to_order(parsed["modals"]))
-            dice_multiplier = 1.0 if is_avg else 100.0
-            for key in dice_keys:
-                scores[key].append(parsed[key] * dice_multiplier)
-            for key in hd95_keys:
-                scores[key].append(parsed[key])
+            for key, value in parsed.items():
+                if key == "modals":
+                    continue
+                multiplier = 1.0 if (is_avg or key.endswith("_hd95")) else 100.0
+                scores.setdefault(key, []).append(value * multiplier)
 
     scores_sorted = {
         key: [value for _, value in sorted(zip(order, values))] for key, values in scores.items()
@@ -494,5 +613,8 @@ __all__ = [
     "run_testing",
     "set_seed",
     "softmax_output_dice_class4",
+    "softmax_output_dice_class5",
     "softmax_output_hd95_class4",
+    "softmax_output_hd95_separate_class4",
+    "softmax_output_hd95_separate_class5",
 ]

@@ -568,9 +568,12 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
             param_hint="--transform-kind",
         )
     trainer_kwargs["transform_kind"] = resolved_transform_kind.value
+    patch_size = trainer_kwargs.get("patch_size")
+    crop_size = (int(patch_size),) * 3 if patch_size is not None else None
     transform_manager = build_transform_manager(
         resolved_transform_kind,
         model_kwargs=model_config.kwargs,
+        crop_size=crop_size,
     )
     trainer_instance = trainer_class(
         input_dir=Path(merged["data_dir"]),
