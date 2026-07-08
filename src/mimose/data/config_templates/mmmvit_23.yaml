@@ -32,6 +32,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/mmmvit-preprocessed
 art_dir: /path/to/artifacts/mmmvit23
+results_dir: /path/to/results/mmmvit_23
 
 trainer: imfuse
 model: mmmvit
@@ -76,10 +77,12 @@ plateau_patience: null
 
 lr: 0.0002
 num_epochs: 1000
+validation_every: 10
 batch_size: 1
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -93,4 +96,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/mmmvit23/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/mmmvit23/results.txt
+output_path: /path/to/results/mmmvit_23/results.txt

@@ -41,6 +41,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/inoutfusion-preprocessed
 art_dir: /path/to/artifacts/inoutfusion25
+results_dir: /path/to/results/inoutfusion_25
 
 trainer: imfuse
 model: inoutfusion
@@ -78,12 +79,14 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0012
+lr: 0.0006
 num_epochs: 200
-batch_size: 4
+validation_every: 10
+batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
-fp16: true
+fp16: false
+compile: false
 
 resume: false
 pretrain: null
@@ -97,4 +100,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/inoutfusion25/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/inoutfusion25/results.txt
+output_path: /path/to/results/inoutfusion_25/results.txt

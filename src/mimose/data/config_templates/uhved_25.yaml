@@ -30,6 +30,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/uhved-preprocessed
 art_dir: /path/to/artifacts/uhved25
+results_dir: /path/to/results/uhved_25
 
 trainer: uhved
 model: uhved
@@ -69,10 +70,12 @@ plateau_patience: 10
 
 lr: 0.001
 num_epochs: 300
+validation_every: 10
 batch_size: 1
 weight_decay: 0.00001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -86,4 +89,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/uhved25/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/uhved25/results.txt
+output_path: /path/to/results/uhved_25/results.txt

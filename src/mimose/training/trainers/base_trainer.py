@@ -59,9 +59,11 @@ class BaseTrainer(AbstractTrainer):
         transform_manager: TransformManager | None = None,
 
         num_epochs: int = 1,
+        validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
         fp16: bool = False,
+        compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
         seed: int | None = None,
@@ -83,9 +85,11 @@ class BaseTrainer(AbstractTrainer):
             scheduler_config=scheduler_config,
             transform_manager=transform_manager,
             num_epochs=num_epochs,
+            validation_every=validation_every,
             batch_size=batch_size,
             num_workers=num_workers,
             fp16=fp16,
+            compile=compile,
             resume=resume,
             try_resume=try_resume,
             seed=seed,
@@ -113,6 +117,7 @@ class BaseTrainer(AbstractTrainer):
         )
         self._setup_distributed()
         self.model = self._build_model()
+        self._maybe_compile_model()
         self.wrap_model_for_distributed()
         self._build_loss()
         self._build_optimizer()
@@ -141,11 +146,15 @@ class BaseTrainer(AbstractTrainer):
                 for epoch in range(start_epoch, self.num_epochs):
                     self.current_epoch = epoch
                     self._set_loader_epoch(self.train_loader, epoch)
-                    self._set_loader_epoch(self.val_loader, epoch)
 
                     train_metrics = self._reduce_metrics(self.train_epoch(epoch))
 
-                    val_metrics = self._reduce_metrics(self.val_epoch(epoch))
+                    is_last_epoch = epoch == self.num_epochs - 1
+                    should_validate = (epoch + 1) % self.validation_every == 0 or is_last_epoch
+                    val_metrics: dict[str, float] = {}
+                    if should_validate:
+                        self._set_loader_epoch(self.val_loader, epoch)
+                        val_metrics = self._reduce_metrics(self.val_epoch(epoch))
                     self._step_scheduler(val_metrics)
                     self._log_wandb_epoch(epoch, train_metrics, val_metrics)
                     self.save_checkpoint(epoch, is_best=self._is_best_checkpoint(val_metrics))
@@ -274,6 +283,14 @@ class BaseTrainer(AbstractTrainer):
         model._mimose_model_kwargs = dict(model_kwargs)
         model._mimose_model_name = self.model_config.model_class.__name__
         return model.to(self.device)
+
+    def _maybe_compile_model(self) -> None:
+        if not self.compile or self.model is None:
+            return
+        if self.device.type != "cuda":
+            LOGGER.warning("--compile requested but device is %s; skipping compilation", self.device)
+            return
+        self.model = torch.compile(self.model, mode="reduce-overhead")
 
     def _build_optimizer(
         self,
@@ -472,7 +489,9 @@ class BaseTrainer(AbstractTrainer):
 
         if self.scheduler_config is not None and self.scheduler_config.scheduler_class is ReduceLROnPlateau:
             if "loss" not in val_metrics:
-                raise RuntimeError("plateau scheduler requires validation loss")
+                # No validation ran this epoch (validation_every > 1); plateau
+                # scheduling needs a validation loss, so just skip this step.
+                return
             self.scheduler.step(val_metrics["loss"])
         else:
             self.scheduler.step()
@@ -584,9 +603,11 @@ class BaseTrainer(AbstractTrainer):
             "input_dir": str(self.input_dir),
             "output_dir": str(self.output_dir),
             "num_epochs": self.num_epochs,
+            "validation_every": self.validation_every,
             "batch_size": self.batch_size,
             "num_workers": self.num_workers,
             "fp16": self.fp16,
+            "compile": self.compile,
             "seed": self.seed,
             "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
         }
@@ -751,8 +772,15 @@ class BaseTrainer(AbstractTrainer):
         table.add_column(style="bold cyan", no_wrap=True)
         table.add_column(style="white")
         table.add_row("Model", f"{model_name}  [dim]({loss_name})[/dim]")
-        table.add_row("Runtime", f"{distribution} on {self.device}  [dim]fp16={self.fp16}[/dim]")
-        table.add_row("Schedule", f"{self.num_epochs} epochs  [dim]{optimizer_name} / {scheduler_name}[/dim]")
+        table.add_row(
+            "Runtime",
+            f"{distribution} on {self.device}  [dim]fp16={self.fp16} compile={self.compile}[/dim]",
+        )
+        table.add_row(
+            "Schedule",
+            f"{self.num_epochs} epochs  [dim]{optimizer_name} / {scheduler_name} / "
+            f"validate every {self.validation_every}[/dim]",
+        )
         table.add_row("Batch", f"per-rank {per_rank_batch}  [dim]global {global_batch}[/dim]")
         table.add_row("Workers", str(self.num_workers))
         table.add_row("Resume", resume_text)
@@ -824,9 +852,14 @@ class BaseTrainer(AbstractTrainer):
     def _model_for_state(self) -> torch.nn.Module | None:
         if self.model is None:
             return None
-        if isinstance(self.model, DistributedDataParallel):
-            return self.model.module
-        return self.model
+        model = self.model
+        if isinstance(model, DistributedDataParallel):
+            model = model.module
+        # torch.compile wraps the module in an OptimizedModule; unwrap it so
+        # state_dict()/load_state_dict() and attribute access (e.g. .predict,
+        # .is_training) go straight to the original, uncompiled module.
+        model = getattr(model, "_orig_mod", model)
+        return model
 
     def _reduce_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         if not self.distributed or not metrics:

@@ -16,6 +16,7 @@ def _write_config(path: Path) -> None:
                 "dataset_type: brats23",
                 "data_dir: /path/to/preprocessed",
                 "art_dir: /path/to/artifacts",
+                "results_dir: /path/to/results",
                 "wandb_run_name: imfuse23_training",
                 "push_to_hf: false",
                 "hf_repo: /path/to/huggingface/owner-repo",
@@ -37,6 +38,7 @@ def test_update_setup_config_sets_placeholder_hf_repo_to_null_when_empty(tmp_pat
         brats_data_dir=tmp_path / "brats_data",
         preprocessed_root_dir=tmp_path / "preprocessed",
         artifacts_root_dir=tmp_path / "artifacts",
+        results_root_dir=tmp_path / "results",
         hf_repo=None,
     )
 
@@ -54,6 +56,7 @@ def test_update_setup_config_sets_hf_keys_when_placeholder_and_repo_provided(tmp
         brats_data_dir=tmp_path / "brats_data",
         preprocessed_root_dir=tmp_path / "preprocessed",
         artifacts_root_dir=tmp_path / "artifacts",
+        results_root_dir=tmp_path / "results",
         hf_repo="owner/repo",
     )
 
@@ -78,6 +81,7 @@ def test_update_setup_config_preserves_non_placeholder_hf_repo(tmp_path: Path) -
         brats_data_dir=tmp_path / "brats_data",
         preprocessed_root_dir=tmp_path / "preprocessed",
         artifacts_root_dir=tmp_path / "artifacts",
+        results_root_dir=tmp_path / "results",
         hf_repo="owner/repo",
     )
 
@@ -114,8 +118,9 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
     runner = CliRunner()
     data_root = tmp_path / "data"
     data_root.mkdir()
-    expected_default = data_root / "runs"
-    captured_default_dirs: list[Path | None] = []
+    expected_artifacts_default = data_root / "runs"
+    expected_results_default = data_root / "results"
+    captured_default_dirs: dict[str, Path | None] = {}
 
     class FakeConsole:
         def print(self, *args, **kwargs) -> None:
@@ -133,17 +138,23 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
             raise AssertionError("ZIP prompt should not be used when unpack is disabled")
 
         @staticmethod
+        def prompt_required_existing_directory(*, label: str, prompt: str) -> Path:
+            if label == "Unpacked Data":
+                return data_root / "unpacked"
+            raise AssertionError(f"Unexpected label: {label}")
+
+        @staticmethod
         def prompt_required_directory(
             *,
             label: str,
             prompt: str,
             default_dir: Path | None = None,
         ) -> Path:
-            captured_default_dirs.append(default_dir)
-            if label == "Data Root":
-                return data_root
+            captured_default_dirs[label] = default_dir
             if label == "Artifacts Root":
-                return expected_default
+                return expected_artifacts_default
+            if label == "Results Root":
+                return expected_results_default
             raise AssertionError(f"Unexpected label: {label}")
 
     class FakeSetup:
@@ -172,4 +183,7 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
     result = runner.invoke(cli.app, ["setup"])
 
     assert result.exit_code == 0
-    assert captured_default_dirs == [None, expected_default]
+    assert captured_default_dirs == {
+        "Artifacts Root": expected_artifacts_default,
+        "Results Root": expected_results_default,
+    }

@@ -16,6 +16,36 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
+
+class WarmupPolyLR(LRScheduler):
+    """Linear LR warmup for `warmup_iters` epochs, then polynomial decay for the rest.
+
+    Matches legacy MIFPN/M2FTrans's ``LR_Scheduler(mode='warmuppoly')``: for
+    ``epoch < warmup_iters``, lr ramps linearly from 0 to base_lr; afterwards it
+    poly-decays to 0 by ``total_iters`` with the given ``power``.
+    """
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        total_iters: int,
+        power: float = 0.9,
+        warmup_iters: int = 100,
+        last_epoch: int = -1,
+    ) -> None:
+        self.total_iters = total_iters
+        self.power = power
+        self.warmup_iters = warmup_iters
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self) -> list[float]:
+        epoch = self.last_epoch
+        if epoch < self.warmup_iters:
+            factor = epoch / self.warmup_iters
+        else:
+            factor = max(0.0, 1 - (epoch - self.warmup_iters) / (self.total_iters - self.warmup_iters)) ** self.power
+        return [base_lr * factor for base_lr in self.base_lrs]
+
 OPTIMIZER_DICT = {
     OptimizerKind.RADAM: RAdam,
     OptimizerKind.ADAMW: AdamW,
@@ -41,6 +71,7 @@ def build_optimizer_config(
     betas: tuple[float, float] | None,
     momentum: float,
     nesterov: bool = False,
+    amsgrad: bool | None = None,
 ) -> OptimizerConfig:
     if lr <= 0:
         raise ValueError("lr must be > 0")
@@ -57,13 +88,16 @@ def build_optimizer_config(
         if not 0 <= beta1 < 1 or not 0 <= beta2 < 1:
             raise ValueError("betas must be in the range [0, 1)")
 
+        resolved_amsgrad = (
+            amsgrad if amsgrad is not None else (True if optimizer_kind is OptimizerKind.ADAM else None)
+        )
         return OptimizerConfig(
             optim_class=OPTIMIZER_DICT[optimizer_kind],
             lr=lr,
             weight_decay=weight_decay,
             betas=betas,
             eps=1e-8,
-            amsgrad=True if optimizer_kind is OptimizerKind.ADAM else None,
+            amsgrad=resolved_amsgrad,
         )
     if optimizer_kind is OptimizerKind.SGD:
         return OptimizerConfig(
@@ -87,6 +121,7 @@ class SchedulerConfig:
 
 SCHEDULER_DICT = {
     SchedulerKind.POLY: PolynomialLR,
+    SchedulerKind.WARMUPPOLY: WarmupPolyLR,
     SchedulerKind.COSINE: CosineAnnealingLR,
     SchedulerKind.STEP: StepLR,
     SchedulerKind.MULTISTEP: MultiStepLR,
@@ -118,6 +153,7 @@ def build_scheduler_config(
     *,
     poly_total_iters: int | None,
     poly_power: float,
+    warmuppoly_warmup_iters: int = 100,
     cosine_t_max: int | None,
     cosine_eta_min: float,
     step_step_size: int | None,
@@ -139,6 +175,21 @@ def build_scheduler_config(
             kwargs={
                 "total_iters": poly_total_iters,
                 "power": poly_power,
+            },
+        )
+
+    if scheduler_kind is SchedulerKind.WARMUPPOLY:
+        if poly_total_iters is None:
+            raise typer.BadParameter(
+                "--poly-total-iters is required for warmuppoly",
+                param_hint="--poly-total-iters",
+            )
+        return SchedulerConfig(
+            scheduler_class=SCHEDULER_DICT[SchedulerKind.WARMUPPOLY],
+            kwargs={
+                "total_iters": poly_total_iters,
+                "power": poly_power,
+                "warmup_iters": warmuppoly_warmup_iters,
             },
         )
 

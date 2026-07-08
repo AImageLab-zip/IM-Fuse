@@ -40,6 +40,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/mstkdnet-preprocessed
 art_dir: /path/to/artifacts/mstkdnet18
+results_dir: /path/to/results/mstkdnet_18
 
 trainer: mstkdnet
 model: mstkdnet
@@ -86,10 +87,12 @@ plateau_patience: null
 
 lr: 0.0001
 num_epochs: 250
+validation_every: 10
 batch_size: 1
 weight_decay: 0.00001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -103,4 +106,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/mstkdnet18/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/mstkdnet18/results.txt
+output_path: /path/to/results/mstkdnet_18/results.txt

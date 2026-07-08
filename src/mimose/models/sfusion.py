@@ -9,10 +9,8 @@ from mimose.models.abstract_model import AbstractModel
 
 MODALITIES = ["Flair", "T1c", "T1", "T2"]
 
-n_base_filters = 8
 n_base_ch_se = 32
 levels = 4
-mlp_ch = n_base_filters * (2 ** (levels - 1))
 num_modals = 4
 patch_dim = 8
 input_patch_size = 128
@@ -88,7 +86,7 @@ class StyleEncoder(nn.Module):
 
 
 class ContentEncoder(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, n_base_filters: int) -> None:
         super().__init__()
         self.e1_c1 = GeneralConv3d(1, n_base_filters)
         self.e1_c2 = GeneralConv3d(n_base_filters, n_base_filters, drop_rate=0.3)
@@ -165,7 +163,7 @@ class ImageDecoder(nn.Module):
     fixed-shape LayerNorm), so unlike RobustSeg's decoder it works for any
     input resolution, not just the training patch size."""
 
-    def __init__(self, input_channel: int, channel: int = mlp_ch, img_ch: int = 1, scale: int = levels) -> None:
+    def __init__(self, input_channel: int, channel: int, img_ch: int = 1, scale: int = levels) -> None:
         super().__init__()
         if input_channel != channel:
             raise ValueError("ImageDecoder requires input_channel == channel (the bottleneck feeds AdaptiveResBlock residuals directly)")
@@ -212,7 +210,7 @@ class ImageDecoder(nn.Module):
 
 
 class MaskDecoder(nn.Module):
-    def __init__(self, input_channel: int, num_cls: int = 4) -> None:
+    def __init__(self, input_channel: int, n_base_filters: int, num_cls: int = 4) -> None:
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False)
 
@@ -372,31 +370,32 @@ class SFusion(AbstractModel):
         ``nn.TransformerEncoder``-based fusion.
     """
 
-    def __init__(self, num_cls: int = 4) -> None:
+    def __init__(self, num_cls: int = 4, n_base_filters: int = 16) -> None:
         super().__init__()
         self.num_cls = num_cls
+        mlp_ch = n_base_filters * (2 ** (levels - 1))
 
         self.se_flair = StyleEncoder()
         self.se_t1c = StyleEncoder()
         self.se_t1 = StyleEncoder()
         self.se_t2 = StyleEncoder()
 
-        self.ce_flair = ContentEncoder()
-        self.ce_t1c = ContentEncoder()
-        self.ce_t1 = ContentEncoder()
-        self.ce_t2 = ContentEncoder()
+        self.ce_flair = ContentEncoder(n_base_filters=n_base_filters)
+        self.ce_t1c = ContentEncoder(n_base_filters=n_base_filters)
+        self.ce_t1 = ContentEncoder(n_base_filters=n_base_filters)
+        self.ce_t2 = ContentEncoder(n_base_filters=n_base_filters)
 
         self.fusion1 = TransformerFusion(embedding_dim=n_base_filters, volume_size=input_patch_size)
         self.fusion2 = TransformerFusion(embedding_dim=n_base_filters * 2, volume_size=input_patch_size // 2)
         self.fusion3 = TransformerFusion(embedding_dim=n_base_filters * 4, volume_size=input_patch_size // 4)
         self.fusion4 = TransformerFusion(embedding_dim=n_base_filters * 8, volume_size=input_patch_size // 8)
 
-        self.image_de_flair = ImageDecoder(input_channel=n_base_filters * 8)
-        self.image_de_t1c = ImageDecoder(input_channel=n_base_filters * 8)
-        self.image_de_t1 = ImageDecoder(input_channel=n_base_filters * 8)
-        self.image_de_t2 = ImageDecoder(input_channel=n_base_filters * 8)
+        self.image_de_flair = ImageDecoder(input_channel=n_base_filters * 8, channel=mlp_ch)
+        self.image_de_t1c = ImageDecoder(input_channel=n_base_filters * 8, channel=mlp_ch)
+        self.image_de_t1 = ImageDecoder(input_channel=n_base_filters * 8, channel=mlp_ch)
+        self.image_de_t2 = ImageDecoder(input_channel=n_base_filters * 8, channel=mlp_ch)
 
-        self.mask_de = MaskDecoder(input_channel=n_base_filters * 8, num_cls=num_cls)
+        self.mask_de = MaskDecoder(input_channel=n_base_filters * 8, n_base_filters=n_base_filters, num_cls=num_cls)
 
         self.is_training = False
 

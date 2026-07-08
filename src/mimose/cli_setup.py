@@ -110,6 +110,7 @@ def update_setup_config(
     brats_data_dir: Path | None,
     preprocessed_root_dir: Path,
     artifacts_root_dir: Path,
+    results_root_dir: Path,
     hf_repo: str | None = None,
 ) -> None:
     content = config_path.read_text(encoding="utf-8")
@@ -117,6 +118,10 @@ def update_setup_config(
     preprocessed_folder = Path(get_yaml_line_value(content, key="output_dir").rstrip("/")).name
     preprocessed_dir = preprocessed_root_dir / preprocessed_folder
     artifacts_dir = artifacts_root_dir / run_tag
+    # Group results by config file (e.g. "imfuse_18") so every seed/run-suffix
+    # variant of the same model+dataset lands in one shared folder, rather
+    # than scattered across each run's own artifacts directory.
+    results_dir = results_root_dir / config_path.stem
     content = replace_yaml_line(
         content,
         key="input_dir",
@@ -134,11 +139,13 @@ def update_setup_config(
             key="checkpoint_path",
             value=str(artifacts_dir / "checkpoints" / "final_weights_only.safetensors"),
         )
+        content = replace_yaml_line(content, key="results_dir", value=str(results_dir))
         content = replace_yaml_line(
             content,
             key="output_path",
-            value=str(artifacts_dir / "results.txt"),
+            value=str(results_dir / "results.txt"),
         )
+        results_dir.mkdir(parents=True, exist_ok=True)
         template_hf_repo = get_yaml_line_value(content, key="hf_repo")
         if is_placeholder_value(template_hf_repo):
             content = upsert_yaml_line(content, key="push_to_hf", value="true" if hf_repo else "false")

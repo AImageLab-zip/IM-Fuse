@@ -31,6 +31,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/mmformer-preprocessed
 art_dir: /path/to/artifacts/mmformer18
+results_dir: /path/to/results/mmformer_18
 
 trainer: imfuse
 model: mmformer
@@ -73,10 +74,12 @@ plateau_patience: null
 
 lr: 0.0002
 num_epochs: 1000
+validation_every: 10
 batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -90,4 +93,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/mmformer18/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/mmformer18/results.txt
+output_path: /path/to/results/mmformer_18/results.txt

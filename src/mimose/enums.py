@@ -82,6 +82,7 @@ class OptimizerKind(StrEnum):
 
 class SchedulerKind(StrEnum):
     POLY = "poly"
+    WARMUPPOLY = "warmuppoly"
     COSINE = "cosine"
     STEP = "step"
     MULTISTEP = "multistep"

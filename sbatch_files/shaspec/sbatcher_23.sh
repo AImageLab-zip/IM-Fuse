@@ -7,6 +7,12 @@ train_dir="${script_dir}/train"
 
 shopt -s nullglob
 scripts=("${train_dir}"/*_23_*.sh)
+# Exclude seed 67 runs from this bulk submitter
+filtered=()
+for s in "${scripts[@]}"; do
+    [[ "$s" == *_23_67.sh ]] || filtered+=("$s")
+done
+scripts=("${filtered[@]}")
 
 if [ "${#scripts[@]}" -eq 0 ]; then
     echo "No _23_ train scripts found in ${train_dir}" >&2

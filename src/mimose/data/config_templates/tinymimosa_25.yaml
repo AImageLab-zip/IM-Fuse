@@ -27,6 +27,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/tinymimosa-preprocessed
 art_dir: /path/to/artifacts/tinymimosa25
+results_dir: /path/to/results/tinymimosa_25
 
 trainer: imfuse
 model: tinymimosa
@@ -64,10 +65,12 @@ plateau_patience: null
 
 lr: 0.0002
 num_epochs: 500
+validation_every: 10
 batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -81,4 +84,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/tinymimosa25/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/tinymimosa25/results.txt
+output_path: /path/to/results/tinymimosa_25/results.txt

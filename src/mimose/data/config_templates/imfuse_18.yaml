@@ -30,14 +30,15 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/imfuse-preprocessed
 art_dir: /path/to/artifacts/imfuse18
+results_dir: /path/to/results/imfuse_18
 
 trainer: imfuse
 model: imfuse
 loss: imfuse
 
 custom_model_kwargs:
-  interleaved_tokenization: false
-  mamba_skip: false
+  interleaved_tokenization: true
+  mamba_skip: true
   num_cls: 4
 
 custom_loss_kwargs:
@@ -72,12 +73,14 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0008
+lr: 0.0004
 num_epochs: 1000
+validation_every: 10
 batch_size: 2
 weight_decay: 0.00003
 num_workers: 16
-fp16: true
+fp16: false
+compile: false
 
 resume: false
 pretrain: null
@@ -90,4 +93,4 @@ push_to_hf: false
 hf_repo: /path/to/huggingface/owner-repo
 # testing
 checkpoint_path: /path/to/artifacts/imfuse18/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/imfuse18/results.txt
+output_path: /path/to/results/imfuse_18/results.txt

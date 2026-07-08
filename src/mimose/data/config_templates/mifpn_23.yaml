@@ -32,6 +32,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/mifpn-preprocessed
 art_dir: /path/to/artifacts/mifpn23
+results_dir: /path/to/results/mifpn_23
 
 trainer: mifpn
 model: mifpn
@@ -61,10 +62,12 @@ custom_trainer_kwargs:
 optimizer: adamw
 betas: [0.9, 0.999]
 momentum: 0.9
+amsgrad: true
 
-scheduler: poly
+scheduler: warmuppoly
 poly_total_iters: 1000
 poly_power: 0.9
+warmuppoly_warmup_iters: 100
 cosine_t_max: null
 cosine_eta_min: null
 step_step_size: null
@@ -77,10 +80,12 @@ plateau_patience: null
 
 lr: 0.0002
 num_epochs: 1000
+validation_every: 10
 batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -94,4 +99,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/mifpn23/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/mifpn23/results.txt
+output_path: /path/to/results/mifpn_23/results.txt

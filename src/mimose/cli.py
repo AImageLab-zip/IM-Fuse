@@ -136,7 +136,7 @@ def _download_hf_checkpoint(hf_repo: str, hf_run_name: str, destination: Path) -
     downloaded_path = hf_hub_download(
         repo_id=hf_repo,
         filename=f"{hf_run_name}/final_weights_only.safetensors",
-        local_dir=str(destination.parent),
+        local_dir=str(destination.parent.parent),
     )
     downloaded_file = Path(downloaded_path)
     if downloaded_file != destination:
@@ -172,10 +172,12 @@ def _resolve_test_checkpoint(merged: dict[str, object]) -> Path:
             param_hint="--hf-repo",
         )
 
-    hf_run_name = merged.get("hf_run_name")
+    hf_run_name = merged.get("hf_run_name") or merged.get("wandb_run_name")
     if hf_run_name is None:
         raise typer.BadParameter(
-            "missing value; provide it in the CLI or in --config",
+            "missing value; provide it in the CLI, in --config, or via "
+            "wandb_run_name (used as the Hugging Face run-name subdirectory "
+            "when the model was trained with --push-to-hf)",
             param_hint="--hf-run-name",
         )
 
@@ -333,7 +335,10 @@ def setup() -> None:
             label="Data Root",
             prompt="Root directory for the unpacked data",
         )
-        brats_data_dir = data_root / "unpacked"
+        # Some users type the eventual unpacked-data path itself here rather
+        # than its parent; avoid nesting an extra "unpacked" folder inside it.
+        brats_data_dir = data_root if data_root.name == "unpacked" else data_root / "unpacked"
+        data_root = brats_data_dir.parent
     else:
         brats_data_dir = prompt_required_existing_directory(
             label="Unpacked Data",
@@ -346,6 +351,11 @@ def setup() -> None:
         label="Artifacts Root",
         prompt="Root directory for training artifacts",
         default_dir = data_root / 'runs'
+    )
+    results_root_dir = prompt_required_directory(
+        label="Results Root",
+        prompt="Root directory for testing results",
+        default_dir = data_root / 'results'
     )
     templates_require_hf_repo_prompt = cli_setup.templates_require_hf_repo_prompt
     hf_repo: str | None = None
@@ -365,11 +375,12 @@ def setup() -> None:
     table.add_row("Data Root", str(data_root))
     table.add_row("Unpacked Data", str(brats_data_dir))
     table.add_row("Artifacts Root", str(artifacts_root_dir))
+    table.add_row("Results Root", str(results_root_dir))
     table.add_row("HF Repo", hf_repo or "template-driven")
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     table.add_row("Configs", str(CONFIGS_DIR))
     table.add_row("Checkpoint Path", "<art_dir>/checkpoints/final_weights_only.safetensors")
-    table.add_row("Output Path", "<art_dir>/results.txt")
+    table.add_row("Output Path", "<results_dir>/<config_name>/results.txt")
 
     console.print(
         Panel(
@@ -455,6 +466,7 @@ def setup() -> None:
             brats_data_dir=brats_data_dir,
             preprocessed_root_dir=preprocessed_root_dir,
             artifacts_root_dir=artifacts_root_dir,
+            results_root_dir=results_root_dir,
             hf_repo=hf_repo,
         )
 
@@ -466,6 +478,7 @@ def setup() -> None:
     result_table.add_row("Data Root", str(data_root))
     result_table.add_row("Unpacked Data", str(brats_data_dir))
     result_table.add_row("Artifacts Root", str(artifacts_root_dir))
+    result_table.add_row("Results Root", str(results_root_dir))
     result_table.add_row("HF Repo", hf_repo or "template-driven")
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
 
@@ -694,9 +707,12 @@ def preprocess_train(
         optimizer=None,
         betas=None,
         momentum=None,
+        nesterov=None,
+        amsgrad=None,
         scheduler=None,
         poly_total_iters=None,
         poly_power=None,
+        warmuppoly_warmup_iters=None,
         cosine_t_max=None,
         cosine_eta_min=None,
         step_step_size=None,
@@ -709,12 +725,14 @@ def preprocess_train(
         transform_kind=None,
         lr=None,
         num_epochs=None,
+        validation_every=None,
         batch_size=None,
         weight_decay=None,
         num_workers=8,
         distributed=distributed,
         nproc_per_node=nproc_per_node,
         fp16=None,
+        compile=None,
         resume=False,
         seed=69,
         pretrain=None,
@@ -828,6 +846,12 @@ def train(
         help="Enable Nesterov momentum for SGD.",
         rich_help_panel="Optimization",
     ),
+    amsgrad: bool | None = typer.Option(
+        None,
+        "--amsgrad/--no-amsgrad",
+        help="Enable the AMSGrad variant for Adam/AdamW/RAdam. Defaults to on for plain Adam, off otherwise.",
+        rich_help_panel="Optimization",
+    ),
     scheduler: SchedulerKind | None = typer.Option(
         None,
         "--scheduler",
@@ -844,6 +868,12 @@ def train(
         None,
         "--poly-power",
         help="Power for the polynomial scheduler.",
+        rich_help_panel="Scheduler",
+    ),
+    warmuppoly_warmup_iters: int | None = typer.Option(
+        None,
+        "--warmuppoly-warmup-iters",
+        help="Linear warmup length (epochs) for the warmuppoly scheduler, then poly decay for the rest.",
         rich_help_panel="Scheduler",
     ),
     cosine_t_max: int | None = typer.Option(
@@ -918,6 +948,12 @@ def train(
         help="Number of training epochs.",
         rich_help_panel="Training",
     ),
+    validation_every: int | None = typer.Option(
+        None,
+        "--validation-every",
+        help="Run validation every N epochs (and always on the final epoch). Defaults to 1 (every epoch).",
+        rich_help_panel="Training",
+    ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
@@ -952,6 +988,13 @@ def train(
         None,
         "--fp16",
         help="Enable float16 mixed precision training on CUDA.",
+        rich_help_panel="Runtime",
+        is_flag=True,
+    ),
+    compile: bool | None = typer.Option(
+        None,
+        "--compile",
+        help="Compile the model with torch.compile(mode='reduce-overhead') on CUDA.",
         rich_help_panel="Runtime",
         is_flag=True,
     ),
@@ -1053,9 +1096,11 @@ def train(
             betas=betas,
             momentum=momentum,
             nesterov=nesterov,
+            amsgrad=amsgrad,
             scheduler=scheduler,
             poly_total_iters=poly_total_iters,
             poly_power=poly_power,
+            warmuppoly_warmup_iters=warmuppoly_warmup_iters,
             cosine_t_max=cosine_t_max,
             cosine_eta_min=cosine_eta_min,
             step_step_size=step_step_size,
@@ -1068,12 +1113,14 @@ def train(
             transform_kind=transform_kind,
             lr=lr,
             num_epochs=num_epochs,
+            validation_every=validation_every,
             batch_size=batch_size,
             weight_decay=weight_decay,
             num_workers=num_workers,
             distributed=distributed,
             nproc_per_node=nproc_per_node,
             fp16=fp16,
+            compile=compile,
             resume=resume,
             try_resume=try_resume,
             pretrain=pretrain,
@@ -1192,6 +1239,13 @@ def test(
         help="Random seed.",
         rich_help_panel="Runtime",
     ),
+    fp16: bool | None = typer.Option(
+        None,
+        "--fp16",
+        help="Run inference under torch.autocast(dtype=float16) on CUDA.",
+        rich_help_panel="Runtime",
+        is_flag=True,
+    ),
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
@@ -1233,6 +1287,7 @@ def test(
         num_workers=num_workers,
         run_suffix=run_suffix,
         seed=seed,
+        fp16=fp16,
         dataset_type=dataset_type,
     )
     resolved_split_file = resolve_split_path(merged.get("split_file"))
@@ -1262,6 +1317,7 @@ def test(
         split_file=resolved_split_file,
         num_workers=int(merged.get("num_workers", 8)),
         seed=int(merged.get("seed", 42)),
+        fp16=bool(merged.get("fp16", False)),
     )
     typer.echo(f"Test report written to {output_file}")
     typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
@@ -1363,10 +1419,53 @@ def push(
         ),
         rich_help_panel="Runtime",
     ),
+    all_seeds: bool = typer.Option(
+        False,
+        "--all-seeds",
+        help=(
+            "Push every seeded run for this config (seeds 0, 42, 69, matching "
+            "sbatcher_18.sh/sbatcher_23.sh), then push seed 0's checkpoint a second "
+            "time without a suffix so it's available as the default checkpoint for "
+            "easy testing. Incompatible with --run-suffix and --checkpoint-path."
+        ),
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Upload an existing local checkpoint to Hugging Face without training."""
     console = _get_cli_display().CONSOLE
     workflows = _get_cli_workflows()
+
+    if all_seeds:
+        if run_suffix is not None:
+            raise typer.BadParameter(
+                "--run-suffix cannot be combined with --all-seeds; each seed's suffix is derived automatically",
+                param_hint="--run-suffix",
+            )
+        if checkpoint_path is not None:
+            raise typer.BadParameter(
+                "--checkpoint-path cannot be combined with --all-seeds; each seed's checkpoint is resolved automatically",
+                param_hint="--checkpoint-path",
+            )
+
+        with console.status(
+            "[bold cyan]Preparing Hugging Face push (all seeds)[/bold cyan]",
+            spinner="dots",
+        ):
+            export_dirs = workflows.run_push_all_seeds_from_config(
+                config=config,
+                art_dir=art_dir,
+                trainer=trainer,
+                model=model,
+                custom_model_kwargs=custom_model_kwargs,
+                custom_trainer_kwargs=custom_trainer_kwargs,
+                num_workers=num_workers,
+                wandb_run_name=wandb_run_name,
+                dataset_type=dataset_type,
+                hf_repo=hf_repo,
+            )
+        for export_dir in export_dirs:
+            typer.echo(f"Pushed model artifacts from {export_dir}")
+        return
 
     with console.status(
         "[bold cyan]Preparing Hugging Face push[/bold cyan]",

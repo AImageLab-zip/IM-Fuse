@@ -32,6 +32,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/m3ae-preprocessed
 art_dir: /path/to/artifacts/m3ae25
+results_dir: /path/to/results/m3ae_25
 
 trainer: m3ae
 model: m3ae
@@ -68,12 +69,14 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0003
+lr: 0.0046
 num_epochs: 300
-batch_size: 1
+validation_every: 10
+batch_size: 16
 weight_decay: 0.00001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -87,4 +90,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/m3ae25/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/m3ae25/results.txt
+output_path: /path/to/results/m3ae_25/results.txt

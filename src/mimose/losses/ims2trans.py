@@ -102,6 +102,9 @@ class IMS2TransLoss:
             "dis": dis,
         }
 
+    def segmentation_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.softmax_weighted_loss(output, target) + self.dice_loss(output, target)
+
     def dice_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return dice_loss(output, target, num_cls=self.num_classes, eps=self.eps)
 

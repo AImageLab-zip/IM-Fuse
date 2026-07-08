@@ -48,6 +48,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/lckd-preprocessed
 art_dir: /path/to/artifacts/lckd25
+results_dir: /path/to/results/lckd_25
 
 trainer: lckd
 model: lckd
@@ -90,10 +91,12 @@ plateau_patience: null
 
 lr: 0.01
 num_epochs: 980
+validation_every: 10
 batch_size: 12
 weight_decay: 0.0005
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -107,4 +110,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/lckd25/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/lckd25/results.txt
+output_path: /path/to/results/lckd_25/results.txt

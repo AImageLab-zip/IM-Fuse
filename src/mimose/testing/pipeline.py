@@ -19,6 +19,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from mimose.checkpoints import load_weights_only_checkpoint
@@ -274,6 +275,7 @@ def run_testing(
     split_file: Path,
     num_workers: int = 8,
     seed: int = 42,
+    fp16: bool = False,
 ) -> Path:
     if not torch.cuda.is_available():
         raise RuntimeError("Testing currently requires at least one CUDA device")
@@ -357,7 +359,8 @@ def run_testing(
                     for batch in test_loader:
                         images = batch["images"].to(device, non_blocking=True)
                         target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
-                        output = model.predict(images, mask_tensor)
+                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                            output = model.predict(images, mask_tensor)
                         prediction = torch.argmax(output, dim=1)
                         brats_dice_separate, brats_dice = dice_fn(
                             output=prediction,

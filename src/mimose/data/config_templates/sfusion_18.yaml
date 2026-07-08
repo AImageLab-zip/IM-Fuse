@@ -30,6 +30,7 @@ yes: false
 # training
 data_dir: /path/to/preprocessed/sfusion-preprocessed
 art_dir: /path/to/artifacts/sfusion18
+results_dir: /path/to/results/sfusion_18
 
 trainer: robustseg
 model: sfusion
@@ -37,6 +38,7 @@ loss: robustseg
 
 custom_model_kwargs:
   num_cls: 4
+  n_base_filters: 16
 
 custom_loss_kwargs:
   num_classes: null
@@ -69,10 +71,12 @@ plateau_patience: null
 
 lr: 0.0001
 num_epochs: 200
+validation_every: 10
 batch_size: 1
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
+compile: false
 
 resume: false
 pretrain: null
@@ -86,4 +90,4 @@ hf_repo: /path/to/huggingface/owner-repo
 
 # testing
 checkpoint_path: /path/to/artifacts/sfusion18/checkpoints/final_weights_only.safetensors
-output_path: /path/to/artifacts/sfusion18/results.txt
+output_path: /path/to/results/sfusion_18/results.txt

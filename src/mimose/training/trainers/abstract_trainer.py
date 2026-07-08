@@ -25,9 +25,11 @@ class AbstractTrainer(ABC):
         scheduler_config: SchedulerConfig | None = None,
         transform_manager: TransformManager | None = None,
         num_epochs: int = 1,
+        validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
         fp16: bool = False,
+        compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
         seed: int | None = None,
@@ -49,9 +51,13 @@ class AbstractTrainer(ABC):
         self.scheduler_config = scheduler_config
         self.transform_manager = transform_manager
         self.num_epochs = int(num_epochs)
+        if int(validation_every) < 1:
+            raise ValueError("validation_every must be >= 1")
+        self.validation_every = int(validation_every)
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.fp16 = bool(fp16)
+        self.compile = bool(compile)
         self.resume_requested = bool(resume)
         self.try_resume_requested = bool(try_resume)
 

@@ -178,9 +178,11 @@ def build_train_merged_config(
     betas: tuple[float, float] | None,
     momentum: float | None,
     nesterov: bool | None,
+    amsgrad: bool | None,
     scheduler: SchedulerKind | None,
     poly_total_iters: int | None,
     poly_power: float | None,
+    warmuppoly_warmup_iters: int | None,
     cosine_t_max: int | None,
     cosine_eta_min: float | None,
     step_step_size: int | None,
@@ -193,12 +195,14 @@ def build_train_merged_config(
     transform_kind: TransformKind | None,
     lr: float | None,
     num_epochs: int | None,
+    validation_every: int | None,
     batch_size: int | None,
     weight_decay: float | None,
     num_workers: int,
     distributed: bool | None,
     nproc_per_node: int | None,
     fp16: bool | None,
+    compile: bool | None,
     resume: bool,
     try_resume: bool,
     seed: int,
@@ -244,9 +248,11 @@ def build_train_merged_config(
         betas=betas,
         momentum=momentum,
         nesterov=nesterov,
+        amsgrad=amsgrad,
         scheduler=scheduler,
         poly_total_iters=poly_total_iters,
         poly_power=poly_power,
+        warmuppoly_warmup_iters=warmuppoly_warmup_iters,
         cosine_t_max=cosine_t_max,
         cosine_eta_min=cosine_eta_min,
         step_step_size=step_step_size,
@@ -259,12 +265,14 @@ def build_train_merged_config(
         transform_kind=transform_kind,
         lr=lr,
         num_epochs=num_epochs,
+        validation_every=validation_every,
         batch_size=batch_size,
         weight_decay=weight_decay,
         num_workers=num_workers,
         distributed=distributed,
         nproc_per_node=nproc_per_node,
         fp16=fp16,
+        compile=compile,
         resume=resume,
         try_resume=try_resume,
         pretrain=pretrain,
@@ -337,9 +345,11 @@ def build_push_merged_config(
         betas=None,
         momentum=None,
         nesterov=None,
+        amsgrad=None,
         scheduler=None,
         poly_total_iters=None,
         poly_power=None,
+        warmuppoly_warmup_iters=None,
         cosine_t_max=None,
         cosine_eta_min=None,
         step_step_size=None,
@@ -352,13 +362,16 @@ def build_push_merged_config(
         transform_kind=None,
         lr=None,
         num_epochs=None,
+        validation_every=None,
         batch_size=None,
         weight_decay=None,
         num_workers=num_workers,
         distributed=False,
         nproc_per_node=None,
         fp16=None,
+        compile=None,
         resume=False,
+        try_resume=False,
         seed=seed,
         pretrain=None,
         wandb_project=None,
@@ -405,8 +418,7 @@ def run_train_from_merged(merged: dict[str, object]) -> None:
     trainer_instance.fit()
 
 
-def run_push_from_merged(merged: dict[str, object]) -> Path:
-    trainer_instance = _build_trainer_instance_from_merged(merged)
+def _resolve_push_checkpoint_path(merged: dict[str, object]) -> Path:
     checkpoint_path = Path(
         merged.get("checkpoint_path")
         or (Path(merged["art_dir"]) / "checkpoints" / "final_weights_only.safetensors")
@@ -416,7 +428,78 @@ def run_push_from_merged(merged: dict[str, object]) -> Path:
             f"checkpoint not found at {checkpoint_path}",
             param_hint="--checkpoint-path",
         )
+    return checkpoint_path
+
+
+def run_push_from_merged(merged: dict[str, object]) -> Path:
+    trainer_instance = _build_trainer_instance_from_merged(merged)
+    checkpoint_path = _resolve_push_checkpoint_path(merged)
     return trainer_instance.push_checkpoint_to_hf(checkpoint_path)
+
+
+# Seeds trained by sbatcher_18.sh / sbatcher_23.sh for every model (seed 67 is a
+# standalone extra run and is intentionally excluded from the bulk push too).
+PUSH_ALL_SEEDS: tuple[int, ...] = (0, 42, 69)
+
+# Seed whose checkpoint is re-uploaded a second time under the run's unsuffixed
+# name, so testers can grab a default checkpoint without knowing which seed to ask for.
+PUSH_DEFAULT_SEED = 0
+
+
+def run_push_all_seeds_from_config(
+    *,
+    config: Path | None,
+    art_dir: Path | None,
+    trainer: TrainerKind | None,
+    model: ModelKind | None,
+    custom_model_kwargs: list[str] | None,
+    custom_trainer_kwargs: list[str] | None,
+    num_workers: int,
+    wandb_run_name: str | None,
+    dataset_type: DatasetType | None,
+    hf_repo: str | None,
+) -> list[Path]:
+    export_dirs: list[Path] = []
+    default_checkpoint_path: Path | None = None
+
+    for seed in PUSH_ALL_SEEDS:
+        merged = build_push_merged_config(
+            config=config,
+            art_dir=art_dir,
+            checkpoint_path=None,
+            trainer=trainer,
+            model=model,
+            custom_model_kwargs=custom_model_kwargs,
+            custom_trainer_kwargs=custom_trainer_kwargs,
+            num_workers=num_workers,
+            seed=seed,
+            wandb_run_name=wandb_run_name,
+            dataset_type=dataset_type,
+            hf_repo=hf_repo,
+            run_suffix=f"seed{seed}",
+        )
+        export_dirs.append(run_push_from_merged(merged))
+        if seed == PUSH_DEFAULT_SEED:
+            default_checkpoint_path = _resolve_push_checkpoint_path(merged)
+
+    assert default_checkpoint_path is not None
+    default_merged = build_push_merged_config(
+        config=config,
+        art_dir=art_dir,
+        checkpoint_path=default_checkpoint_path,
+        trainer=trainer,
+        model=model,
+        custom_model_kwargs=custom_model_kwargs,
+        custom_trainer_kwargs=custom_trainer_kwargs,
+        num_workers=num_workers,
+        seed=PUSH_DEFAULT_SEED,
+        wandb_run_name=wandb_run_name,
+        dataset_type=dataset_type,
+        hf_repo=hf_repo,
+        run_suffix=None,
+    )
+    export_dirs.append(run_push_from_merged(default_merged))
+    return export_dirs
 
 
 def _build_trainer_instance_from_merged(merged: dict[str, object]):
@@ -533,11 +616,13 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         betas=tuple(merged["betas"]) if merged.get("betas") is not None else (0.9, 0.999),
         momentum=float(_merged_value(merged, "momentum", 0.9)),
         nesterov=bool(_merged_value(merged, "nesterov", False)),
+        amsgrad=bool(merged["amsgrad"]) if merged.get("amsgrad") is not None else None,
     )
     scheduler_config = build_scheduler_config(
         scheduler_kind=scheduler_kind,
         poly_total_iters=int(merged["poly_total_iters"]) if merged.get("poly_total_iters") is not None else resolved_num_epochs,
         poly_power=float(_merged_value(merged, "poly_power", 0.9)),
+        warmuppoly_warmup_iters=int(_merged_value(merged, "warmuppoly_warmup_iters", 100)),
         cosine_t_max=int(merged["cosine_t_max"]) if merged.get("cosine_t_max") is not None else resolved_num_epochs,
         cosine_eta_min=float(_merged_value(merged, "cosine_eta_min", 0.0)),
         step_step_size=int(merged["step_step_size"]) if merged.get("step_step_size") is not None else None,
@@ -585,9 +670,11 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         scheduler_config=scheduler_config,
         transform_manager=transform_manager,
         num_epochs=resolved_num_epochs,
+        validation_every=int(_merged_value(merged, "validation_every", 1)),
         batch_size=int(merged.get("batch_size", 1)),
         num_workers=int(merged.get("num_workers", 8)),
         fp16=bool(merged.get("fp16", False)),
+        compile=bool(merged.get("compile", False)),
         resume=bool(merged.get("resume", False)),
         try_resume=bool(merged.get("try_resume", False)),
         seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
