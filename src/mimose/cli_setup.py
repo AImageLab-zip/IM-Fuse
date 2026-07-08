@@ -112,6 +112,7 @@ def update_setup_config(
     artifacts_root_dir: Path,
     results_root_dir: Path,
     hf_repo: str | None = None,
+    wandb_mode: str | None = None,
 ) -> None:
     content = config_path.read_text(encoding="utf-8")
     run_tag = config_run_tag(config_path)
@@ -146,6 +147,8 @@ def update_setup_config(
             value=str(results_dir / "results.txt"),
         )
         results_dir.mkdir(parents=True, exist_ok=True)
+        if wandb_mode is not None and get_yaml_line_value(content, key="wandb_mode") is not None:
+            content = replace_yaml_line(content, key="wandb_mode", value=wandb_mode)
         template_hf_repo = get_yaml_line_value(content, key="hf_repo")
         if is_placeholder_value(template_hf_repo):
             content = upsert_yaml_line(content, key="push_to_hf", value="true" if hf_repo else "false")

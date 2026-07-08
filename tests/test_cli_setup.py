@@ -118,6 +118,7 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
     runner = CliRunner()
     data_root = tmp_path / "data"
     data_root.mkdir()
+    expected_preprocessed_default = data_root
     expected_artifacts_default = data_root / "runs"
     expected_results_default = data_root / "results"
     captured_default_dirs: dict[str, Path | None] = {}
@@ -151,6 +152,8 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
             default_dir: Path | None = None,
         ) -> Path:
             captured_default_dirs[label] = default_dir
+            if label == "Preprocessed Data Root":
+                return expected_preprocessed_default
             if label == "Artifacts Root":
                 return expected_artifacts_default
             if label == "Results Root":
@@ -179,11 +182,13 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
 
     answers = iter([False, True])
     monkeypatch.setattr(rich.prompt.Confirm, "ask", lambda *args, **kwargs: next(answers))
+    monkeypatch.setattr(rich.prompt.Prompt, "ask", lambda *args, **kwargs: "online")
 
     result = runner.invoke(cli.app, ["setup"])
 
     assert result.exit_code == 0
     assert captured_default_dirs == {
+        "Preprocessed Data Root": expected_preprocessed_default,
         "Artifacts Root": expected_artifacts_default,
         "Results Root": expected_results_default,
     }

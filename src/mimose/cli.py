@@ -281,7 +281,7 @@ def self_destruct(
 def setup() -> None:
     """Copy template configs and patch only the local path fields."""
     from rich.panel import Panel
-    from rich.prompt import Confirm
+    from rich.prompt import Confirm, Prompt
     from rich.table import Table
 
     cli_display = _get_cli_display()
@@ -345,7 +345,12 @@ def setup() -> None:
             prompt="Path to the existing unpacked data directory",
         )
         data_root = brats_data_dir.parent
-    preprocessed_root_dir = data_root
+
+    preprocessed_root_dir = prompt_required_directory(
+        label="Preprocessed Data Root",
+        prompt="Root directory for preprocessed data",
+        default_dir=data_root,
+    )
 
     artifacts_root_dir = prompt_required_directory(
         label="Artifacts Root",
@@ -365,6 +370,12 @@ def setup() -> None:
             "Leave empty to skip"
         ).strip() or None
 
+    wandb_mode = Prompt.ask(
+        "Preferred Weights & Biases mode",
+        choices=["online", "offline", "disabled"],
+        default="online",
+    )
+
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", no_wrap=True)
     table.add_column(style="white")
@@ -374,9 +385,11 @@ def setup() -> None:
         table.add_row("BraTS2024-GLI-post-additional-data ZIP", str(gli_post_extra_zip))
     table.add_row("Data Root", str(data_root))
     table.add_row("Unpacked Data", str(brats_data_dir))
+    table.add_row("Preprocessed Data Root", str(preprocessed_root_dir))
     table.add_row("Artifacts Root", str(artifacts_root_dir))
     table.add_row("Results Root", str(results_root_dir))
     table.add_row("HF Repo", hf_repo or "template-driven")
+    table.add_row("W&B Mode", wandb_mode)
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     table.add_row("Configs", str(CONFIGS_DIR))
     table.add_row("Checkpoint Path", "<art_dir>/checkpoints/final_weights_only.safetensors")
@@ -468,6 +481,7 @@ def setup() -> None:
             artifacts_root_dir=artifacts_root_dir,
             results_root_dir=results_root_dir,
             hf_repo=hf_repo,
+            wandb_mode=wandb_mode,
         )
 
     result_table = Table.grid(padding=(0, 2))
@@ -477,9 +491,11 @@ def setup() -> None:
     result_table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     result_table.add_row("Data Root", str(data_root))
     result_table.add_row("Unpacked Data", str(brats_data_dir))
+    result_table.add_row("Preprocessed Data Root", str(preprocessed_root_dir))
     result_table.add_row("Artifacts Root", str(artifacts_root_dir))
     result_table.add_row("Results Root", str(results_root_dir))
     result_table.add_row("HF Repo", hf_repo or "template-driven")
+    result_table.add_row("W&B Mode", wandb_mode)
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
 
     console.print(
