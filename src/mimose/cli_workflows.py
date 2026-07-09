@@ -111,6 +111,8 @@ def run_preprocess_from_merged(
     table.add_row("Normalize", norm_config.fn.__name__)
     table.add_row("Input", str(merged.get("input_dir")))
     table.add_row("Output", str(merged.get("output_dir")))
+    if merged.get("dataset_type") is not None:
+        table.add_row("Dataset type", str(merged.get("dataset_type")))
 
     console.print(
         Panel(
@@ -121,6 +123,7 @@ def run_preprocess_from_merged(
         )
     )
 
+    dataset_type = merged.get("dataset_type")
     run_preprocessing(
         input_dir=Path(merged.get("input_dir")),
         output_dir=Path(merged.get("output_dir")),
@@ -128,6 +131,7 @@ def run_preprocess_from_merged(
         clamp_config=clamp_config,
         norm_config=norm_config,
         yes=bool(merged.get("yes", yes)),
+        dataset_type=DatasetType(dataset_type) if dataset_type is not None else None,
     )
 
 
@@ -520,10 +524,10 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         IMS2TransTrainer,
         LCKDTrainer,
         M3AETrainer,
-        MaMTrainer,
+        M3FeConTrainer,
         MIFPNTrainer,
         MSTKDTrainer,
-        ReverseTrainer,
+        RFLTrainer,
         RobustSegTrainer,
         ShaSpecTrainer,
         SRMNetTrainer,
@@ -548,12 +552,12 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.ROBUSTSEG: RobustSegTrainer,
         TrainerKind.SHASPEC: ShaSpecTrainer,
         TrainerKind.M3AE: M3AETrainer,
-        TrainerKind.MAM: MaMTrainer,
+        TrainerKind.M3FECON: M3FeConTrainer,
         TrainerKind.SRMNET: SRMNetTrainer,
         TrainerKind.IMS2TRANS: IMS2TransTrainer,
         TrainerKind.MSTKDNET: MSTKDTrainer,
         TrainerKind.MIFPN: MIFPNTrainer,
-        TrainerKind.REVERSE: ReverseTrainer,
+        TrainerKind.RFL: RFLTrainer,
         TrainerKind.LCKD: LCKDTrainer,
     }
     try:
@@ -570,12 +574,12 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.ROBUSTSEG: TrainingModelKind.ROBUSTSEG,
         TrainerKind.SHASPEC: TrainingModelKind.SHASPEC,
         TrainerKind.M3AE: TrainingModelKind.M3AE,
-        TrainerKind.MAM: TrainingModelKind.MAM,
+        TrainerKind.M3FECON: TrainingModelKind.M3FECON,
         TrainerKind.SRMNET: TrainingModelKind.SRMNET,
         TrainerKind.IMS2TRANS: TrainingModelKind.IMS2TRANS,
         TrainerKind.MSTKDNET: TrainingModelKind.MSTKDNET,
         TrainerKind.MIFPN: TrainingModelKind.MIFPN,
-        TrainerKind.REVERSE: TrainingModelKind.REVERSE,
+        TrainerKind.RFL: TrainingModelKind.RFL,
         TrainerKind.LCKD: TrainingModelKind.LCKD,
     }
     default_loss_map = {
@@ -583,12 +587,12 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.ROBUSTSEG: "robustseg",
         TrainerKind.SHASPEC: "shaspec",
         TrainerKind.M3AE: "m3ae",
-        TrainerKind.MAM: "mam",
+        TrainerKind.M3FECON: "m3fecon",
         TrainerKind.SRMNET: "srmnet",
         TrainerKind.IMS2TRANS: "ims2trans",
         TrainerKind.MSTKDNET: "mstkdnet",
         TrainerKind.MIFPN: "mifpn",
-        TrainerKind.REVERSE: "reverse",
+        TrainerKind.RFL: "rfl",
         TrainerKind.LCKD: "lckd",
     }
     default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)

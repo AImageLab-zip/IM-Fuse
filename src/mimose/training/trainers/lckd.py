@@ -113,14 +113,46 @@ class LCKDTrainer(BaseTrainer):
         if in_warmup == self._in_warmup:
             return
 
+        is_boundary_crossing = self._in_warmup is not None
         self._in_warmup = in_warmup
         phase_mode = MaskingMode.FULL if in_warmup else self.train_masking_mode
         self.train_set.masking_mode = phase_mode
+
+        if is_boundary_crossing:
+            # Legacy LCKD trains warmup and missing-modality as two separate
+            # `train.py` runs (the second one launched with `--restart`): a
+            # freshly-constructed optimizer with no carried-over momentum,
+            # and an LR schedule that decays from scratch over just the new
+            # phase's remaining length. Mirror that here instead of letting a
+            # single optimizer/scheduler run continuously across the boundary.
+            self._restart_optimizer_and_scheduler(epoch)
+
         if self.is_main_process:
             phase_name = "warmup (full modalities)" if in_warmup else "missing-modality"
             CONSOLE.print(
                 f"[bold cyan]LCKD[/bold cyan] entering {phase_name} phase at epoch "
                 f"{epoch + 1}/{self.num_epochs} (warmup_epochs={self.warmup_epochs})"
+            )
+
+    def _restart_optimizer_and_scheduler(self, epoch: int) -> None:
+        self._build_optimizer()
+
+        if self.scheduler_config is None:
+            self.scheduler = None
+            return
+
+        phase_kwargs = dict(self.scheduler_config.kwargs)
+        remaining_epochs = self.num_epochs - epoch
+        for duration_key in ("total_iters", "T_max"):
+            if duration_key in phase_kwargs:
+                phase_kwargs[duration_key] = remaining_epochs
+
+        self.scheduler = self.scheduler_config.scheduler_class(self.optimizer, **phase_kwargs)
+
+        if self.is_main_process:
+            CONSOLE.print(
+                f"[bold cyan]LCKD[/bold cyan] restarted optimizer/scheduler at epoch "
+                f"{epoch + 1}/{self.num_epochs} (phase boundary)"
             )
 
     def train_epoch(self, epoch: int) -> dict[str, float]:

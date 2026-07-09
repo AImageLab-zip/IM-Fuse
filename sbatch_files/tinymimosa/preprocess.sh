@@ -12,4 +12,4 @@
 #SBATCH --account=phd_mimose
 #_SBATCH --constraint=gpu_L40S_48G|gpu_A40_48G|gpu_RTXA5000_24G|gpu_RTX6000_24G
 
-mimose preprocess --config tinymimosa_18.yaml --yes
+mimose preprocess --config tinymimosa_18.yaml --yes --dataset-type brats23

@@ -39,7 +39,7 @@ custom_model_kwargs:
 custom_loss_kwargs:
   dice_weight: 0.5
   ce_weight: 0.5
-  eps: 1e-4
+  eps: 0.001
 
 custom_trainer_kwargs:
   transform_kind: tinymimosa
@@ -63,10 +63,10 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0002
+lr: 0.0016
 num_epochs: 500
 validation_every: 10
-batch_size: 2
+batch_size: 16
 weight_decay: 0.0001
 num_workers: 8
 fp16: true

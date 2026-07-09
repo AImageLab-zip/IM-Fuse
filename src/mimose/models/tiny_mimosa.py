@@ -111,6 +111,15 @@ class TinyMimosa(AbstractModel):
                 f"{self.tile_shape}, got {tuple(images.shape[2:])}"
             )
 
+        # Zero out modalities the mask marks as missing *before* the joint
+        # encoder sees them. Unlike the per-modality-encoder models in this
+        # codebase (which can safely mask post-encoder features), TinyMimosa
+        # uses a single encoder over all channels, so leaving the raw pixel
+        # data in place here would let it look straight through the "missing"
+        # constraint that self.mask_conditioning below cannot undo.
+        gate = mask.to(images.dtype).view(images.size(0), images.size(1), 1, 1, 1)
+        images = images * gate
+
         skips = self.backbone.encoder(images)
         latent = skips[-1]
         scale, bias = self.mask_conditioning(mask)
@@ -124,10 +133,33 @@ class TinyMimosa(AbstractModel):
 
     def predict(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         self._validate_boundary_inputs(images, mask)
+        original_shape = tuple(int(dim) for dim in images.shape[2:])
+
+        # Zero-pad symmetrically (matching TinyMimosaTransform._pad_to_compatible_shape's
+        # scheme, minus its multiple-of-spatial_multiple rounding: sliding-window tiles
+        # below are always exactly tile_shape regardless of total volume size, so a
+        # dimension already >= tile_shape needs no padding at all).
+        target_shape = tuple(
+            max(current, minimum) for current, minimum in zip(original_shape, self.tile_shape)
+        )
+        pad_before: list[int] = []
+        pad_sizes: list[int] = []
+        for current, target in zip(reversed(original_shape), reversed(target_shape)):
+            total_pad = max(target - current, 0)
+            before = total_pad // 2
+            after = total_pad - before
+            pad_before.append(before)
+            pad_sizes.extend((before, after))
+        pad_before.reverse()  # back to (H, W, D) order
+
+        if any(pad_sizes):
+            images = torch.nn.functional.pad(images, tuple(pad_sizes))
+
         padded_shape = tuple(int(dim) for dim in images.shape[2:])
 
         if padded_shape == self.tile_shape:
-            return self(images, mask)
+            prediction = self(images, mask)
+            return self._crop_to_original_shape(prediction, pad_before, original_shape)
 
         prediction = torch.zeros(
             images.size(0),
@@ -186,7 +218,20 @@ class TinyMimosa(AbstractModel):
                         d : d + self.tile_shape[2],
                     ] += 1
 
-        return prediction / weight.clamp_min(1)
+        prediction = prediction / weight.clamp_min(1)
+        return self._crop_to_original_shape(prediction, pad_before, original_shape)
+
+    @staticmethod
+    def _crop_to_original_shape(
+        prediction: torch.Tensor,
+        pad_before: Sequence[int],
+        original_shape: tuple[int, int, int],
+    ) -> torch.Tensor:
+        if not any(pad_before) and tuple(prediction.shape[2:]) == original_shape:
+            return prediction
+        h0, w0, d0 = pad_before
+        h1, w1, d1 = original_shape
+        return prediction[:, :, h0 : h0 + h1, w0 : w0 + w1, d0 : d0 + d1]
 
     def _validate_boundary_inputs(self, images: torch.Tensor, mask: torch.Tensor) -> None:
         if images.ndim != 5 or images.size(1) != self.num_modals:

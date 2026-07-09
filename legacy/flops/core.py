@@ -171,7 +171,7 @@ class _LegacyWrapper(nn.Module):
         elif self.adapter_kind == "uhved":
             images_dict = {"Flair": flair, "T1c": t1ce, "T1": t1, "T2": t2}
             result = self.model(images_dict, mask, is_inference=True)
-        elif self.adapter_kind == "mam":
+        elif self.adapter_kind == "m3fecon":
             result = self.model(images, [True, True, True, True])
         elif self.adapter_kind == "m3ae":
             result = self.model(images)
@@ -771,8 +771,8 @@ def _build_mstkd_model() -> nn.Module:
     return model_missing
 
 
-def _build_mam_model() -> nn.Module:
-    root = LEGACY_ROOT / "MaM" / "nnunetv2" / "utilities" / "my_dynamic_network_architectures" / "architectures"
+def _build_m3fecon_model() -> nn.Module:
+    root = LEGACY_ROOT / "M3FeCon" / "nnunetv2" / "utilities" / "my_dynamic_network_architectures" / "architectures"
     with _import_root(root):
         import torch.nn as nn
         from unet import MultimodalRecon
@@ -867,7 +867,7 @@ def _registry() -> dict[str, MethodSpec]:
         "MIFPN": MethodSpec("MIFPN", LEGACY_ROOT / "MIFPN", "legacy/MIFPN/test.py", "models.PNT.Model", _simple_builder("MIFPN", "models.PNT", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
         "MMMViT": MethodSpec("MMMViT", LEGACY_ROOT / "MMMViT", "legacy/MMMViT/test.py", "mmmvit.Model", _simple_builder("MMMViT", "mmmvit", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
         "MST-KDNet": MethodSpec("MST-KDNet", LEGACY_ROOT / "MST-KDNet", "legacy/MST-KDNet/eval.py", "models.build_MSTKDNet()[1]", _build_mstkd_model, "images_only", (160, 192, 128), (160, 192, 128), FullVolumeStrategy("direct")),
-        "MaM": MethodSpec("MaM", LEGACY_ROOT / "MaM", "legacy/MaM/test.py", "unet.MultimodalRecon", _build_mam_model, "mam", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
+        "M3FeCon": MethodSpec("M3FeCon", LEGACY_ROOT / "M3FeCon", "legacy/M3FeCon/test.py", "unet.MultimodalRecon", _build_m3fecon_model, "m3fecon", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "RFNet": MethodSpec("RFNet", LEGACY_ROOT / "RFNet", "legacy/RFNet/test.py", "models.Model", _simple_builder("RFNet", "models", "Model", num_cls=4), "images_mask", (80, 80, 80), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (80, 80, 80), 0.5)),
         "ReHyDIL": MethodSpec("ReHyDIL", LEGACY_ROOT / "ReHyDIL", "legacy/ReHyDIL/test.py", "test_utils.CPH_3d", _build_rehydil_model, "images_only", (224, 224, 155), (224, 224, 155), FullVolumeStrategy("direct")),
         "RobustSeg": MethodSpec("RobustSeg", LEGACY_ROOT / "RobustSeg", "legacy/RobustSeg/test_robustseg.py", "RobustSeg.RobustSeg", _simple_builder("RobustSeg", "RobustSeg", "RobustSeg", num_cls=4), "images_mask", (80, 80, 80), (80, 80, 80), FullVolumeStrategy("patched", (80, 80, 80), 0.5)),
@@ -879,7 +879,7 @@ def _registry() -> dict[str, MethodSpec]:
         "XLSTM-HVED": MethodSpec("XLSTM-HVED", LEGACY_ROOT / "XLSTM-HVED", "legacy/XLSTM-HVED/test.py", "classic_models.find_model_using_name('XLSTM_HVED')", _build_xlstm_hved_model, "xlstm_hved", (128, 192, 128), (128, 192, 128), FullVolumeStrategy("direct")),
         "m3ae": MethodSpec("m3ae", LEGACY_ROOT / "m3ae", "legacy/m3ae/test.py", "model.Unet.Unet_missing", _simple_builder("m3ae", "model.Unet", "Unet_missing", input_shape=[128, 128, 128], out_channels=3, mdp=3, init_channels=16, pre_train=False, mask_modal=[], patch_shape=128), "m3ae", (128, 128, 128), (128, 128, 128), FullVolumeStrategy("patched", (128, 128, 128), 0.5)),
         "mmFormer": MethodSpec("mmFormer", LEGACY_ROOT / "mmFormer" / "mmformer", "legacy/mmFormer/mmformer/test.py", "mmformer.Model", _simple_builder("mmFormer/mmformer", "mmformer", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
-        "reverse": MethodSpec("reverse", LEGACY_ROOT / "reverse", "legacy/reverse/test.py", "reverse.Model", _simple_builder("reverse", "reverse", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
+        "rfl": MethodSpec("rfl", LEGACY_ROOT / "rfl", "legacy/rfl/test.py", "rfl.Model", _simple_builder("rfl", "rfl", "Model", num_cls=4), "images_mask", (128, 128, 128), DEFAULT_FULL_VOLUME_SHAPE, FullVolumeStrategy("legacy_non_empty_patched", (128, 128, 128), 0.5)),
     }
 
 

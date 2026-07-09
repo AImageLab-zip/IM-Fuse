@@ -4,10 +4,10 @@ from mimose.losses.ims2trans import IMS2TransLoss
 from mimose.losses.inoutfusion import InOutFusionLoss
 from mimose.losses.lckd import LCKDLoss
 from mimose.losses.m3ae import M3AELoss
-from mimose.losses.mam import MaMLoss
+from mimose.losses.m3fecon import M3FeConLoss
 from mimose.losses.mifpn import MIFPNLoss
 from mimose.losses.mstkdnet import MSTKDNetLoss
-from mimose.losses.reverse import ReverseLoss
+from mimose.losses.rfl import RFLLoss
 from mimose.losses.robustseg import RobustSegLoss
 from mimose.losses.shaspec import ShaSpecLoss
 from mimose.losses.srmnet import SRMNetLoss
@@ -23,10 +23,10 @@ __all__ = [
     "InOutFusionLoss",
     "LCKDLoss",
     "M3AELoss",
-    "MaMLoss",
+    "M3FeConLoss",
     "MIFPNLoss",
     "MSTKDNetLoss",
-    "ReverseLoss",
+    "RFLLoss",
     "RobustSegLoss",
     "ShaSpecLoss",
     "SRMNetLoss",

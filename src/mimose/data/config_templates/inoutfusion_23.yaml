@@ -52,7 +52,7 @@ custom_model_kwargs:
 
 custom_loss_kwargs:
   num_classes: null
-  eps: 0.0000001
+  eps: 0.001
 
 custom_trainer_kwargs:
   iter_per_epoch: null

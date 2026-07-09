@@ -2,7 +2,10 @@
 # This mirrors legacy M3AE fine-tuning defaults as closely as possible under
 # the current MiMoSe CLI/config API. Legacy M3AE also has a separate
 # masked-autoencoder pretraining stage and a cross-view consistency loss
-# during fine-tuning; neither is reproduced here (see docs/training.md).
+# during fine-tuning. The pretraining stage IS reproduced here (opt-in via
+# custom_trainer_kwargs.pretrain_fraction below); the cross-view consistency
+# loss and deep supervision are reproduced too, via a second masked view per
+# step (see custom_trainer_kwargs.deep_supervised / consistency_weight).
 #
 # Note: the current CLI still expects command-specific flat YAML files, so this
 # combined file is a reference/source-of-truth file rather than a single file
@@ -52,6 +55,21 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  # Two-stage schedule matching legacy M3AE's separate pretrain.py/train.py:
+  # the first pretrain_fraction of num_epochs reconstructs the (masked) input
+  # and trains `limage` at limage_lr; the rest freezes `limage` and trains
+  # segmentation as usual. Set to 0.0 to disable (single-stage, as before).
+  pretrain_fraction: 0.15
+  limage_lr: 0.005
+  limage_reg_weight: 0.005
+  # Deep supervision + cross-view consistency (legacy M3AE fine-tuning).
+  # Each step forwards a second, independently-masked view of the same
+  # crop; both views are deep-supervised and their coarse out4 logits are
+  # matched by consistency_weight * MSE (legacy weight_kl, feature_level=2).
+  # consistency_weight: 0.0 keeps deep supervision but drops the 2nd view;
+  # deep_supervised: false falls back to plain single-output Dice+CE.
+  deep_supervised: true
+  consistency_weight: 1.0
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -70,13 +88,13 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0046
+lr: 0.0036
 num_epochs: 300
 validation_every: 10
-batch_size: 16
+batch_size: 12
 weight_decay: 0.00001
 num_workers: 8
-fp16: true
+fp16: false
 compile: false
 
 resume: false

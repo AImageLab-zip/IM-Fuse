@@ -24,6 +24,26 @@ def _resolve_config_path(config_path: Path) -> Path:
     )
 
 
+def load_dataset_case_ids(dataset_type: Any, split_path: Path | str | None = None) -> set[str]:
+    """Return the set of case ids (train+val+test) belonging to `dataset_type` in split.json."""
+    import json
+
+    resolved = resolve_split_path(split_path)
+    split_payload = json.loads(resolved.read_text())
+    dataset_key = str(dataset_type).lower()
+    if dataset_key not in split_payload:
+        raise typer.BadParameter(
+            f"Dataset split '{dataset_key}' not found in {resolved}",
+            param_hint="--dataset-type",
+        )
+    dataset_splits = split_payload[dataset_key]
+    return {
+        entry["sub"]
+        for subset in ("train", "val", "test")
+        for entry in dataset_splits.get(subset, [])
+    }
+
+
 def resolve_split_path(split_path: Path | str | None) -> Path:
     if split_path is None:
         return SPLITS_DIR / "split.json"

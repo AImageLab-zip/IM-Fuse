@@ -40,7 +40,7 @@ custom_model_kwargs:
   num_cls: 5
 
 custom_loss_kwargs:
-  eps: 0.00001
+  eps: 0.001
   log_clamp_min: 0.005
 
 custom_trainer_kwargs:

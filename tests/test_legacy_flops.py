@@ -38,7 +38,7 @@ def test_registry_covers_expected_legacy_methods() -> None:
         "MIFPN",
         "MMMViT",
         "MST-KDNet",
-        "MaM",
+        "M3FeCon",
         "RFNet",
         "ReHyDIL",
         "RobustSeg",
@@ -49,7 +49,7 @@ def test_registry_covers_expected_legacy_methods() -> None:
         "UNET-MFI",
         "m3ae",
         "mmFormer",
-        "reverse",
+        "rfl",
     }
     assert expected.issubset(set(method_names()))
 

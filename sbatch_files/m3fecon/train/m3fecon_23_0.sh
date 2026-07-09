@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --job-name=M3FECON23_SEED_0
+#SBATCH --partition=boost_usr_prod
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=100G
+#SBATCH --time=24:00:00
+#SBATCH -e /homes/ocarpentiero/slurm/outerr/m3fecon_23_0.err
+#SBATCH -o /homes/ocarpentiero/slurm/outerr/m3fecon_23_0.out
+#SBATCH --gres=gpu:1
+#SBATCH --account=phd_mimose
+#SBATCH --constraint=gpu_RTXPro6000B_96G
+
+cd /homes/ocarpentiero/MiMoSe
+source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+
+mimose train --config m3fecon_23.yaml --run-suffix seed0 --seed 0 --try-resume

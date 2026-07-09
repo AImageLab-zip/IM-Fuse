@@ -3,16 +3,41 @@ from __future__ import annotations
 from typing import ClassVar
 
 import torch
+import torch.nn.functional as F
 
 from mimose.losses.config import KwargField, positive_int, unit_interval_float
 from mimose.losses.imfuse import dice_loss, softmax_weighted_loss
 
 
+def m3ae_reconstruction_loss(
+    output: torch.Tensor,
+    target: torch.Tensor,
+    limage: torch.Tensor,
+    *,
+    reg_weight: float = 0.005,
+) -> dict[str, torch.Tensor]:
+    """Legacy M3AE pretraining objective: MSE reconstruction of the original,
+    unmasked input plus a smoothness regularizer on the learned placeholder
+    (``limage``) that keeps it from degenerating into per-voxel noise.
+
+    Matches ``legacy/m3ae/pretrain.py``'s ``loss_ + loss2 * .005``, where
+    ``loss_`` is the MSE term and ``loss2`` is
+    ``torch.norm(limage - limage.mean((2,3,4), keepdim=True), 2)``.
+    """
+    recon = F.mse_loss(output, target)
+    smoothness = torch.norm(limage - limage.mean(dim=(2, 3, 4), keepdim=True), p=2)
+    return {"loss": recon + reg_weight * smoothness, "recon": recon, "smoothness": smoothness}
+
+
 class M3AELoss:
-    """Loss wrapper matching legacy M3AE's fine-tuning objective (``EDiceLoss``):
-    a plain softmax cross-entropy + Dice segmentation loss, with no auxiliary
-    terms. (Legacy also adds a cross-view consistency MSE term during
-    fine-tuning; this port doesn't reproduce it, see ``models/m3ae.py``.)
+    """Loss wrapper for legacy M3AE's fine-tuning objective: softmax
+    cross-entropy + Dice. ``training_loss`` is the single-output form;
+    ``deep_supervised_training_loss`` sums it over the deep-supervision heads.
+    The cross-view consistency MSE term is added by ``M3AETrainer`` (which owns
+    the two-view forward passes), not here.
+
+    Used for the fine-tuning stage only; the pretraining stage uses
+    ``m3ae_reconstruction_loss`` instead (see ``M3AETrainer``).
     """
 
     KWARG_SPEC: ClassVar[dict[str, KwargField]] = {
@@ -47,5 +72,19 @@ class M3AELoss:
         dice = self.dice_loss(output, target)
         return {"loss": cross + dice, "cross": cross, "dice": dice}
 
+    def deep_supervised_training_loss(
+        self, seg_outputs: list[torch.Tensor], target: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Legacy M3AE deep-supervised objective: the softmax cross-entropy +
+        Dice segmentation loss summed (unweighted) over every deep-supervision
+        head -- matches ``for l in segs_S1: loss_ += criterion(l, labels)`` in
+        ``legacy/m3ae/train.py:304-305``."""
+        cross = target.new_tensor(0.0)
+        dice = target.new_tensor(0.0)
+        for output in seg_outputs:
+            cross = cross + self.softmax_weighted_loss(output, target)
+            dice = dice + self.dice_loss(output, target)
+        return {"loss": cross + dice, "cross": cross, "dice": dice}
 
-__all__ = ["M3AELoss"]
+
+__all__ = ["M3AELoss", "m3ae_reconstruction_loss"]

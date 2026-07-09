@@ -14,7 +14,7 @@
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
-
+echo "testing!"
 mimose test --config tinymimosa_18.yaml --run-suffix seed0 --fp16 > /homes/ocarpentiero/slurm/outerr/tinymimosa_18_test_seed0.log 2>&1 &
 mimose test --config tinymimosa_18.yaml --run-suffix seed42 --fp16 > /homes/ocarpentiero/slurm/outerr/tinymimosa_18_test_seed42.log 2>&1 &
 mimose test --config tinymimosa_18.yaml --run-suffix seed69 --fp16 > /homes/ocarpentiero/slurm/outerr/tinymimosa_18_test_seed69.log 2>&1 &

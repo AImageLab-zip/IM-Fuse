@@ -359,9 +359,22 @@ class DCSegTrainer(BaseTrainer):
                 loss = loss + (self.regularization_alpha * recon_loss * 4)
             loss = loss + (self.regularization_alpha * kl_loss)
 
-        with torch.no_grad():
-            anatomical_contrastive_loss = self.anatomy_contrastive_loss(contents.detach())
-            modality_contrastive_loss = self.modality_contrastive_loss(styles.detach())
+            # Anatomical / modality contrastive terms. Legacy DC-Seg
+            # (train.py:279-283) adds each as `regularization_alpha * loss * 4`
+            # -- the same alpha and *4 factor as the reconstruction term -- when
+            # its flag is set (job_brats.sh passes both). When a flag is off we
+            # still compute the value for logging, but on a detached input so
+            # that branch's encoder graph isn't retained or backpropagated.
+            anatomical_contrastive_loss = self.anatomy_contrastive_loss(
+                contents if self.use_ana_contrastive else contents.detach()
+            )
+            modality_contrastive_loss = self.modality_contrastive_loss(
+                styles if self.use_mod_contrastive else styles.detach()
+            )
+            if self.use_ana_contrastive:
+                loss = loss + (self.regularization_alpha * anatomical_contrastive_loss * 4)
+            if self.use_mod_contrastive:
+                loss = loss + (self.regularization_alpha * modality_contrastive_loss * 4)
 
         self._backward_step(loss)
         return {

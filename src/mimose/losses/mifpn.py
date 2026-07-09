@@ -28,7 +28,7 @@ def prompt_consistency_kl_loss(
     loss = mi_prompt.new_tensor(0.0)
     for modality_prompt in (flair_prompt, t1ce_prompt, t1_prompt, t2_prompt):
         modality_softmax = F.softmax(modality_prompt, dim=1) + eps
-        loss = loss + F.kl_div(mi_log_softmax, modality_softmax, reduction="mean")
+        loss = loss + F.kl_div(mi_log_softmax, modality_softmax, reduction="batchmean")
     return loss
 
 

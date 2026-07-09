@@ -30,10 +30,18 @@ class BasicBlock(nn.Module):
 
 
 class UNet3D(nn.Module):
-    """Standard 3D U-Net with additive (not concatenated) skip connections,
-    matching legacy M3AE's ``UNet3D_g``."""
+    """Standard 3D U-Net trunk with additive (not concatenated) skip
+    connections, matching legacy M3AE's ``UNet3D_g``.
 
-    def __init__(self, in_channels: int, out_channels: int, channels: int = init_channels) -> None:
+    Returns the three decoder feature volumes ``(u2, u3, u4)`` (with
+    ``channels``, ``channels*2`` and ``channels*4`` output channels
+    respectively) rather than a specific task head, since ``M3AE`` attaches
+    multiple heads (segmentation, deep-supervision, reconstruction) to the same
+    trunk for its two-stage training. ``u2`` is the full-resolution trunk
+    output; ``u3``/``u4`` feed the deep-supervision heads.
+    """
+
+    def __init__(self, in_channels: int, channels: int = init_channels) -> None:
         super().__init__()
         self.conv1a = nn.Conv3d(in_channels, channels, kernel_size=3, padding=1)
         self.conv1b = BasicBlock(channels, channels)
@@ -64,9 +72,6 @@ class UNet3D(nn.Module):
         self.up2 = nn.Upsample(scale_factor=2)
         self.up2block = BasicBlock(channels, channels)
 
-        self.seg_layer = nn.Conv3d(channels, out_channels, kernel_size=1)
-        self.softmax = nn.Softmax(dim=1)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         c1 = self.conv1b(self.conv1a(x))
         c1d = self.down1(c1)
@@ -84,7 +89,7 @@ class UNet3D(nn.Module):
         u3 = self.up3block(self.up3(self.up3conv(u4)) + c2)
         u2 = self.up2block(self.up2(self.up2conv(u3)) + c1)
 
-        return self.softmax(self.seg_layer(u2))
+        return u2, u3, u4
 
 
 class M3AE(AbstractModel):
@@ -99,14 +104,24 @@ class M3AE(AbstractModel):
     encoders).
 
     Legacy M3AE is a two-stage pipeline: a masked-autoencoder-style
-    pretraining stage (random patch + modality masking, reconstructing a
-    "latent image" placeholder) followed by supervised fine-tuning that adds
-    a cross-view consistency loss (MSE between encoder features from 2-3
-    independently-resampled missing-modality views of the same crop). Neither
-    fits MiMoSe's one-mask-per-sample trainer contract (masking is decided by
-    the dataset, once per sample), so this port only reproduces the
-    fine-tuned architecture and its segmentation loss, training from scratch
-    like every other model here; see ``docs/training.md`` for details.
+    pretraining stage (reconstructing the original input from a
+    missing-modality view, filled in via the "latent image" placeholder)
+    followed by supervised fine-tuning that adds deep supervision and a
+    cross-view consistency loss (MSE between the coarse ``out4`` head applied
+    to two independently-resampled missing-modality views of the same crop).
+    Both are reproduced here: ``mode="segment_train"`` exposes the
+    deep-supervision heads and the ``out4`` logits, and ``M3AETrainer`` runs a
+    second masked view per step to form the consistency term (see
+    ``custom_trainer_kwargs.deep_supervised`` / ``consistency_weight``). The
+    MAE-style pretraining stage is also reproduced (see ``pretrain_fraction``).
+
+    Modes: ``mode="segment"`` (default, used by ``predict``/inference) returns
+    a single softmax volume. ``mode="segment_train"`` returns
+    ``([uout, out3, out4], out4_logits)`` -- the three softmax
+    (deep-supervision) heads plus the pre-softmax ``out4`` logits used for the
+    cross-view consistency MSE. ``mode="reconstruct"`` is the pretraining
+    path. All modes share the masked-input construction and U-Net trunk,
+    differing only in which head is applied.
     """
 
     def __init__(self, num_cls: int = 4) -> None:
@@ -115,13 +130,26 @@ class M3AE(AbstractModel):
         self.limage = nn.Parameter(
             torch.randn(1, num_modals, input_patch_size, input_patch_size, input_patch_size) * 0.02
         )
-        self.unet = UNet3D(in_channels=num_modals, out_channels=num_cls)
+        self.unet = UNet3D(in_channels=num_modals)
+        self.seg_layer = nn.Conv3d(init_channels, num_cls, kernel_size=1)
+        self.softmax = nn.Softmax(dim=1)
+        self.recon_layer = nn.Conv3d(init_channels, num_modals, kernel_size=1)
+
+        # Deep-supervision heads on the two coarser decoder levels, matching
+        # legacy ``Unet_missing`` (ds_out convs at init_channels*4 / *2 then
+        # trilinear upsampling back to full resolution). ``out4`` (the ×4
+        # head) also supplies the pre-softmax logits compared across views by
+        # the cross-view consistency loss (legacy feature_level=2).
+        self.ds_out4 = nn.Conv3d(init_channels * 4, num_cls, kernel_size=1)
+        self.ds_up4 = nn.Upsample(scale_factor=4, mode="trilinear", align_corners=True)
+        self.ds_out3 = nn.Conv3d(init_channels * 2, num_cls, kernel_size=1)
+        self.ds_up3 = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=True)
 
         for module in self.modules():
             if isinstance(module, nn.Conv3d):
                 nn.init.kaiming_normal_(module.weight)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def _forward_trunk(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         if x.size(1) != num_modals:
             raise RuntimeError(f"M3AE expects {num_modals} input modalities, got {x.size(1)}")
         if mask.ndim != 2 or mask.size(1) != num_modals:
@@ -133,7 +161,40 @@ class M3AE(AbstractModel):
 
         gate = mask.view(-1, num_modals, 1, 1, 1).to(x.dtype)
         x = x * gate + self.limage * (1 - gate)
-        return self.unet(x)
+        return self.unet(x)  # (u2, u3, u4)
+
+    def forward(
+        self, x: torch.Tensor, mask: torch.Tensor, mode: str = "segment"
+    ) -> torch.Tensor | tuple[list[torch.Tensor], torch.Tensor]:
+        """``mode="segment"`` (default) is the fine-tuning/inference path,
+        used by ``predict``. ``mode="reconstruct"`` is the pretraining-stage
+        path. Both go through this single ``forward`` (rather than a
+        separate public method doing the real work) so that trainer code can
+        always call ``self.model(x, mask, mode=...)`` and pick up
+        ``DistributedDataParallel``'s gradient-sync hooks, which only fire on
+        the wrapped model's ``forward`` — calling a distinct method on the
+        DDP-unwrapped module directly would silently skip gradient
+        all-reduce under multi-GPU training.
+        """
+        u2, u3, u4 = self._forward_trunk(x, mask)
+        if mode == "reconstruct":
+            return self.recon_layer(u2)
+        if mode == "segment_train":
+            out4_logits = self.ds_up4(self.ds_out4(u4))
+            out3_logits = self.ds_up3(self.ds_out3(u3))
+            uout = self.softmax(self.seg_layer(u2))
+            seg_outputs = [uout, self.softmax(out3_logits), self.softmax(out4_logits)]
+            return seg_outputs, out4_logits
+        return self.softmax(self.seg_layer(u2))
+
+    def reconstruct(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Non-distributed convenience wrapper around
+        ``forward(x, mask, mode="reconstruct")``, reconstructing the
+        original, unmasked ``x`` from the masked input (matching legacy
+        M3AE's reconstruction objective). Trainer code should call
+        ``self.model(x, mask, mode="reconstruct")`` directly instead, to stay
+        DDP-safe (see ``forward``'s docstring)."""
+        return self(x, mask, mode="reconstruct")
 
     def predict(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         _, _, height, width, depth = images.shape

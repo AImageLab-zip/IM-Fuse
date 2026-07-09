@@ -5,10 +5,10 @@ from mimose.training.trainers.imfuse import IMFuseTrainer
 from mimose.training.trainers.ims2trans import IMS2TransTrainer
 from mimose.training.trainers.lckd import LCKDTrainer
 from mimose.training.trainers.m3ae import M3AETrainer
-from mimose.training.trainers.mam import MaMTrainer
+from mimose.training.trainers.m3fecon import M3FeConTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
 from mimose.training.trainers.mstkdnet import MSTKDTrainer
-from mimose.training.trainers.reverse import ReverseTrainer
+from mimose.training.trainers.rfl import RFLTrainer
 from mimose.training.trainers.robustseg import RobustSegTrainer
 from mimose.training.trainers.shaspec import ShaSpecTrainer
 from mimose.training.trainers.srmnet import SRMNetTrainer
@@ -23,10 +23,10 @@ __all__ = [
     "IMS2TransTrainer",
     "LCKDTrainer",
     "M3AETrainer",
-    "MaMTrainer",
+    "M3FeConTrainer",
     "MIFPNTrainer",
     "MSTKDTrainer",
-    "ReverseTrainer",
+    "RFLTrainer",
     "RobustSegTrainer",
     "ShaSpecTrainer",
     "SRMNetTrainer",

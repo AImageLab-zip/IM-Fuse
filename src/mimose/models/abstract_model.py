@@ -39,7 +39,7 @@ class AbstractModel(nn.Module, PyTorchModelHubMixin, ABC):
         target_dir = Path(save_directory)
         target_dir.mkdir(parents=True, exist_ok=True)
         save_weights_only_checkpoint(
-            self.state_dict(),
+            self,
             target_dir / "final_weights_only.safetensors",
         )
 
@@ -92,8 +92,7 @@ class AbstractModel(nn.Module, PyTorchModelHubMixin, ABC):
             local_files_only=local_files_only,
             token=token,
         )
-        state_dict = load_weights_only_checkpoint(checkpoint_path, device=map_location)
-        model.load_state_dict(state_dict, strict=strict)
+        load_weights_only_checkpoint(model, checkpoint_path, device=map_location, strict=strict)
         return model
 
     @abstractmethod

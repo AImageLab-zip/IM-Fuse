@@ -46,7 +46,7 @@ custom_loss_kwargs:
   fuse_weight: 1.0
   sep_weight: 1.0
   prm_weight: 1.0
-  eps: 0.0000001
+  eps: 0.001
   log_clamp_min: 0.005
 
 custom_trainer_kwargs:

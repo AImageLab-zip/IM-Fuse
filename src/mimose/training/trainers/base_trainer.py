@@ -43,6 +43,15 @@ from mimose.training.transforms.base_transforms import TransformManager
 LOGGER = logging.getLogger(__name__)
 CONSOLE = Console()
 
+# Fixed BraTS-GLI acquisition grid (verified against the raw unpacked NIfTI
+# volumes -> (182, 218, 182)). The HD95 empty-vs-nonempty fallback penalty must
+# be the diagonal of this full, uncropped volume -- not of whatever region
+# happens to be loaded, which varies per subject/patch after preprocessing and
+# would make the penalty (and therefore average HD95) inconsistent. Mirrors
+# mimose.testing.pipeline.BRATS_HD95_PENALTY.
+BRATS_FULL_VOLUME_SHAPE = (182, 218, 182)
+BRATS_HD95_PENALTY = float(np.sqrt(sum(dim**2 for dim in BRATS_FULL_VOLUME_SHAPE)))
+
 
 class BaseTrainer(AbstractTrainer):
     def __init__(
@@ -267,7 +276,7 @@ class BaseTrainer(AbstractTrainer):
             return self.checkpoint_dir / "final_weights_only.safetensors"
 
         final_path = self.checkpoint_dir / "final_weights_only.safetensors"
-        return save_weights_only_checkpoint(model.state_dict(), final_path)
+        return save_weights_only_checkpoint(model, final_path)
 
     def _build_model(self) -> torch.nn.Module:
         if self.model_config is None:
@@ -700,8 +709,7 @@ class BaseTrainer(AbstractTrainer):
                 f"checkpoint not found at {resolved_checkpoint}"
             )
 
-        state_dict = load_weights_only_checkpoint(resolved_checkpoint, device=self.device)
-        model.load_state_dict(state_dict)
+        load_weights_only_checkpoint(model, resolved_checkpoint, device=self.device)
         export_dir = self._export_hf_artifacts(resolved_checkpoint)
         self._upload_hf_artifacts(export_dir)
         return export_dir
@@ -784,6 +792,7 @@ class BaseTrainer(AbstractTrainer):
         table.add_row("Batch", f"per-rank {per_rank_batch}  [dim]global {global_batch}[/dim]")
         table.add_row("Workers", str(self.num_workers))
         table.add_row("Resume", resume_text)
+        table.add_row("Seed", str(self.seed) if self.seed is not None else "none")
         table.add_row("W&B", wandb_text)
         table.add_row("Run Name", self.wandb_run_name)
         if self.push_to_hf:
@@ -912,15 +921,16 @@ class BaseTrainer(AbstractTrainer):
         if self.pretrain is None:
             raise RuntimeError("pretrain path must be set before loading pretrained weights")
 
-        if self.pretrain.suffix == ".safetensors":
-            state_dict = load_weights_only_checkpoint(self.pretrain, device=self.device)
-        else:
-            checkpoint = torch.load(self.pretrain, map_location=self.device)
-            state_dict = checkpoint.get("state_dict", checkpoint)
         model = self._model_for_state()
         if model is None:
             raise RuntimeError("model must be initialized before loading pretrained weights")
-        model.load_state_dict(state_dict, strict=False)
+
+        if self.pretrain.suffix == ".safetensors":
+            load_weights_only_checkpoint(model, self.pretrain, device=self.device, strict=False)
+        else:
+            checkpoint = torch.load(self.pretrain, map_location=self.device)
+            state_dict = checkpoint.get("state_dict", checkpoint)
+            model.load_state_dict(state_dict, strict=False)
 
     def _next_train_batch(self) -> dict[str, Any]:
         if self._train_iterator is None:
@@ -1003,7 +1013,7 @@ class BaseTrainer(AbstractTrainer):
         output_np = output.detach().cpu().numpy()
         target_np = target.detach().cpu().numpy()
         batch_size = output_np.shape[0]
-        penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+        penalty = BRATS_HD95_PENALTY
 
         results = np.zeros((batch_size, 4), dtype=np.float64)
         for index in range(batch_size):

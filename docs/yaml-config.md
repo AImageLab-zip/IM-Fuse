@@ -69,12 +69,12 @@ The easiest workflow is:
   - `robustseg`
   - `shaspec`
   - `m3ae`
-  - `mam`
+  - `m3fecon`
   - `srmnet`
   - `ims2trans`
   - `mstkdnet`
   - `mifpn`
-  - `reverse`
+  - `rfl`
   - `lckd`
 - `model`: string enum
   - `imfuse`
@@ -88,13 +88,13 @@ The easiest workflow is:
   - `sfusion`
   - `shaspec`
   - `m3ae`
-  - `mam`
+  - `m3fecon`
   - `srmnet`
   - `mmmvit`
   - `ims2trans`
   - `mstkdnet`
   - `mifpn`
-  - `reverse`
+  - `rfl`
   - `unetmfi`
   - `lckd`
   - `inoutfusion`
@@ -106,12 +106,12 @@ The easiest workflow is:
   - `robustseg`
   - `shaspec`
   - `m3ae`
-  - `mam`
+  - `m3fecon`
   - `srmnet`
   - `ims2trans`
   - `mstkdnet`
   - `mifpn`
-  - `reverse`
+  - `rfl`
   - `lckd`
   - `inoutfusion`
 - `optimizer`: string enum
@@ -181,13 +181,13 @@ The easiest workflow is:
   - `sfusion`
   - `shaspec`
   - `m3ae`
-  - `mam`
+  - `m3fecon`
   - `srmnet`
   - `mmmvit`
   - `ims2trans`
   - `mstkdnet`
   - `mifpn`
-  - `reverse`
+  - `rfl`
   - `unetmfi`
   - `lckd`
   - `inoutfusion`
@@ -461,8 +461,8 @@ Recommended examples:
 - `src/mimose/data/configs/shaspec_23.yaml`
 - `src/mimose/data/configs/m3ae_18.yaml`
 - `src/mimose/data/configs/m3ae_23.yaml`
-- `src/mimose/data/configs/mam_18.yaml`
-- `src/mimose/data/configs/mam_23.yaml`
+- `src/mimose/data/configs/m3fecon_18.yaml`
+- `src/mimose/data/configs/m3fecon_23.yaml`
 - `src/mimose/data/configs/srmnet_18.yaml`
 - `src/mimose/data/configs/srmnet_23.yaml`
 - `src/mimose/data/configs/mmmvit_18.yaml`
@@ -473,8 +473,8 @@ Recommended examples:
 - `src/mimose/data/configs/mstkdnet_23.yaml`
 - `src/mimose/data/configs/mifpn_18.yaml`
 - `src/mimose/data/configs/mifpn_23.yaml`
-- `src/mimose/data/configs/reverse_18.yaml`
-- `src/mimose/data/configs/reverse_23.yaml`
+- `src/mimose/data/configs/rfl_18.yaml`
+- `src/mimose/data/configs/rfl_23.yaml`
 - `src/mimose/data/configs/unetmfi_18.yaml`
 - `src/mimose/data/configs/unetmfi_23.yaml`
 - `src/mimose/data/configs/lckd_18.yaml`

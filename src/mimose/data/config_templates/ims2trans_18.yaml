@@ -52,7 +52,7 @@ custom_loss_kwargs:
   prm_weight: 1.0
   dis_weight: 0.1
   dis_temperature: 0.5
-  eps: 0.0000001
+  eps: 0.001
   log_clamp_min: 0.005
 
 custom_trainer_kwargs:

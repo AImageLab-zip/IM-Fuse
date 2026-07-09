@@ -60,7 +60,7 @@ custom_model_kwargs:
 custom_loss_kwargs:
   num_classes: null
   kd_weight: 0.1
-  eps: 0.0000001
+  eps: 0.001
   log_clamp_min: 0.005
 
 custom_trainer_kwargs:
@@ -93,10 +93,10 @@ plateau_patience: null
 lr: 0.01
 num_epochs: 980
 validation_every: 10
-batch_size: 12
+batch_size: 6
 weight_decay: 0.0005
 num_workers: 8
-fp16: true
+fp16: false
 compile: false
 resume: false
 pretrain: null

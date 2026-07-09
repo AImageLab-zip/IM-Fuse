@@ -45,6 +45,15 @@ MASKS: list[list[bool]] = [
 ]
 MODALITY_NAMES = ("t1c", "t1n", "t2f", "t2w")
 
+# Fixed BraTS-GLI acquisition grid (verified against the raw unpacked NIfTI
+# volumes, e.g. /work/phd_mimose/unpacked/BraTS-GLI-*/*.nii.gz -> (182, 218, 182)).
+# The HD95 empty-vs-nonempty fallback penalty must be the diagonal of this full,
+# uncropped volume -- not of whatever region happens to be loaded, which varies
+# per subject after non_empty-bbox preprocessing and would make the penalty
+# (and therefore average HD95) inconsistent across subjects/models.
+BRATS_FULL_VOLUME_SHAPE = (182, 218, 182)
+BRATS_HD95_PENALTY = float(np.sqrt(sum(dim**2 for dim in BRATS_FULL_VOLUME_SHAPE)))
+
 
 class AverageMeter:
     def __init__(self) -> None:
@@ -198,7 +207,7 @@ def softmax_output_hd95_class4(
     output_np = output.cpu().numpy()
     target_np = target.cpu().numpy()
     batch_size = output_np.shape[0]
-    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+    penalty = BRATS_HD95_PENALTY
 
     results = np.zeros((batch_size, 4), dtype=np.float64)
     for index in range(batch_size):
@@ -231,7 +240,7 @@ def softmax_output_hd95_separate_class4(
     output_np = output.cpu().numpy()
     target_np = target.cpu().numpy()
     batch_size = output_np.shape[0]
-    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+    penalty = BRATS_HD95_PENALTY
 
     results = np.zeros((batch_size, 3), dtype=np.float64)
     for index in range(batch_size):
@@ -253,7 +262,7 @@ def softmax_output_hd95_separate_class5(
     output_np = output.cpu().numpy()
     target_np = target.cpu().numpy()
     batch_size = output_np.shape[0]
-    penalty = float(np.sqrt(sum(dim**2 for dim in output_np.shape[1:])))
+    penalty = BRATS_HD95_PENALTY
 
     rc_results = np.zeros((batch_size, 1), dtype=np.float64)
     for index in range(batch_size):
@@ -308,8 +317,7 @@ def run_testing(
         if not isinstance(model, AbstractModel):
             raise RuntimeError(f"{model_class.__name__} must inherit from AbstractModel")
         model = model.to(device)
-        state_dict = load_weights_only_checkpoint(checkpoint_path, device=device)
-        model.load_state_dict(state_dict)
+        load_weights_only_checkpoint(model, checkpoint_path, device=device)
         model.eval()
         if hasattr(model, "is_training"):
             model.is_training = False

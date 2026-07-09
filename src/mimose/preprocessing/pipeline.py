@@ -24,7 +24,9 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 # Internal modules
+from mimose.enums import DatasetType
 from mimose.preprocessing.config import CropConfig, ClampConfig, NormConfig
+from mimose.utils.cli_overrides import load_dataset_case_ids
 
 CONSOLE = Console()
 
@@ -61,7 +63,8 @@ def run_preprocessing(
     crop_config: CropConfig,
     clamp_config: ClampConfig,
     norm_config: NormConfig,
-    yes: bool
+    yes: bool,
+    dataset_type: DatasetType | None = None,
 ) -> None:
     """Run the preprocessing pipeline with the selected crop configuration."""
     if output_dir.exists():
@@ -111,18 +114,23 @@ def run_preprocessing(
     output_dir.mkdir(parents=True)
 
     # Getting the file list:
+    allowed_case_ids = load_dataset_case_ids(dataset_type) if dataset_type is not None else None
+
     input_files = []
     try:
         for sub in input_dir.iterdir():
-            if sub.is_dir():
-                input_files.append({
-                    'name':sub.name,
-                    't1c':sub/f'{sub.name}-t1c.nii.gz',
-                    't1n':sub/f'{sub.name}-t1n.nii.gz',
-                    't2f':sub/f'{sub.name}-t2f.nii.gz',
-                    't2w':sub/f'{sub.name}-t2w.nii.gz',
-                    'seg':sub/f'{sub.name}-seg.nii.gz'
-                })
+            if not sub.is_dir():
+                continue
+            if allowed_case_ids is not None and sub.name not in allowed_case_ids:
+                continue
+            input_files.append({
+                'name':sub.name,
+                't1c':sub/f'{sub.name}-t1c.nii.gz',
+                't1n':sub/f'{sub.name}-t1n.nii.gz',
+                't2f':sub/f'{sub.name}-t2f.nii.gz',
+                't2w':sub/f'{sub.name}-t2w.nii.gz',
+                'seg':sub/f'{sub.name}-seg.nii.gz'
+            })
 
 
         num_workers = len(os.sched_getaffinity(0))
@@ -154,6 +162,8 @@ def run_preprocessing(
         table.add_column(style="bold cyan", no_wrap=True)
         table.add_column(style="white")
         table.add_row("Cases", str(len(input_files)))
+        if dataset_type is not None:
+            table.add_row("Dataset type filter", str(dataset_type))
         table.add_row("Output", str(output_dir))
         CONSOLE.print(
             Panel(

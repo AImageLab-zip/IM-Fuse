@@ -24,8 +24,8 @@ The active training stack currently includes:
   - `shaspec`
 - `M3AETrainer` for:
   - `m3ae`
-- `MaMTrainer` for:
-  - `mam`
+- `M3FeConTrainer` for:
+  - `m3fecon`
 - `SRMNetTrainer` for:
   - `srmnet`
 - `IMS2TransTrainer` for:
@@ -34,8 +34,8 @@ The active training stack currently includes:
   - `mstkdnet`
 - `MIFPNTrainer` for:
   - `mifpn`
-- `ReverseTrainer` for:
-  - `reverse`
+- `RFLTrainer` for:
+  - `rfl`
 - `LCKDTrainer` for:
   - `lckd`
 
@@ -100,8 +100,8 @@ The repo currently ships these reference training configs:
 - `src/mimose/data/configs/shaspec_23.yaml`
 - `src/mimose/data/configs/m3ae_18.yaml`
 - `src/mimose/data/configs/m3ae_23.yaml`
-- `src/mimose/data/configs/mam_18.yaml`
-- `src/mimose/data/configs/mam_23.yaml`
+- `src/mimose/data/configs/m3fecon_18.yaml`
+- `src/mimose/data/configs/m3fecon_23.yaml`
 - `src/mimose/data/configs/srmnet_18.yaml`
 - `src/mimose/data/configs/srmnet_23.yaml`
 - `src/mimose/data/configs/mmmvit_18.yaml`
@@ -112,8 +112,8 @@ The repo currently ships these reference training configs:
 - `src/mimose/data/configs/mstkdnet_23.yaml`
 - `src/mimose/data/configs/mifpn_18.yaml`
 - `src/mimose/data/configs/mifpn_23.yaml`
-- `src/mimose/data/configs/reverse_18.yaml`
-- `src/mimose/data/configs/reverse_23.yaml`
+- `src/mimose/data/configs/rfl_18.yaml`
+- `src/mimose/data/configs/rfl_23.yaml`
 - `src/mimose/data/configs/unetmfi_18.yaml`
 - `src/mimose/data/configs/unetmfi_23.yaml`
 - `src/mimose/data/configs/lckd_18.yaml`
@@ -164,12 +164,12 @@ Trainer values:
 - `robustseg`
 - `shaspec`
 - `m3ae`
-- `mam`
+- `m3fecon`
 - `srmnet`
 - `ims2trans`
 - `mstkdnet`
 - `mifpn`
-- `reverse`
+- `rfl`
 - `lckd`
 
 Model values:
@@ -185,13 +185,13 @@ Model values:
 - `sfusion`
 - `shaspec`
 - `m3ae`
-- `mam`
+- `m3fecon`
 - `srmnet`
 - `mmmvit`
 - `ims2trans`
 - `mstkdnet`
 - `mifpn`
-- `reverse`
+- `rfl`
 - `unetmfi`
 - `lckd`
 - `inoutfusion`
@@ -205,12 +205,12 @@ Loss values:
 - `robustseg`
 - `shaspec`
 - `m3ae`
-- `mam`
+- `m3fecon`
 - `srmnet`
 - `ims2trans`
 - `mstkdnet`
 - `mifpn`
-- `reverse`
+- `rfl`
 - `lckd`
 - `inoutfusion`
 
@@ -468,26 +468,46 @@ handled: instead of zero-filling (every other model here), missing modality
 channels are replaced with a single **learned** per-voxel embedding
 (`self.limage`), fixed at the training patch size.
 
-Legacy M3AE is actually a two-stage pipeline this port does not fully
-reproduce:
+Legacy M3AE is actually a two-stage pipeline (`pretrain.py` then `train.py`,
+run as separate scripts producing separate checkpoints). `M3AETrainer`
+reproduces this as a single, resume-safe, epoch-driven schedule within one
+run rather than two scripts/checkpoints — see `custom_trainer_kwargs` below.
+One piece is still not reproduced:
 
-1. A separate masked-autoencoder pretraining stage (`pretrain.py`, not
-   `train.py`) that randomly masks both patches and whole modalities and
-   reconstructs them against a learned placeholder image, producing a
-   checkpoint that fine-tuning loads as initialization. MiMoSe's `mimose
-   train` always trains from scratch, like for every other model, so this
-   stage is skipped — the model still learns the same missing-modality
-   embedding end-to-end during segmentation training, just without the
-   dedicated reconstruction pretext task.
-2. During fine-tuning, legacy re-samples each training crop 2-3 times with
-   *independently random* missing-modality patterns and adds an MSE
-   consistency loss between their encoder features — this assumes multiple
-   forward passes per sample per step, which doesn't fit MiMoSe's
-   one-mask-per-sample contract (the dataset decides the mask once per
-   sample, matching every other trainer here). This port drops that
-   consistency term and trains with a plain softmax cross-entropy + Dice
-   segmentation loss (`M3AELoss`, reusing `losses/imfuse.py`'s functions),
-   like the simplest models in this framework.
+- Legacy fine-tuning re-samples each training crop 2-3 times with
+  *independently random* missing-modality patterns and adds an MSE
+  consistency loss between their encoder features — this assumes multiple
+  forward passes per sample per step, which doesn't fit MiMoSe's
+  one-mask-per-sample contract (the dataset decides the mask once per
+  sample, matching every other trainer here). This port drops that
+  consistency term; fine-tuning trains with a plain softmax cross-entropy +
+  Dice segmentation loss (`M3AELoss`, reusing `losses/imfuse.py`'s
+  functions), like the simplest models in this framework.
+
+What *is* reproduced, gated behind `custom_trainer_kwargs.pretrain_fraction`
+(default `0.0`, i.e. disabled — single-stage, from-scratch training as
+before):
+
+- For the first `pretrain_fraction * num_epochs` epochs, the trainer runs a
+  reconstruction stage: `M3AE.forward(x, mask, mode="reconstruct")`
+  reconstructs the original, unmasked input from the (dataset-)masked one,
+  trained with MSE plus a smoothness regularizer on `limage`
+  (`m3ae_reconstruction_loss` in `losses/m3ae.py`, matching legacy's
+  `loss_ + loss2 * .005`). `limage` gets its own optimizer param group at
+  `limage_lr` (default `0.005`, matching legacy) while the rest of the
+  network trains at the usual `lr`.
+- For the remaining epochs, `limage` is frozen (`requires_grad_(False)`,
+  reproducing legacy's fine-tuning optimizer excluding it entirely) and
+  training switches to the normal segmentation loss/validation (dice, HD95).
+  The LR scheduler restarts a fresh anneal at this boundary (matching
+  legacy's two independent per-stage `CosineAnnealingLR` schedules, rather
+  than one continuous decay across both stages).
+- Legacy's `limage` is full-BraTS-volume sized with location-indexed spatial
+  patch masking; MiMoSe's `limage` is fixed at the training patch size (a
+  pre-existing port decision, see below), so there is no spatial location to
+  index — the pretraining stage reuses the same per-sample, per-modality
+  masking (`train_masking_mode`/`val_masking_mode`) as fine-tuning, rather
+  than a separate spatial-masking scheme.
 
 Legacy M3AE also used a 3-channel sigmoid/Dice BraTS-region output; like
 ShaSpec, this port instead uses a standard softmax `num_cls`-channel head for
@@ -496,9 +516,9 @@ compatibility with the shared testing pipeline. M3AE trains at
 (matching legacy's `CosineAnnealingLR`), unlike every poly-scheduled model
 elsewhere in this file.
 
-### MaM-specific notes
+### M3FeCon-specific notes
 
-MaM ("Missing as Masking", `trainer: mam`, `model: mam`, `loss: mam`) is
+M3FeCon ("Missing as Masking", `trainer: m3fecon`, `model: m3fecon`, `loss: m3fecon`) is
 built on top of a heavily customized nnU-Net fork rather than a standalone
 model repo. Each modality gets its own plain nnU-Net-style conv encoder (6
 stages, matching legacy's `3d_fullres` plan at `base_num_features: 32` capped
@@ -521,7 +541,7 @@ Legacy's own `train_step`/`validation_step` picked one shared
 missing-modality pattern for the whole batch (`random.choice` over the same
 15 combinations used by DCSeg/RFNet/RobustSeg/ShaSpec); this port instead
 respects MiMoSe's per-sample `[B, 4]` masks, so the reconstruction loss is
-averaged only over each sample's own missing channels. MaM trains at
+averaged only over each sample's own missing channels. M3FeCon trains at
 `patch_size: 128` (matching legacy's `3d_fullres` plan) with
 `optimizer: sgd`, `momentum: 0.99`, `nesterov: true`, and a `poly` LR
 schedule, matching nnU-Net's (unmodified) default trainer hyperparameters.
@@ -726,10 +746,10 @@ schedule. As with M2FTrans, legacy's `AdamW(..., amsgrad=True)` is not
 exactly matched — MiMoSe's `adamw` does not auto-enable `amsgrad` (only
 `adam` does).
 
-### Reverse-specific notes
+### RFL-specific notes
 
-Reverse (`trainer: reverse`, `model: reverse`, `loss: reverse`) needed its
-own new trainer/loss because legacy adds two RFIM ("Reverse Feature
+RFL (`trainer: rfl`, `model: rfl`, `loss: rfl`) needed its
+own new trainer/loss because legacy adds two RFIM ("RFL Feature
 Interaction Module") self-consistency MSE terms on top of the usual
 fuse + 4×sep + 4×prm cross+dice terms (same `region_fusion_start_epoch`
 fuse-loss warmup mechanism as the IMFuse family, default `0`, i.e. no
@@ -744,7 +764,7 @@ The paper's namesake mechanism, `RFIM`, imputes a missing modality's
 bottleneck tokens from the most reliably present modality (t1ce, or the
 first present modality otherwise — the "global modality") via a reversible,
 coupling-style MLP; the same module's algebraic inverse is trained (via
-`reverse_weight`) to approximately reconstruct the global modality's real
+`rfl_weight`) to approximately reconstruct the global modality's real
 tokens from the imputed ones, while a separate `forward_weight` MSE term
 supervises the forward imputation itself against each modality's own real
 (always-available-at-train-time) tokens.
@@ -769,7 +789,7 @@ SRMNet/MMMViT/IMS2Trans/MIFPN in its `fusion_prenorm` fusion blocks, fixed
 here the same way (`FusionPrenorm` always uses `num_modals=4`). A fair
 amount of dead legacy code (unused `prm_generator`/`region_aware_modal_fusion`
 layers, unused decode-conv modules, several unused loss variants) is simply
-not ported. Reverse trains at `patch_size: 128` with `optimizer: adam`
+not ported. RFL trains at `patch_size: 128` with `optimizer: adam`
 (`amsgrad=True` matched via MiMoSe's `adam`), `lr: 0.0002`, `batch_size: 1`,
 and a `poly` LR schedule.
 
@@ -1037,7 +1057,7 @@ custom_model_kwargs:
   num_cls: 4
 ```
 
-For `mam`:
+For `m3fecon`:
 
 ```yaml
 custom_model_kwargs:
@@ -1079,7 +1099,7 @@ custom_model_kwargs:
   num_cls: 4
 ```
 
-For `reverse`:
+For `rfl`:
 
 ```yaml
 custom_model_kwargs:
