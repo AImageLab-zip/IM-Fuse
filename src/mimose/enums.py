@@ -42,6 +42,8 @@ class TrainerKind(StrEnum):
     MIFPN = "mifpn"
     RFL = "rfl"
     LCKD = "lckd"
+    MANYMIMOSAS = "manymimosas"
+    MCPL = "mcpl"
 
 
 class ModelKind(StrEnum):
@@ -49,7 +51,9 @@ class ModelKind(StrEnum):
     MMFORMER = "mmformer"
     DCSEG = "dcseg"
     RFNET = "rfnet"
+    A2FSEG = "a2fseg"
     TINYMIMOSA = "tinymimosa"
+    MANYMIMOSAS = "manymimosas"
     UHVED = "uhved"
     ROBUSTSEG = "robustseg"
     M2FTRANS = "m2ftrans"
@@ -66,6 +70,8 @@ class ModelKind(StrEnum):
     UNETMFI = "unetmfi"
     LCKD = "lckd"
     INOUTFUSION = "inoutfusion"
+    MAMBAVITAKD = "mambavitakd"
+    MCPL = "mcpl"
 
 
 class TransformKind(StrEnum):
@@ -104,6 +110,8 @@ class LossKind(StrEnum):
     RFL = "rfl"
     LCKD = "lckd"
     INOUTFUSION = "inoutfusion"
+    MAMBAVITAKD = "mambavitakd"
+    MCPL = "mcpl"
 
 
 class MaskingMode(StrEnum):

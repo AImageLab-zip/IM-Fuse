@@ -6,6 +6,8 @@ from mimose.training.trainers.ims2trans import IMS2TransTrainer
 from mimose.training.trainers.lckd import LCKDTrainer
 from mimose.training.trainers.m3ae import M3AETrainer
 from mimose.training.trainers.m3fecon import M3FeConTrainer
+from mimose.training.trainers.many_mimosas import ManyMimosasTrainer
+from mimose.training.trainers.mcpl import MCPLTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
 from mimose.training.trainers.mstkdnet import MSTKDTrainer
 from mimose.training.trainers.rfl import RFLTrainer
@@ -24,6 +26,8 @@ __all__ = [
     "LCKDTrainer",
     "M3AETrainer",
     "M3FeConTrainer",
+    "ManyMimosasTrainer",
+    "MCPLTrainer",
     "MIFPNTrainer",
     "MSTKDTrainer",
     "RFLTrainer",

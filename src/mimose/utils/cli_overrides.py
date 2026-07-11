@@ -8,6 +8,36 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 CONFIGS_DIR = DATA_DIR / "configs"
 SPLITS_DIR = DATA_DIR / "splits"
 
+# Combined cross-validation split file (fold index at the top level). Used as the
+# default split source whenever a --fold is requested. See onetime_scripts/make_kfold_splits.py.
+KFOLD_SPLIT_FILENAME = "splits_5fold.json"
+
+
+def is_fold_nested(split_payload: dict) -> bool:
+    """True when the payload's top-level keys are fold indices (e.g. splits_5fold.json)
+    rather than dataset names (e.g. split.json)."""
+    keys = list(split_payload.keys())
+    return bool(keys) and all(str(k).isdigit() for k in keys)
+
+
+def select_fold(split_payload: dict, fold: int | None, *, source: Any = "split file") -> dict:
+    """Return the flat ``{dataset: {train,val,test}}`` mapping, indexing a fold first when
+    the payload is fold-nested. Flat (single-split) payloads are returned unchanged."""
+    if not is_fold_nested(split_payload):
+        return split_payload
+    if fold is None:
+        raise typer.BadParameter(
+            f"{source} is fold-nested (folds {sorted(split_payload)}); pass --fold",
+            param_hint="--fold",
+        )
+    key = str(fold)
+    if key not in split_payload:
+        raise typer.BadParameter(
+            f"fold {fold} not found in {source}; available folds: {sorted(split_payload)}",
+            param_hint="--fold",
+        )
+    return split_payload[key]
+
 
 def _resolve_config_path(config_path: Path) -> Path:
     if config_path.is_absolute() or config_path.exists():
@@ -24,12 +54,16 @@ def _resolve_config_path(config_path: Path) -> Path:
     )
 
 
-def load_dataset_case_ids(dataset_type: Any, split_path: Path | str | None = None) -> set[str]:
-    """Return the set of case ids (train+val+test) belonging to `dataset_type` in split.json."""
+def load_dataset_case_ids(
+    dataset_type: Any, split_path: Path | str | None = None, fold: int | None = None
+) -> set[str]:
+    """Return the set of case ids (train+val+test) belonging to `dataset_type` in the split file.
+
+    When the split file is fold-nested (splits_5fold.json), `fold` selects which fold to read."""
     import json
 
     resolved = resolve_split_path(split_path)
-    split_payload = json.loads(resolved.read_text())
+    split_payload = select_fold(json.loads(resolved.read_text()), fold, source=resolved)
     dataset_key = str(dataset_type).lower()
     if dataset_key not in split_payload:
         raise typer.BadParameter(

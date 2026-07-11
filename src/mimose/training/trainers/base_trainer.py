@@ -364,15 +364,20 @@ class BaseTrainer(AbstractTrainer):
         return self.scheduler
 
     def _load_dataset_splits(self) -> None:
+        from mimose.utils.cli_overrides import select_fold
+
         dataset_type = self.dataset_type
         split_file = self.custom_trainer_kwargs.get("split_file")
+        fold = self.custom_trainer_kwargs.get("fold")
 
         if dataset_type is None and split_file is None:
             return
 
         dataset_key = str(dataset_type).lower() if dataset_type is not None else None
         resolved_split_file = self._resolve_split_file(split_file)
-        split_payload = json.loads(resolved_split_file.read_text())
+        split_payload = select_fold(
+            json.loads(resolved_split_file.read_text()), fold, source=resolved_split_file
+        )
         if dataset_key is None or dataset_key not in split_payload:
             raise RuntimeError(
                 f"Dataset split '{dataset_key}' not found in {resolved_split_file}"

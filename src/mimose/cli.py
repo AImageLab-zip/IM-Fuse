@@ -1087,6 +1087,15 @@ def train(
         ),
         rich_help_panel="Runtime",
     ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help=(
+            "Cross-validation fold to train on. When set and no --split-file is given, "
+            "the fold-nested splits_5fold.json is used and this fold is selected."
+        ),
+        rich_help_panel="Trainer",
+    ),
 ) -> None:
     """Run training from CLI overrides and YAML configuration."""
     console = _get_cli_display().CONSOLE
@@ -1148,6 +1157,7 @@ def train(
             push_to_hf=push_to_hf,
             hf_repo=hf_repo,
             run_suffix=run_suffix,
+            fold=fold,
         )
 
         status.update("[bold cyan]Starting MiMoSe[/bold cyan]  [dim]preparing training launch[/dim]")
@@ -1278,6 +1288,15 @@ def test(
         ),
         rich_help_panel="Runtime",
     ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help=(
+            "Cross-validation fold to test on. When set and no --split-file is given, "
+            "the fold-nested splits_5fold.json is used and this fold's test set is selected."
+        ),
+        rich_help_panel="Data Pipeline",
+    ),
 ) -> None:
     """Run mask-sweep testing from CLI overrides and YAML configuration."""
     from mimose.models.config import (
@@ -1306,7 +1325,15 @@ def test(
         fp16=fp16,
         dataset_type=dataset_type,
     )
-    resolved_split_file = resolve_split_path(merged.get("split_file"))
+    # A CLI --fold overrides the config's default `fold`.
+    if fold is None and merged.get("fold") is not None:
+        fold = int(merged["fold"])
+    split_file_value = merged.get("split_file")
+    if split_file_value is None and fold is not None:
+        from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
+
+        split_file_value = KFOLD_SPLIT_FILENAME
+    resolved_split_file = resolve_split_path(split_file_value)
     merged["split_file"] = str(resolved_split_file)
     _require_values(
         merged,
@@ -1331,6 +1358,7 @@ def test(
         model_class=model_config.model_class,
         model_kwargs=model_config.kwargs,
         split_file=resolved_split_file,
+        fold=fold,
         num_workers=int(merged.get("num_workers", 8)),
         seed=int(merged.get("seed", 42)),
         fp16=bool(merged.get("fp16", False)),
@@ -1435,14 +1463,14 @@ def push(
         ),
         rich_help_panel="Runtime",
     ),
-    all_seeds: bool = typer.Option(
+    all_folds: bool = typer.Option(
         False,
-        "--all-seeds",
+        "--all-folds",
         help=(
-            "Push every seeded run for this config (seeds 0, 42, 69, matching "
-            "sbatcher_18.sh/sbatcher_23.sh), then push seed 0's checkpoint a second "
+            "Push every cross-validation fold run for this config (folds 1, 3, 5, matching "
+            "allsbatcher18.sh/allsbatcher23.sh), then push fold 1's checkpoint a second "
             "time without a suffix so it's available as the default checkpoint for "
-            "easy testing. Incompatible with --run-suffix and --checkpoint-path."
+            "--online testing. Incompatible with --run-suffix and --checkpoint-path."
         ),
         rich_help_panel="Runtime",
     ),
@@ -1451,23 +1479,23 @@ def push(
     console = _get_cli_display().CONSOLE
     workflows = _get_cli_workflows()
 
-    if all_seeds:
+    if all_folds:
         if run_suffix is not None:
             raise typer.BadParameter(
-                "--run-suffix cannot be combined with --all-seeds; each seed's suffix is derived automatically",
+                "--run-suffix cannot be combined with --all-folds; each fold's suffix is derived automatically",
                 param_hint="--run-suffix",
             )
         if checkpoint_path is not None:
             raise typer.BadParameter(
-                "--checkpoint-path cannot be combined with --all-seeds; each seed's checkpoint is resolved automatically",
+                "--checkpoint-path cannot be combined with --all-folds; each fold's checkpoint is resolved automatically",
                 param_hint="--checkpoint-path",
             )
 
         with console.status(
-            "[bold cyan]Preparing Hugging Face push (all seeds)[/bold cyan]",
+            "[bold cyan]Preparing Hugging Face push (all folds)[/bold cyan]",
             spinner="dots",
         ):
-            export_dirs = workflows.run_push_all_seeds_from_config(
+            export_dirs = workflows.run_push_all_folds_from_config(
                 config=config,
                 art_dir=art_dir,
                 trainer=trainer,

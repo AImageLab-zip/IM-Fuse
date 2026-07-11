@@ -93,7 +93,7 @@ plateau_patience: null
 lr: 0.01
 num_epochs: 980
 validation_every: 10
-batch_size: 6
+batch_size: 4
 weight_decay: 0.0005
 num_workers: 8
 fp16: false
@@ -103,9 +103,10 @@ resume: false
 pretrain: null
 seed: 999
 
-wandb_project: SegmentationMM
+fold: 1
+wandb_project: MiMoSe
 wandb_mode: online
-wandb_run_name: lckd18_training
+wandb_run_name: lckd18
 push_to_hf: false
 hf_repo: /path/to/huggingface/owner-repo
 

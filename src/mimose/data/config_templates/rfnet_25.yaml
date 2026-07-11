@@ -67,10 +67,10 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0002
+lr: 0.006
 num_epochs: 300
 validation_every: 10
-batch_size: 2
+batch_size: 6
 weight_decay: 0.0001
 num_workers: 8
 fp16: true
@@ -80,9 +80,10 @@ resume: false
 pretrain: null
 seed: 999
 
-wandb_project: SegmentationMM
+fold: 1
+wandb_project: MiMoSe
 wandb_mode: online
-wandb_run_name: rfnet25_training
+wandb_run_name: rfnet25
 push_to_hf: false
 hf_repo: /path/to/huggingface/owner-repo
 

@@ -134,6 +134,30 @@ class LCKDTrainer(BaseTrainer):
                 f"{epoch + 1}/{self.num_epochs} (warmup_epochs={self.warmup_epochs})"
             )
 
+    def _build_scheduler(
+        self,
+        optimizer: torch.optim.Optimizer | None = None,
+    ) -> Any | None:
+        if self.scheduler_config is None or self.warmup_epochs <= 0:
+            return super()._build_scheduler(optimizer)
+
+        # The warmup phase is its own complete decay cycle (mirrors legacy's
+        # separate warmup `train.py` run), so it must reach the scheduler's
+        # terminal LR by the end of warmup_epochs, not by num_epochs -- else
+        # the phase-boundary restart in _restart_optimizer_and_scheduler
+        # kicks in mid-decay and the warmup LR never bottoms out.
+        target_optimizer = optimizer or self.optimizer
+        if target_optimizer is None:
+            raise RuntimeError("optimizer must be initialized before building a scheduler")
+
+        phase_kwargs = dict(self.scheduler_config.kwargs)
+        for duration_key in ("total_iters", "T_max"):
+            if duration_key in phase_kwargs:
+                phase_kwargs[duration_key] = self.warmup_epochs
+
+        self.scheduler = self.scheduler_config.scheduler_class(target_optimizer, **phase_kwargs)
+        return self.scheduler
+
     def _restart_optimizer_and_scheduler(self, epoch: int) -> None:
         self._build_optimizer()
 

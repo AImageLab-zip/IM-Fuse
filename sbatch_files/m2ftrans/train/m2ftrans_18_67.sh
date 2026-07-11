@@ -10,7 +10,6 @@
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/m2ftrans_18_67.out
 #SBATCH --gres=gpu:1
 #SBATCH --account=phd_mimose
-#SBATCH --constraint=gpu_RTXPro6000B_96G
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate

@@ -282,6 +282,7 @@ def run_testing(
     model_class: type[AbstractModel],
     model_kwargs: dict[str, Any] | None = None,
     split_file: Path,
+    fold: int | None = None,
     num_workers: int = 8,
     seed: int = 42,
     fp16: bool = False,
@@ -297,7 +298,7 @@ def run_testing(
     device = torch.device("cuda")
 
     try:
-        split = _load_test_split(split_file=split_file, dataset_type=dataset_type)
+        split = _load_test_split(split_file=split_file, dataset_type=dataset_type, fold=fold)
         test_set = IMFuseDataset(
             root=data_dir,
             masking_mode=None,
@@ -493,10 +494,14 @@ def run_testing(
         raise click.ClickException(str(exc)) from None
 
 
-def _load_test_split(*, split_file: Path, dataset_type: DatasetType) -> list[dict[str, Any]]:
+def _load_test_split(
+    *, split_file: Path, dataset_type: DatasetType, fold: int | None = None
+) -> list[dict[str, Any]]:
+    from mimose.utils.cli_overrides import select_fold
+
     if not split_file.is_file():
         raise FileNotFoundError(f"Split file not found: {split_file}")
-    split_payload = json.loads(split_file.read_text())
+    split_payload = select_fold(json.loads(split_file.read_text()), fold, source=split_file)
     dataset_key = str(dataset_type).lower()
     if dataset_key not in split_payload:
         raise RuntimeError(f"Dataset split '{dataset_key}' not found in {split_file}")

@@ -82,9 +82,10 @@ resume: false
 pretrain: null
 seed: 999
 
-wandb_project: SegmentationMM
+fold: 1
+wandb_project: MiMoSe
 wandb_mode: online
-wandb_run_name: uhved23_training
+wandb_run_name: uhved23
 push_to_hf: false
 hf_repo: /path/to/huggingface/owner-repo
 

@@ -101,9 +101,10 @@ resume: false
 pretrain: null
 seed: 999
 
-wandb_project: SegmentationMM
+fold: 1
+wandb_project: MiMoSe
 wandb_mode: online
-wandb_run_name: m3ae18_training
+wandb_run_name: m3ae18
 push_to_hf: false
 hf_repo: /path/to/huggingface/owner-repo
 

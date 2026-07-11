@@ -1,0 +1,118 @@
+# Combined MCPL reference config for BraTS 2025.
+# MCPL shares its entire two-stage training harness (the `limage` learnable
+# placeholder for missing modalities, pretrain/finetune schedule, cross-view
+# consistency loss) with legacy M3AE -- see mimose.models.mcpl.MCPL's
+# docstring and the sibling m3ae_*.yaml templates. MCPL's own novel
+# contribution is the kMaX prototype-learning bottleneck and its
+# class/modality contrastive losses (custom_trainer_kwargs.
+# class_contrast_weight / modal_contrast_weight).
+#
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
+
+# preprocess
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/mcpl-preprocessed/
+dataset_type: brats25
+
+crop_mode: non_empty
+crop_size: null
+crop_min_size: [128, 128, 128]
+
+clamp_mode: none
+clamp_percentile: null
+clamp_min: null
+clamp_max: null
+
+norm_mode: subject_zscore
+norm_min_max_range: null
+norm_mean: null
+norm_std: null
+
+yes: false
+
+# training
+data_dir: /path/to/preprocessed/mcpl-preprocessed
+art_dir: /path/to/artifacts/mcpl25
+results_dir: /path/to/results/mcpl_25
+
+trainer: mcpl
+model: mcpl
+loss: mcpl
+
+custom_model_kwargs:
+  num_cls: 5
+  cc_modalities: 4
+  layers: 6
+
+custom_loss_kwargs:
+  num_classes: null
+  log_clamp_min: 0.005
+
+custom_trainer_kwargs:
+  iter_per_epoch: null
+  patch_size: 128
+  debug: false
+  transform_kind: imfuse
+  train_masking_mode: random
+  val_masking_mode: validation
+  # Two-stage schedule matching legacy MCPL's separate pretrain.py (600
+  # epochs, modality-prototype-guided reconstruction, `limage` trained at
+  # limage_lr) and train.py (500 epochs, segmentation fine-tuning, `limage`
+  # frozen). Set to 0.0 to disable (single-stage).
+  pretrain_fraction: 0.5454545454545454
+  limage_lr: 0.005
+  # Deep supervision + cross-view consistency (legacy MCPL fine-tuning).
+  # Each step forwards a second, independently-masked view of the same
+  # crop; both views are deep-supervised and their coarse out4 logits are
+  # matched by consistency_weight * MSE (legacy weight_kl, feature_level=2).
+  deep_supervised: true
+  consistency_weight: 0.1
+  # Class/modality prototype contrastive terms on the model's own learned
+  # (modality x class) prototype table (legacy memory_Loss.forward_class_cos
+  # during fine-tuning, forward_modal_cos during pretraining).
+  class_contrast_weight: 0.01
+  modal_contrast_weight: 0.01
+  cc_modalities: 4
+
+optimizer: adam
+betas: [0.9, 0.999]
+momentum: 0.9
+
+scheduler: cosine
+poly_total_iters: null
+poly_power: null
+cosine_t_max: 600
+cosine_eta_min: 0.0
+step_step_size: null
+step_gamma: null
+multistep_milestones: null
+multistep_gamma: null
+plateau_mode: null
+plateau_factor: null
+plateau_patience: null
+
+lr: 0.0003
+num_epochs: 1100
+validation_every: 10
+batch_size: 2
+weight_decay: 0.0001
+num_workers: 8
+fp16: false
+compile: false
+
+resume: false
+pretrain: null
+seed: 999
+
+fold: 1
+wandb_project: MiMoSe
+wandb_mode: online
+wandb_run_name: mcpl25
+push_to_hf: false
+hf_repo: /path/to/huggingface/owner-repo
+
+# testing
+checkpoint_path: /path/to/artifacts/mcpl25/checkpoints/final_weights_only.safetensors
+output_path: /path/to/results/mcpl_25/results.txt

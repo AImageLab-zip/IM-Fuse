@@ -218,10 +218,15 @@ def build_train_merged_config(
     push_to_hf: bool | None,
     hf_repo: str | None,
     run_suffix: str | None = None,
+    fold: int | None = None,
 ) -> dict[str, object]:
     from mimose.training.config import parse_kv_list
+    from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
 
     yaml_config = load_yaml_config(config)
+    # A CLI --fold overrides the config's default `fold` (e.g. sbatch scripts override fold 1).
+    if fold is None and yaml_config.get("fold") is not None:
+        fold = int(yaml_config["fold"])
     model_kwargs = (
         parse_kv_list(custom_model_kwargs)
         if custom_model_kwargs is not None
@@ -293,8 +298,14 @@ def build_train_merged_config(
     split_file_value = merged.get("split_file")
     if split_file_value is None:
         split_file_value = merged_trainer_kwargs.get("split_file")
+    # When a fold is requested and no split file is pinned, default to the combined k-fold file.
+    if split_file_value is None and fold is not None:
+        split_file_value = KFOLD_SPLIT_FILENAME
     resolved_split_file = resolve_split_path(split_file_value)
     merged_trainer_kwargs["split_file"] = str(resolved_split_file)
+    if fold is not None:
+        merged_trainer_kwargs["fold"] = fold
+    merged["fold"] = fold
     if merged.get("transform_kind") is not None:
         merged_trainer_kwargs["transform_kind"] = merged["transform_kind"]
     merged["custom_trainer_kwargs"] = merged_trainer_kwargs
@@ -441,16 +452,15 @@ def run_push_from_merged(merged: dict[str, object]) -> Path:
     return trainer_instance.push_checkpoint_to_hf(checkpoint_path)
 
 
-# Seeds trained by sbatcher_18.sh / sbatcher_23.sh for every model (seed 67 is a
-# standalone extra run and is intentionally excluded from the bulk push too).
-PUSH_ALL_SEEDS: tuple[int, ...] = (0, 42, 69)
+# Cross-validation folds trained by allsbatcher18.sh / allsbatcher23.sh for every model.
+PUSH_ALL_FOLDS: tuple[int, ...] = (1, 3, 5)
 
-# Seed whose checkpoint is re-uploaded a second time under the run's unsuffixed
-# name, so testers can grab a default checkpoint without knowing which seed to ask for.
-PUSH_DEFAULT_SEED = 0
+# Fold whose checkpoint is re-uploaded a second time under the run's unsuffixed name, so
+# testers (e.g. `mimose test --online` with no --run-suffix) can grab a default checkpoint.
+PUSH_DEFAULT_FOLD = 1
 
 
-def run_push_all_seeds_from_config(
+def run_push_all_folds_from_config(
     *,
     config: Path | None,
     art_dir: Path | None,
@@ -466,7 +476,7 @@ def run_push_all_seeds_from_config(
     export_dirs: list[Path] = []
     default_checkpoint_path: Path | None = None
 
-    for seed in PUSH_ALL_SEEDS:
+    for fold in PUSH_ALL_FOLDS:
         merged = build_push_merged_config(
             config=config,
             art_dir=art_dir,
@@ -476,16 +486,18 @@ def run_push_all_seeds_from_config(
             custom_model_kwargs=custom_model_kwargs,
             custom_trainer_kwargs=custom_trainer_kwargs,
             num_workers=num_workers,
-            seed=seed,
+            seed=0,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
             hf_repo=hf_repo,
-            run_suffix=f"seed{seed}",
+            run_suffix=f"fold{fold}",
         )
         export_dirs.append(run_push_from_merged(merged))
-        if seed == PUSH_DEFAULT_SEED:
+        if fold == PUSH_DEFAULT_FOLD:
             default_checkpoint_path = _resolve_push_checkpoint_path(merged)
 
+    # Re-upload fold 1's checkpoint under the unsuffixed run name so --online tests
+    # that don't pass a --run-suffix still resolve a default checkpoint.
     assert default_checkpoint_path is not None
     default_merged = build_push_merged_config(
         config=config,
@@ -496,7 +508,7 @@ def run_push_all_seeds_from_config(
         custom_model_kwargs=custom_model_kwargs,
         custom_trainer_kwargs=custom_trainer_kwargs,
         num_workers=num_workers,
-        seed=PUSH_DEFAULT_SEED,
+        seed=0,
         wandb_run_name=wandb_run_name,
         dataset_type=dataset_type,
         hf_repo=hf_repo,
@@ -525,6 +537,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         LCKDTrainer,
         M3AETrainer,
         M3FeConTrainer,
+        ManyMimosasTrainer,
+        MCPLTrainer,
         MIFPNTrainer,
         MSTKDTrainer,
         RFLTrainer,
@@ -559,6 +573,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MIFPN: MIFPNTrainer,
         TrainerKind.RFL: RFLTrainer,
         TrainerKind.LCKD: LCKDTrainer,
+        TrainerKind.MANYMIMOSAS: ManyMimosasTrainer,
+        TrainerKind.MCPL: MCPLTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -581,6 +597,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MIFPN: TrainingModelKind.MIFPN,
         TrainerKind.RFL: TrainingModelKind.RFL,
         TrainerKind.LCKD: TrainingModelKind.LCKD,
+        TrainerKind.MANYMIMOSAS: TrainingModelKind.MANYMIMOSAS,
+        TrainerKind.MCPL: TrainingModelKind.MCPL,
     }
     default_loss_map = {
         TrainerKind.UHVED: "uhved",
@@ -594,6 +612,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MIFPN: "mifpn",
         TrainerKind.RFL: "rfl",
         TrainerKind.LCKD: "lckd",
+        TrainerKind.MANYMIMOSAS: "tinymimosa",
+        TrainerKind.MCPL: "mcpl",
     }
     default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)
     default_loss = default_loss_map.get(trainer_kind, "imfuse")
@@ -646,11 +666,11 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         )
     )
     if (
-        model_kind == TrainingModelKind.TINYMIMOSA
+        model_kind in (TrainingModelKind.TINYMIMOSA, TrainingModelKind.MANYMIMOSAS)
         and resolved_transform_kind != TransformKind.TINYMIMOSA
     ):
         raise typer.BadParameter(
-            "TinyMimosa requires transform_kind=tinymimosa in config/overrides.\n"
+            f"{model_kind.value} requires transform_kind=tinymimosa in config/overrides.\n"
             f"resolved model={model_kind.value}\n"
             f"resolved transform_kind={resolved_transform_kind.value}\n"
             f"custom_trainer_kwargs={trainer_kwargs}",
