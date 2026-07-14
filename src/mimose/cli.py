@@ -1538,6 +1538,131 @@ def push(
 
 
 @app.command()
+def export(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    art_dir: Path | None = typer.Option(
+        None,
+        "--art-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Artifact directory containing the trained checkpoint.",
+        rich_help_panel="Input/Output",
+    ),
+    checkpoint_path: Path | None = typer.Option(
+        None,
+        "--checkpoint-path",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Optional weights-only .safetensors checkpoint to package. Defaults to art_dir/checkpoints/final_weights_only.safetensors.",
+        rich_help_panel="Checkpointing",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help="Path to write the .mimosepkg archive. Defaults to art_dir/export/<wandb_run_name>.mimosepkg.",
+        rich_help_panel="Input/Output",
+    ),
+    trainer: TrainerKind | None = typer.Option(
+        None,
+        "--trainer",
+        help="Trainer implementation to use when rebuilding the model for export.",
+        rich_help_panel="Model",
+    ),
+    model: ModelKind | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    custom_trainer_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-trainer-kwargs",
+        help="Additional trainer kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Number of dataloader workers used while rebuilding the trainer.",
+        rich_help_panel="Runtime",
+    ),
+    seed: int = typer.Option(
+        69,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
+    ),
+    wandb_run_name: str | None = typer.Option(
+        None,
+        "--wandb-run-name",
+        help="Run name used to name the exported .mimosepkg file.",
+        rich_help_panel="Checkpointing",
+    ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Dataset split to use. One of: brats18, brats23, brats25",
+        rich_help_panel="Input/Output",
+    ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir and wandb_run_name (e.g. a seed) so this "
+            "matches the same suffixed run produced by `mimose train --run-suffix`."
+        ),
+        rich_help_panel="Runtime",
+    ),
+) -> None:
+    """Package a trained checkpoint into a single self-contained .mimosepkg archive."""
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    with console.status(
+        "[bold cyan]Preparing MiMoSe export[/bold cyan]",
+        spinner="dots",
+    ) as status:
+        status.update("[bold cyan]Preparing MiMoSe export[/bold cyan]  [dim]reading configuration[/dim]")
+        merged = workflows.build_export_merged_config(
+            config=config,
+            art_dir=art_dir,
+            checkpoint_path=checkpoint_path,
+            output_path=output_path,
+            trainer=trainer,
+            model=model,
+            custom_model_kwargs=custom_model_kwargs,
+            custom_trainer_kwargs=custom_trainer_kwargs,
+            num_workers=num_workers,
+            seed=seed,
+            wandb_run_name=wandb_run_name,
+            dataset_type=dataset_type,
+            run_suffix=run_suffix,
+        )
+        status.update("[bold cyan]Preparing MiMoSe export[/bold cyan]  [dim]building package[/dim]")
+
+    export_path = workflows.run_export_from_merged(merged)
+    typer.echo(f"Exported model package to {export_path}")
+
+
+@app.command()
 def flops(
     config: Path | None = typer.Option(
         None,

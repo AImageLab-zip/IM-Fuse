@@ -719,6 +719,37 @@ class BaseTrainer(AbstractTrainer):
         self._upload_hf_artifacts(export_dir)
         return export_dir
 
+    def export_checkpoint(
+        self,
+        checkpoint_path: str | Path,
+        output_path: str | Path,
+        *,
+        run_suffix: str | None = None,
+        preprocessing_config: dict[str, object] | None = None,
+    ) -> Path:
+        from mimose.model_export import build_export_package
+
+        model = self._model_for_state()
+        if model is None:
+            raise RuntimeError("model must be initialized before exporting a package")
+        if not isinstance(model, AbstractModel):
+            raise RuntimeError("export requires an AbstractModel instance")
+
+        resolved_checkpoint = Path(checkpoint_path)
+        if not resolved_checkpoint.is_file():
+            raise click.ClickException(
+                f"checkpoint not found at {resolved_checkpoint}"
+            )
+
+        load_weights_only_checkpoint(model, resolved_checkpoint, device=self.device)
+        return build_export_package(
+            model,
+            resolved_checkpoint,
+            output_path,
+            run_suffix=run_suffix,
+            preprocessing_config=preprocessing_config,
+        )
+
     def _wandb_run_id_path(self) -> Path:
         return self.output_dir / "wandb_run_id.txt"
 

@@ -75,7 +75,7 @@ validation_every: 10
 batch_size: 1
 weight_decay: 0.0005
 num_workers: 8
-fp16: true
+fp16: false
 compile: false
 
 resume: false

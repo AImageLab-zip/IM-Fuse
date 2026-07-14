@@ -452,6 +452,141 @@ def run_push_from_merged(merged: dict[str, object]) -> Path:
     return trainer_instance.push_checkpoint_to_hf(checkpoint_path)
 
 
+def build_export_merged_config(
+    *,
+    config: Path | None,
+    art_dir: Path | None,
+    checkpoint_path: Path | None,
+    output_path: Path | None,
+    trainer: TrainerKind | None,
+    model: ModelKind | None,
+    custom_model_kwargs: list[str] | None,
+    custom_trainer_kwargs: list[str] | None,
+    num_workers: int,
+    seed: int,
+    wandb_run_name: str | None,
+    dataset_type: DatasetType | None,
+    run_suffix: str | None = None,
+) -> dict[str, object]:
+    merged = build_train_merged_config(
+        config=config,
+        data_dir=None,
+        art_dir=art_dir,
+        trainer=trainer,
+        model=model,
+        loss=None,
+        custom_model_kwargs=custom_model_kwargs,
+        custom_loss_kwargs=None,
+        custom_trainer_kwargs=custom_trainer_kwargs,
+        split_file=None,
+        optimizer=None,
+        betas=None,
+        momentum=None,
+        nesterov=None,
+        amsgrad=None,
+        scheduler=None,
+        poly_total_iters=None,
+        poly_power=None,
+        warmuppoly_warmup_iters=None,
+        cosine_t_max=None,
+        cosine_eta_min=None,
+        step_step_size=None,
+        step_gamma=None,
+        multistep_milestones=None,
+        multistep_gamma=None,
+        plateau_mode=None,
+        plateau_factor=None,
+        plateau_patience=None,
+        transform_kind=None,
+        lr=None,
+        num_epochs=None,
+        validation_every=None,
+        batch_size=None,
+        weight_decay=None,
+        num_workers=num_workers,
+        distributed=False,
+        nproc_per_node=None,
+        fp16=None,
+        compile=None,
+        resume=False,
+        try_resume=False,
+        seed=seed,
+        pretrain=None,
+        wandb_project=None,
+        wandb_mode=None,
+        wandb_run_name=wandb_run_name,
+        dataset_type=dataset_type,
+        push_to_hf=False,
+        hf_repo=None,
+        run_suffix=run_suffix,
+    )
+    if checkpoint_path is not None:
+        merged["checkpoint_path"] = str(checkpoint_path)
+    if output_path is not None:
+        merged["export_output_path"] = str(output_path)
+    _require_train_values(
+        merged,
+        "art_dir",
+        "trainer",
+        "model",
+        "data_dir",
+        "wandb_run_name",
+    )
+    return merged
+
+
+def _resolve_export_output_path(merged: dict[str, object]) -> Path:
+    explicit = merged.get("export_output_path")
+    if explicit is not None:
+        return Path(explicit)
+    return Path(merged["art_dir"]) / "export" / f"{merged['wandb_run_name']}.mimosepkg"
+
+
+_PREPROCESSING_KEYS = (
+    "dataset_type",
+    "crop_mode",
+    "crop_size",
+    "crop_min_size",
+    "clamp_mode",
+    "clamp_percentile",
+    "clamp_min",
+    "clamp_max",
+    "norm_mode",
+    "norm_min_max_range",
+    "norm_mean",
+    "norm_std",
+)
+
+_REQUIRED_PREPROCESSING_KEYS = ("dataset_type", "crop_mode", "clamp_mode", "norm_mode")
+
+
+def _extract_preprocessing_config(merged: dict[str, object]) -> dict[str, object] | None:
+    """Pull the crop/clamp/norm/dataset_type settings this run's training data was
+    preprocessed with out of the merged export config, so they can be embedded in
+    the `.mimosepkg` manifest and reused by a downstream harness on raw cases.
+
+    Returns None (and the manifest simply omits `preprocessing`) when the merged
+    config -- e.g. a minimal export-only YAML that never specified these -- doesn't
+    have enough to reconstruct a preprocessing pipeline from.
+    """
+    if any(merged.get(key) is None for key in _REQUIRED_PREPROCESSING_KEYS):
+        return None
+    return {key: merged.get(key) for key in _PREPROCESSING_KEYS}
+
+
+def run_export_from_merged(merged: dict[str, object]) -> Path:
+    trainer_instance = _build_trainer_instance_from_merged(merged)
+    checkpoint_path = _resolve_push_checkpoint_path(merged)
+    output_path = _resolve_export_output_path(merged)
+    run_suffix = merged.get("run_suffix")
+    return trainer_instance.export_checkpoint(
+        checkpoint_path,
+        output_path,
+        run_suffix=str(run_suffix) if run_suffix else None,
+        preprocessing_config=_extract_preprocessing_config(merged),
+    )
+
+
 # Cross-validation folds trained by allsbatcher18.sh / allsbatcher23.sh for every model.
 PUSH_ALL_FOLDS: tuple[int, ...] = (1, 3, 5)
 

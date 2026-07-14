@@ -15,7 +15,7 @@ cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 
 mimose train --config mstkdnet_18.yaml --fold 1 --run-suffix fold1 --seed 0 --try-resume
-mimose test --config mstkdnet_18.yaml --fold 1 --run-suffix fold1 --fp16
+mimose test --config mstkdnet_18.yaml --fold 1 --run-suffix fold1
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher18.sh's singleton chain.

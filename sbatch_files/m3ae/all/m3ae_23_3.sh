@@ -15,7 +15,7 @@ cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 
 mimose train --config m3ae_23.yaml --fold 3 --run-suffix fold3 --seed 0 --try-resume
-mimose test --config m3ae_23.yaml --fold 3 --run-suffix fold3 --fp16
+mimose test --config m3ae_23.yaml --fold 3 --run-suffix fold3
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher23.sh's singleton chain.

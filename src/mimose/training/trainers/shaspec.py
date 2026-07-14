@@ -60,6 +60,17 @@ class ShaSpecTrainer(BaseTrainer):
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
+        # Two-stage schedule matching legacy ShaSpec's two separate train_SS.py
+        # runs: a full-modality warmup (no missing-modality dropout), then a
+        # second run -- resumed from the warmup checkpoint with a fresh
+        # optimizer/scheduler -- trained with train_masking_mode for the rest
+        # of training. Disabled by default (warmup_fraction=0.0).
+        self.warmup_fraction = float(trainer_kwargs.get("warmup_fraction", 0.0))
+        if not 0.0 <= self.warmup_fraction <= 1.0:
+            raise ValueError("warmup_fraction must be within [0, 1]")
+        self.warmup_epochs = round(self.warmup_fraction * num_epochs)
+        self._in_warmup: bool | None = None
+
         effective_batch_size = 1 if batch_size is None else batch_size
         effective_num_workers = 0 if num_workers is None else num_workers
 
@@ -94,9 +105,34 @@ class ShaSpecTrainer(BaseTrainer):
         if self.pretrain is not None and self.resume is None:
             self._load_pretrain()
 
+    def _apply_training_stage(self, epoch: int) -> None:
+        if self.warmup_epochs == 0:
+            return
+
+        in_warmup = epoch < self.warmup_epochs
+        if in_warmup == self._in_warmup:
+            return
+
+        entering_main = self._in_warmup is True and not in_warmup
+        self._in_warmup = in_warmup
+
+        if self.train_set is not None:
+            self.train_set.masking_mode = MaskingMode.FULL if in_warmup else self.train_masking_mode
+
+        if entering_main and self.scheduler_config is not None:
+            remaining_epochs = self.num_epochs - self.warmup_epochs
+            self._build_optimizer()
+            previous_total_iters = self.scheduler_config.kwargs.get("total_iters")
+            self.scheduler_config.kwargs["total_iters"] = remaining_epochs
+            self._build_scheduler(self.optimizer)
+            if previous_total_iters is not None:
+                self.scheduler_config.kwargs["total_iters"] = previous_total_iters
+
     def train_epoch(self, epoch: int) -> dict[str, float]:
         if self.train_loader is None:
             raise RuntimeError("train_loader must be initialized before training")
+
+        self._apply_training_stage(epoch)
 
         self.model.train()
         self._set_aux_training_flag(True)

@@ -23,6 +23,7 @@ from collections import defaultdict
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from rich.progress import track
 
 # --------------------------------------------------------------------------- #
 # Hardcoded parameters
@@ -43,6 +44,16 @@ LEGACY_REGION_LABELS = {
 
 # Maps the numeric directory suffix to a dataset label.
 DATASETS = {"18": "BRATS2018", "23": "BRATS2023"}
+
+# Every model/dataset combination is expected to have these folds tested,
+# per the sbatch_files/<model>/all layout.
+EXPECTED_FOLDS = ["fold1", "fold3", "fold5"]
+
+# Config templates are the source of truth for which models exist for a
+# given dataset (one `<model>_<dsnum>.yaml` per model/dataset combination).
+CONFIG_TEMPLATES_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "src", "mimose", "data", "config_templates"
+)
 
 MODALITY_COLS = ["Fl", "T1", "T1c", "T2"]
 
@@ -216,10 +227,12 @@ def discover(results_dir):
     Returns models[model_norm][dataset_label] = {fold_label: fold_data_dict}.
     """
     models = defaultdict(dict)
-    for entry in sorted(os.listdir(results_dir)):
+    entries = [
+        entry for entry in sorted(os.listdir(results_dir))
+        if os.path.isdir(os.path.join(results_dir, entry))
+    ]
+    for entry in track(entries, description="Scanning result directories"):
         full = os.path.join(results_dir, entry)
-        if not os.path.isdir(full):
-            continue
         m = re.match(r"^(.*)_(\d+)$", entry)
         if not m:
             continue
@@ -356,6 +369,80 @@ def safe_sheet_title(name):
     return title[:31]
 
 
+# --------------------------------------------------------------------------- #
+# Completion report
+# --------------------------------------------------------------------------- #
+def expected_models(dsnum):
+    """Normalized model names that have a `<model>_<dsnum>.yaml` config template."""
+    pattern = os.path.join(CONFIG_TEMPLATES_DIR, f"*_{dsnum}.yaml")
+    names = []
+    suffix = f"_{dsnum}.yaml"
+    for path in glob.glob(pattern):
+        base = os.path.basename(path)[: -len(suffix)]
+        names.append(normalize(base))
+    return sorted(set(names))
+
+
+def completion_report(models):
+    """Return {dsnum: {'expected': [...], 'found': int, 'total': int, 'missing': [...]}}."""
+    report = {}
+    for dsnum, dataset in DATASETS.items():
+        expected = expected_models(dsnum)
+        total = len(expected) * len(EXPECTED_FOLDS)
+        found = 0
+        missing = []
+        for model_norm in expected:
+            folds = models.get(model_norm, {}).get(dataset, {})
+            have = sorted(set(folds.keys()) & set(EXPECTED_FOLDS))
+            found += len(have)
+            for fold in EXPECTED_FOLDS:
+                if fold not in have:
+                    missing.append((model_norm, fold))
+        report[dsnum] = {"expected": expected, "found": found, "total": total, "missing": missing}
+    return report
+
+
+def write_summary_sheet(wb, report, display_names, models):
+    ws = wb.create_sheet(title="Summary", index=0)
+    ws.sheet_view.showGridLines = False
+    ws.column_dimensions["A"].width = 28
+    for col in "BCDE":
+        ws.column_dimensions[col].width = 12
+
+    row = 1
+    for dsnum, dataset in DATASETS.items():
+        info = report[dsnum]
+        pct = 100 * info["found"] / info["total"] if info["total"] else 0.0
+
+        ws.cell(row=row, column=1, value=dataset).font = Font(bold=True, size=12)
+        row += 1
+        ws.cell(row=row, column=1, value="Completion:")
+        ws.cell(row=row, column=2, value=f"{info['found']}/{info['total']} ({pct:.1f}%)").font = BOLD
+        row += 2
+
+        headers = ["Model"] + EXPECTED_FOLDS
+        for c, h in enumerate(headers, start=1):
+            cell = ws.cell(row=row, column=c, value=h)
+            cell.font, cell.fill, cell.border = WHITE, HEADER_FILL, BORDER
+        row += 1
+
+        for model_norm in info["expected"]:
+            display = display_names.get(model_norm, model_norm)
+            folds = models.get(model_norm, {}).get(dataset, {})
+            ws.cell(row=row, column=1, value=display).border = BORDER
+            for c, fold in enumerate(EXPECTED_FOLDS, start=2):
+                present = fold in folds
+                cell = ws.cell(row=row, column=c, value="x" if present else "")
+                cell.alignment, cell.border = CENTER, BORDER
+                if not present:
+                    cell.fill = ERROR_FILL
+            row += 1
+
+        row += 2
+
+    return ws
+
+
 def main():
     legacy_path = os.path.join(RESULTS_DIR, LEGACY_FILE)
     legacy, display_names = parse_legacy(legacy_path)
@@ -364,13 +451,16 @@ def main():
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
+    report = completion_report(models)
+    write_summary_sheet(wb, report, display_names, models)
+
     # One tab per available model, sorted by display name.
     available = sorted(models.keys(), key=lambda n: display_names.get(n, n).lower())
     if not available:
         print("No available models found in", RESULTS_DIR)
         return
 
-    for model_norm in available:
+    for model_norm in track(available, description="Writing model tabs"):
         display = display_names.get(model_norm, model_norm)
         ws = wb.create_sheet(title=safe_sheet_title(display))
         ws.sheet_view.showGridLines = False
@@ -395,6 +485,14 @@ def main():
     for model_norm in available:
         for ds, folds in models[model_norm].items():
             print(f"  {display_names.get(model_norm, model_norm)} / {ds}: folds = {', '.join(sorted(folds))}")
+
+    print()
+    for dsnum, dataset in DATASETS.items():
+        info = report[dsnum]
+        pct = 100 * info["found"] / info["total"] if info["total"] else 0.0
+        print(f"{dataset} completion: {info['found']}/{info['total']} ({pct:.1f}%)")
+        for model_norm, fold in info["missing"]:
+            print(f"  missing: {display_names.get(model_norm, model_norm)} / {fold}")
 
 
 if __name__ == "__main__":
