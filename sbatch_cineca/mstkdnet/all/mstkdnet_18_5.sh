@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=MSTKDNET18_FOLD_5
-#SBATCH --partition=boost_qos_lprod
+#SBATCH --partition=boost_usr_prod
+#SBATCH --qos=boost_qos_lprod
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
