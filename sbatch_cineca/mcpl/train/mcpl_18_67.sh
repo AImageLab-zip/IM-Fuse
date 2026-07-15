@@ -6,12 +6,12 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=100G
 #SBATCH --time=24:00:00
-#SBATCH -e /homes/ocarpentiero/slurm/outerr/mcpl_18_67.err
-#SBATCH -o /homes/ocarpentiero/slurm/outerr/mcpl_18_67.out
+#SBATCH -e /leonardo/home/userexternal/ocarpent/slurm/outerr/mcpl_18_67.err
+#SBATCH -o /leonardo/home/userexternal/ocarpent/slurm/outerr/mcpl_18_67.out
 #SBATCH --gres=gpu:1
 #SBATCH --account=phd_mimose
 
-cd /homes/ocarpentiero/MiMoSe
-source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+cd /leonardo/home/userexternal/ocarpent/MiMoSe
+source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
 mimose train --config mcpl_18.yaml --run-suffix seed67 --seed 67 --try-resume

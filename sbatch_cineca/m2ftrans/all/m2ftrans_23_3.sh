@@ -12,8 +12,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --account=IscrB_MEDSYN
 
-cd /homes/ocarpentiero/MiMoSe
-source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+cd /leonardo/home/userexternal/ocarpent/MiMoSe
+source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
 mimose train --config m2ftrans_23.yaml --fold 3 --run-suffix fold3 --seed 0 --try-resume
 mimose test --config m2ftrans_23.yaml --fold 3 --run-suffix fold3 --fp16
