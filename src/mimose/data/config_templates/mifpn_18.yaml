@@ -78,13 +78,12 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0008
+lr: 0.0004
 num_epochs: 1000
 validation_every: 10
-batch_size: 8
+batch_size: 4
 weight_decay: 0.0001
 num_workers: 8
-fp16: true
 compile: false
 
 resume: false

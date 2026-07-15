@@ -365,12 +365,14 @@ def run_testing(
                     mask_tensor = torch.tensor(mask, dtype=torch.bool, device=device).unsqueeze(0)
                     mask_label = _mask_name(mask)
 
-                    for batch in test_loader:
-                        images = batch["images"].to(device, non_blocking=True)
-                        target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
-                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
-                            output = model.predict(images, mask_tensor)
-                        prediction = torch.argmax(output, dim=1)
+                    def score_batch(prediction: torch.Tensor, target: torch.Tensor, sub: str) -> None:
+                        # Runs one batch behind the forward pass that produced `prediction`
+                        # (see the prefetch loop below): by the time this executes, that
+                        # forward's CUDA kernels have had a full iteration to finish, so the
+                        # `.cpu()`/`.numpy()` calls inside dice_fn/hd95 below don't block on
+                        # the GPU -- meanwhile the *next* batch's forward, already launched,
+                        # keeps running concurrently on the GPU while this CPU-bound scoring
+                        # (mostly medpy's HD95 distance transforms) executes.
                         brats_dice_separate, brats_dice = dice_fn(
                             output=prediction,
                             target=target,
@@ -389,7 +391,7 @@ def run_testing(
                         mask_specific_separate_hd95.update(brats_hd95_separate)
                         subject_records.append(
                             {
-                                "subject": str(batch["sub"][0]),
+                                "subject": sub,
                                 "modalities": mask_label,
                                 **{
                                     f"{label}_dice": float(brats_dice[0, index])
@@ -428,6 +430,27 @@ def run_testing(
                                 f"HD95 {current_separate_hd95_avg[-1]:.4f}"
                             )
                         progress.update(task_id, advance=1, metrics=metrics_text)
+
+                    # Software-pipelined (prefetch) loop: launch batch i+1's forward
+                    # (async CUDA kernel enqueue, returns immediately) before scoring
+                    # batch i, so the GPU works on i+1 while the CPU scores i. `pending`
+                    # holds the one batch whose forward has been launched but not yet
+                    # scored; it's flushed after the loop for the final batch.
+                    pending: tuple[torch.Tensor, torch.Tensor, str] | None = None
+                    for batch in test_loader:
+                        images = batch["images"].to(device, non_blocking=True)
+                        target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
+                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                            output = model.predict(images, mask_tensor)
+                        prediction = torch.argmax(output, dim=1)
+
+                        if pending is not None:
+                            score_batch(*pending)
+
+                        pending = (prediction, target, str(batch["sub"][0]))
+
+                    if pending is not None:
+                        score_batch(*pending)
 
                     mask_score_avg = np.asarray(mask_specific_score.avg)[0]
                     mask_hd95_avg = np.asarray(mask_specific_hd95.avg)[0]

@@ -92,7 +92,7 @@ plateau_patience: null
 lr: 0.01
 num_epochs: 980
 validation_every: 10
-batch_size: 4
+batch_size: 2
 weight_decay: 0.0005
 num_workers: 8
 fp16: false

@@ -182,6 +182,37 @@ class MambaVitAKDLoss:
             dice = dice + branch["dice"]
         return {"cross": cross, "dice": dice, "total": cross + dice}
 
+    def teacher_pretrain_loss(
+        self,
+        teacher_out: tuple,
+        target: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Direct segmentation loss for ``MambaVitAKDTrainer``'s dedicated
+        teacher-pretraining phase (mirrors legacy's separate ``train_RFNet.py``
+        run): full fuse+sep+prm supervision on the always-full-modality
+        teacher branch, at the same ``fuse_weight``/``sep_weight``/
+        ``prm_weight`` used for ``teacher_total`` inside ``training_loss``."""
+        fuse_pred_t, sep_preds_t, prm_preds_t, _feature_t, _logits_t = teacher_out
+
+        fuse = self._branch_loss(fuse_pred_t, target)
+        sep = self._multi_branch_loss(sep_preds_t, target)
+        prm = self._multi_branch_loss(prm_preds_t, target)
+
+        total = (
+            self.fuse_weight * fuse["total"]
+            + self.sep_weight * sep["total"]
+            + self.prm_weight * prm["total"]
+        )
+        return {
+            "loss": total,
+            "fusecross": fuse["cross"],
+            "fusedice": fuse["dice"],
+            "sepcross": sep["cross"],
+            "sepdice": sep["dice"],
+            "prmcross": prm["cross"],
+            "prmdice": prm["dice"],
+        }
+
     def training_loss(
         self,
         outputs: tuple[tuple, tuple, torch.Tensor],

@@ -13,6 +13,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 
 class PreprocessingConfigError(ValueError):
     """Raised when a package has no (or an incomplete) embedded preprocessing config."""
@@ -20,6 +30,34 @@ class PreprocessingConfigError(ValueError):
 
 def _as_tuple(value: Any) -> tuple | None:
     return tuple(value) if value is not None else None
+
+
+# Raw BraTS25 case volumes come in a different native shape than brats18/23 --
+# center-crop to this size before applying the manifest's own crop_mode, so the
+# rest of the preprocessing pipeline (which was authored/tuned against the
+# brats18/23 native shape) sees a volume shape it already knows how to handle.
+BRATS25_CENTER_CROP_SIZE = (182, 218, 182)
+
+
+class _Brats25CenterCropThen:
+    """Picklable wrapper (needed for `ProcessPoolExecutor`) that center-crops to
+    `BRATS25_CENTER_CROP_SIZE` before delegating to the manifest's own crop fn."""
+
+    def __init__(self, original_fn):
+        self.original_fn = original_fn
+
+    def __call__(self, images, seg, config):
+        from mimose.preprocessing.config import CropConfig
+        from mimose.preprocessing.cropping import center
+
+        images, seg = center(images, seg, CropConfig(fn=center, size=BRATS25_CENTER_CROP_SIZE))
+        return self.original_fn(images, seg, config)
+
+
+def _with_brats25_center_crop(crop_config):
+    from dataclasses import replace
+
+    return replace(crop_config, fn=_Brats25CenterCropThen(crop_config.fn))
 
 
 def preprocess_raw_cases(
@@ -52,6 +90,8 @@ def preprocess_raw_cases(
         _as_tuple(preprocessing_config.get("crop_size")),
         _as_tuple(preprocessing_config.get("crop_min_size")),
     )
+    if preprocessing_config["dataset_type"] == "brats25":
+        crop_config = _with_brats25_center_crop(crop_config)
     clamp_config = build_clamp_config(
         preprocessing_config["clamp_mode"],
         _as_tuple(preprocessing_config.get("clamp_percentile")),
@@ -88,10 +128,21 @@ def preprocess_raw_cases(
             executor.submit(preprocess_case, file, output_dir, crop_config, clamp_config, norm_config): file["name"]
             for file in input_files
         }
-        for future in as_completed(futures):
-            name = futures[future]
-            future.result()
-            processed.append(name)
+        with Progress(
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=None),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            transient=True,
+        ) as progress:
+            task_id = progress.add_task(f"Preprocess {len(input_files)} cases", total=len(futures))
+            for future in as_completed(futures):
+                name = futures[future]
+                future.result()
+                processed.append(name)
+                progress.update(task_id, advance=1)
 
     return sorted(processed)
 

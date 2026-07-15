@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "docker"))
 
 from harness.load import PackageIntegrityError, resolve_package  # noqa: E402
 from harness.preprocess import (  # noqa: E402
+    BRATS25_CENTER_CROP_SIZE,
     PreprocessingConfigError,
     preprocess_raw_cases,
     write_test_only_split,
@@ -269,6 +270,21 @@ def test_preprocess_raw_cases_writes_npz_matching_embedded_config(tmp_path: Path
     split_path = write_test_only_split(case_ids, "brats18", tmp_path / "split.json")
     payload = split_path.read_text()
     assert '"001"' in payload and '"002"' in payload
+
+
+def test_preprocess_raw_cases_center_crops_brats25_before_manifest_crop(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_shape = tuple(dim + 10 for dim in BRATS25_CENTER_CROP_SIZE)
+    _write_raw_case(raw_dir, "001", shape=raw_shape)
+
+    brats25_config = {**SAMPLE_PREPROCESSING_CONFIG, "dataset_type": "brats25", "crop_min_size": (32, 32, 32)}
+    output_dir = tmp_path / "preprocessed"
+    case_ids = preprocess_raw_cases(raw_dir, output_dir, brats25_config, num_workers=1)
+
+    assert case_ids == ["001"]
+    with np.load(output_dir / "001.npz") as data:
+        for dim, target in zip(data["images"].shape[1:], BRATS25_CENTER_CROP_SIZE):
+            assert dim <= target
 
 
 def test_preprocess_run_entrypoint_never_imports_model_or_torch(tmp_path: Path) -> None:

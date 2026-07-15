@@ -11,19 +11,35 @@
 # (confirmed dead code in legacy's own model_mamba_modalitys.py::Model.forward),
 # so it is not ported. On top of the RFNet-style architecture, legacy
 # distills a separately-pretrained, frozen RFNet ("model_RFNet.Model")
-# teacher into the student via three losses (KD/prototype/attention). This
-# codebase's trainer has no notion of loading a second, externally-pretrained
-# model, so -- mirroring how MSTKDNet was already adapted here -- the
-# teacher is embedded as a second submodule and trained jointly with the
-# student in a single run; see src/mimose/models/mambavitakd.py and
-# src/mimose/losses/mambavitakd.py docstrings for the full rationale.
+# teacher into the student via three losses (KD/prototype/attention).
+#
+# This codebase's trainer contract has no notion of loading a second,
+# externally-pretrained model (only the same model's own checkpoints can be
+# resumed/pretrained-from), so the teacher is instead embedded as a second
+# submodule (see src/mimose/models/mambavitakd.py) and pretrained *within the
+# same run*, via the dedicated MambaVitAKDTrainer (trainer: mambavitakd):
+# epochs [0, teacher_pretrain_fraction * num_epochs) train only the teacher
+# on full modalities (direct fuse+sep+prm segmentation loss, its own
+# teacher_lr), then the teacher is frozen and the student/distillation phase
+# (KD + prototype + attention losses against the now-fixed teacher,
+# region_fusion_start_epoch counted from the start of *this* phase) runs for
+# the remaining epochs -- matching legacy's frozen-teacher assumption
+# instead of co-training an immature one at full KD weight from epoch 0
+# (see MambaVitAKDTrainer's docstring for the full rationale).
+# teacher_pretrain_fraction (like LCKDTrainer's warmup_fraction) is a
+# proportion of num_epochs rather than an absolute epoch count, so the split
+# stays proportional if num_epochs is overridden. teacher_lr=0.006 matches
+# this codebase's own standalone RFNet recipe (rfnet_18.yaml), since the
+# teacher is architecturally identical and the global lr=0.00001 below
+# (tuned for distillation fine-tuning) is far too low to train an
+# RFNet-scale network from scratch.
 #
 # Like RFNet/A2FSeg/IMFuse in this codebase, this port uses the codebase's
 # 80^3 patch size instead of legacy's 96^3, and reuses the IMFuseTrainer
-# training contract directly (region_fusion_start_epoch curriculum included)
-# since the student/teacher fuse+sep+prm segmentation losses match that
-# contract's shape; the KD/prototype/attention terms are folded into the
-# custom MambaVitAKDLoss on top.
+# training contract for the distillation phase (region_fusion_start_epoch
+# curriculum included) since the student/teacher fuse+sep+prm segmentation
+# losses match that contract's shape; the KD/prototype/attention terms are
+# folded into the custom MambaVitAKDLoss on top.
 
 # preprocess
 input_dir: /path/to/unpacked
@@ -51,7 +67,7 @@ data_dir: /path/to/preprocessed/mambavitakd-preprocessed
 art_dir: /path/to/artifacts/mambavitakd25
 results_dir: /path/to/results/mambavitakd_25
 
-trainer: imfuse
+trainer: mambavitakd
 model: mambavitakd
 loss: mambavitakd
 
@@ -73,6 +89,8 @@ custom_loss_kwargs:
 
 custom_trainer_kwargs:
   iter_per_epoch: null
+  teacher_pretrain_fraction: 0.2308  # 300 / 1300
+  teacher_lr: 0.006
   region_fusion_start_epoch: 60
   patch_size: 80
   debug: false
@@ -85,7 +103,7 @@ betas: [0.9, 0.999]
 momentum: 0.9
 
 scheduler: poly
-poly_total_iters: 300
+poly_total_iters: 1300
 poly_power: 0.9
 cosine_t_max: null
 cosine_eta_min: null
@@ -97,10 +115,10 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.00001
-num_epochs: 300
+lr: 0.0012
+num_epochs: 1300
 validation_every: 10
-batch_size: 2
+batch_size: 8
 weight_decay: 0.0001
 num_workers: 8
 fp16: true

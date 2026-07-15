@@ -535,8 +535,27 @@ class MambaVitAKD(AbstractModel):
         self.channel_attention = ChannelAttention(in_channels=basic_dims)
         self.is_training = False
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> MambaVitAKDOutput:
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+        *,
+        mode: str = "auto",
+    ) -> MambaVitAKDOutput:
+        """``mode="auto"`` (default) is the normal student(+teacher) path used
+        by inference and joint distillation training, gated by
+        ``self.is_training``. ``mode="teacher_pretrain"`` instead runs *only*
+        the teacher branch (always on the full-modality mask, ``with_sep=True``),
+        for ``MambaVitAKDTrainer``'s dedicated teacher-pretraining phase --
+        this keeps the call going through ``self.model(...)`` rather than
+        ``self.model.teacher(...)`` directly, so DistributedDataParallel's
+        gradient-sync hooks stay attached (see other models' ``forward``
+        docstrings for the same DDP-safety concern)."""
         x, mask = self._remap_input_order(x, mask)
+
+        if mode == "teacher_pretrain":
+            full_mask = torch.ones_like(mask)
+            return self.teacher(x, full_mask, with_sep=True)
 
         student_out = self.student(x, mask, with_sep=self.is_training)
         if not self.is_training:
@@ -552,14 +571,19 @@ class MambaVitAKD(AbstractModel):
         )
         return student_out, teacher_out, attn_loss
 
-    def predict(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def _sliding_window_predict(
+        self, images: torch.Tensor, patch_fn
+    ) -> torch.Tensor:
+        """Shared 50%-overlap sliding-window inference loop used by both
+        ``predict`` (student) and ``predict_teacher`` -- ``patch_fn`` maps one
+        ``input_patch_size``-sized crop to its softmax prediction."""
         _, _, height, width, depth = images.shape
         if (height, width, depth) == (
             input_patch_size,
             input_patch_size,
             input_patch_size,
         ):
-            return self(images, mask)
+            return patch_fn(images)
 
         h_starts = self._window_starts(height)
         w_starts = self._window_starts(width)
@@ -586,7 +610,7 @@ class MambaVitAKD(AbstractModel):
                         w : w + input_patch_size,
                         d : d + input_patch_size,
                     ]
-                    patch_pred = self(patch, mask)
+                    patch_pred = patch_fn(patch)
                     prediction[
                         :,
                         :,
@@ -602,6 +626,22 @@ class MambaVitAKD(AbstractModel):
                         d : d + input_patch_size,
                     ] += 1
         return prediction / weight
+
+    def predict(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return self._sliding_window_predict(images, lambda patch: self(patch, mask))
+
+    def predict_teacher(self, images: torch.Tensor) -> torch.Tensor:
+        """Sliding-window inference through the teacher branch alone (always
+        full-modality), for validating ``MambaVitAKDTrainer``'s dedicated
+        teacher-pretraining phase before the student/distillation phase
+        starts."""
+        full_mask = torch.ones(images.size(0), num_modals, dtype=torch.bool, device=images.device)
+
+        def patch_fn(patch: torch.Tensor) -> torch.Tensor:
+            fuse_pred_t, _, _, _, _ = self(patch, full_mask, mode="teacher_pretrain")
+            return fuse_pred_t
+
+        return self._sliding_window_predict(images, patch_fn)
 
     @staticmethod
     def _window_starts(size: int) -> list[int]:

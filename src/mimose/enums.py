@@ -44,6 +44,7 @@ class TrainerKind(StrEnum):
     LCKD = "lckd"
     MANYMIMOSAS = "manymimosas"
     MCPL = "mcpl"
+    MAMBAVITAKD = "mambavitakd"
 
 
 class ModelKind(StrEnum):

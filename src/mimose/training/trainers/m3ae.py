@@ -336,6 +336,26 @@ class M3AETrainer(BaseTrainer):
         )
         return payload
 
+    def _center_crop_to_patch(self, images: torch.Tensor) -> torch.Tensor:
+        """The pretraining reconstruction head (unlike ``predict``) requires
+        inputs at exactly ``patch_size`` in every spatial dimension, but the
+        val split's "test" transform leaves images at their native
+        (uncropped) size. Deterministically center-crop to match, since
+        pretrain validation only needs a representative patch, not full
+        spatial coverage."""
+        patch = self.patch_size
+        spatial_shape = images.shape[-3:]
+        if tuple(spatial_shape) == (patch, patch, patch):
+            return images
+        if any(dim < patch for dim in spatial_shape):
+            raise RuntimeError(
+                f"M3AE pretrain validation requires spatial dimensions of at least "
+                f"{(patch, patch, patch)}, got {tuple(spatial_shape)}"
+            )
+        starts = [(dim - patch) // 2 for dim in spatial_shape]
+        h0, w0, d0 = starts
+        return images[:, :, h0 : h0 + patch, w0 : w0 + patch, d0 : d0 + patch]
+
     def _pretrain_val_epoch(self, epoch: int) -> dict[str, float]:
         assert self.val_loader is not None
 
@@ -354,6 +374,7 @@ class M3AETrainer(BaseTrainer):
                 for batch in self.val_loader:
                     images = batch["images"].to(self.device, non_blocking=True)
                     mask = batch["mask"].to(self.device, non_blocking=True).bool()
+                    images = self._center_crop_to_patch(images)
 
                     model = self._model_for_state()
                     with self._autocast_context():
