@@ -50,6 +50,8 @@ def build_preprocess_merged_config(
     norm_mean: tuple[float, float, float, float] | None,
     norm_std: tuple[float, float, float, float] | None,
     yes: bool,
+    modal_suffixes: list[str] | None = None,
+    seg_suffix: str | None = None,
 ) -> dict[str, object]:
     yaml_config = load_yaml_config(config)
     return merge_cli_overrides(
@@ -69,6 +71,8 @@ def build_preprocess_merged_config(
         norm_mean=norm_mean,
         norm_std=norm_std,
         yes=yes if yes else yaml_config.get("yes"),
+        modal_suffixes=modal_suffixes,
+        seg_suffix=seg_suffix,
     )
 
 
@@ -83,7 +87,7 @@ def run_preprocess_from_merged(
         build_crop_config,
         build_norm_config,
     )
-    from mimose.preprocessing.pipeline import run_preprocessing
+    from mimose.preprocessing.pipeline import DEFAULT_SEG_SUFFIX, run_preprocessing
 
     require_preprocess_values(merged, "input_dir", "output_dir")
     crop_config = build_crop_config(
@@ -113,6 +117,10 @@ def run_preprocess_from_merged(
     table.add_row("Output", str(merged.get("output_dir")))
     if merged.get("dataset_type") is not None:
         table.add_row("Dataset type", str(merged.get("dataset_type")))
+    if merged.get("modal_suffixes"):
+        table.add_row("Modal suffixes", ", ".join(merged.get("modal_suffixes")))
+    if merged.get("seg_suffix"):
+        table.add_row("Seg suffix", str(merged.get("seg_suffix")))
 
     console.print(
         Panel(
@@ -124,6 +132,7 @@ def run_preprocess_from_merged(
     )
 
     dataset_type = merged.get("dataset_type")
+    modal_suffixes = merged.get("modal_suffixes")
     run_preprocessing(
         input_dir=Path(merged.get("input_dir")),
         output_dir=Path(merged.get("output_dir")),
@@ -132,6 +141,8 @@ def run_preprocess_from_merged(
         norm_config=norm_config,
         yes=bool(merged.get("yes", yes)),
         dataset_type=DatasetType(dataset_type) if dataset_type is not None else None,
+        modal_suffixes=list(modal_suffixes) if modal_suffixes else None,
+        seg_suffix=str(merged.get("seg_suffix")) if merged.get("seg_suffix") else DEFAULT_SEG_SUFFIX,
     )
 
 
@@ -674,6 +685,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         M3FeConTrainer,
         MambaVitAKDTrainer,
         ManyMimosasTrainer,
+        ManyMimosasKDTrainer,
         MCPLTrainer,
         MIFPNTrainer,
         MSTKDTrainer,
@@ -710,6 +722,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.RFL: RFLTrainer,
         TrainerKind.LCKD: LCKDTrainer,
         TrainerKind.MANYMIMOSAS: ManyMimosasTrainer,
+        TrainerKind.MANYMIMOSASKD: ManyMimosasKDTrainer,
         TrainerKind.MCPL: MCPLTrainer,
         TrainerKind.MAMBAVITAKD: MambaVitAKDTrainer,
     }
@@ -735,6 +748,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.RFL: TrainingModelKind.RFL,
         TrainerKind.LCKD: TrainingModelKind.LCKD,
         TrainerKind.MANYMIMOSAS: TrainingModelKind.MANYMIMOSAS,
+        TrainerKind.MANYMIMOSASKD: TrainingModelKind.MANYMIMOSASKD,
         TrainerKind.MCPL: TrainingModelKind.MCPL,
         TrainerKind.MAMBAVITAKD: TrainingModelKind.MAMBAVITAKD,
     }
@@ -751,6 +765,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.RFL: "rfl",
         TrainerKind.LCKD: "lckd",
         TrainerKind.MANYMIMOSAS: "tinymimosa",
+        TrainerKind.MANYMIMOSASKD: "manymimosaskd",
         TrainerKind.MCPL: "mcpl",
         TrainerKind.MAMBAVITAKD: "mambavitakd",
     }
@@ -805,7 +820,12 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         )
     )
     if (
-        model_kind in (TrainingModelKind.TINYMIMOSA, TrainingModelKind.MANYMIMOSAS)
+        model_kind
+        in (
+            TrainingModelKind.TINYMIMOSA,
+            TrainingModelKind.MANYMIMOSAS,
+            TrainingModelKind.MANYMIMOSASKD,
+        )
         and resolved_transform_kind != TransformKind.TINYMIMOSA
     ):
         raise typer.BadParameter(

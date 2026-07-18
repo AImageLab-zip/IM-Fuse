@@ -6,7 +6,11 @@ produced for each model/dataset, then writes a single workbook with one tab per
 *available* model. Each tab holds two tables (BRATS2018 and BRATS2023). Every
 table lists the modality-presence columns followed, for each region (WT, TC,
 ET) and each metric (Dice, HD95), by: the legacy value, one column per fold,
-the mean and std of the folds, and an error column (legacy - mean of folds).
+the mean and std of the folds, an error column (legacy - mean of folds), one
+column per fold's score on the internal dataset (e.g. fold1_internal), and an
+Internal Mean/Std pair (mean and std across those same internal fold values).
+The internal columns get their own per-fold values and mean/std but are not
+part of the Error calculation, which stays legacy-vs-official-folds only.
 
 Note: the legacy workbook only contains Dice numbers, so the legacy (and hence
 error) columns of the HD95 tables are left blank.
@@ -31,6 +35,9 @@ from rich.progress import track
 RESULTS_DIR = "/work/phd_mimose/results"
 LEGACY_FILE = "legacy-results.xlsx"
 OUTPUT_FILE = "reproduction-comparison.xlsx"
+REPO_OUTPUTS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "outputs"
+)
 
 # Regions to report, in output order. Keys are the fold-file column names for
 # Dice; the HD95 column is "<name>_hd95". Legacy stores them under the labels in
@@ -224,9 +231,14 @@ def fold_label(filename):
 def discover(results_dir):
     """Scan results_dir for <model>_<dsnum> directories with per-fold workbooks.
 
-    Returns models[model_norm][dataset_label] = {fold_label: fold_data_dict}.
+    Returns (models, internal_models), both shaped as
+    {model_norm: {dataset_label: {fold_label: fold_data_dict}}} -- `models`
+    from the official BraTS per-fold test runs (`results_fold*.xlsx`) and
+    `internal_models` from the same checkpoints tested against the internal
+    dataset instead (`results_internal_fold*.xlsx`).
     """
     models = defaultdict(dict)
+    internal_models = defaultdict(dict)
     entries = [
         entry for entry in sorted(os.listdir(results_dir))
         if os.path.isdir(os.path.join(results_dir, entry))
@@ -244,13 +256,21 @@ def discover(results_dir):
             glob.glob(os.path.join(full, "results_fold*.xlsx")),
             key=lambda p: int(re.search(r"fold(\d+)", p).group(1)),
         )
-        if not fold_files:
-            continue
-        folds = {}
-        for ff in fold_files:
-            folds[fold_label(os.path.basename(ff))] = parse_result_file(ff)
-        models[normalize(model_raw)][dataset] = folds
-    return models
+        internal_fold_files = sorted(
+            glob.glob(os.path.join(full, "results_internal_fold*.xlsx")),
+            key=lambda p: int(re.search(r"fold(\d+)", p).group(1)),
+        )
+        if fold_files:
+            folds = {}
+            for ff in fold_files:
+                folds[fold_label(os.path.basename(ff))] = parse_result_file(ff)
+            models[normalize(model_raw)][dataset] = folds
+        if internal_fold_files:
+            internal_folds = {}
+            for ff in internal_fold_files:
+                internal_folds[fold_label(os.path.basename(ff))] = parse_result_file(ff)
+            internal_models[normalize(model_raw)][dataset] = internal_folds
+    return models, internal_models
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +280,7 @@ HEADER_FILL = PatternFill("solid", fgColor="4472C4")
 SUBHEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 TITLE_FILL = PatternFill("solid", fgColor="1F3864")
 ERROR_FILL = PatternFill("solid", fgColor="FCE4D6")
+INTERNAL_FILL = PatternFill("solid", fgColor="E2EFDA")
 WHITE = Font(color="FFFFFF", bold=True)
 BOLD = Font(bold=True)
 CENTER = Alignment(horizontal="center", vertical="center")
@@ -277,14 +298,26 @@ def modality_order(legacy, dataset):
     return []
 
 
-def write_table(ws, start_row, dataset, legacy, folds_by_ds, display_name):
+def write_table(ws, start_row, dataset, legacy, folds_by_ds, internal_folds_by_ds, display_name):
     """Write one dataset table starting at start_row. Return next free row."""
     folds = folds_by_ds.get(dataset, {})
     fold_labels = sorted(folds.keys(), key=lambda s: int(re.search(r"\d+", s).group()))
 
+    internal_folds = internal_folds_by_ds.get(dataset, {})
+    internal_fold_labels = sorted(
+        internal_folds.keys(), key=lambda s: int(re.search(r"\d+", s).group())
+    )
+
     # Column plan: for each metric (Dice, HD95) and each region, a block of
-    #   Legacy | <fold labels...> | Mean | Std | Error
-    per_region = ["Legacy"] + fold_labels + ["Mean", "Std", "Error"]
+    #   Legacy | <fold labels...> | Mean | Std | Error | <fold_internal labels...> | Internal Mean | Internal Std
+    # The Internal columns get their own per-fold values and mean/std (over
+    # the same folds' checkpoints, scored against the internal dataset
+    # instead) but are not part of the Error calculation.
+    internal_fold_col_labels = [f"{fl}_internal" for fl in internal_fold_labels]
+    per_region = (
+        ["Legacy"] + fold_labels + ["Mean", "Std", "Error"]
+        + internal_fold_col_labels + ["Internal Mean", "Internal Std"]
+    )
     metrics = [("Dice", ""), ("HD95", "_hd95")]
 
     # Title row.
@@ -317,13 +350,25 @@ def write_table(ws, start_row, dataset, legacy, folds_by_ds, display_name):
             for j, label in enumerate(per_region):
                 c = ws.cell(row=sub_row, column=col + j, value=label)
                 c.font, c.alignment, c.border = BOLD, CENTER, BORDER
-                c.fill = ERROR_FILL if label == "Error" else SUBHEADER_FILL
+                if label == "Error":
+                    c.fill = ERROR_FILL
+                elif label in internal_fold_col_labels or label in ("Internal Mean", "Internal Std"):
+                    c.fill = INTERNAL_FILL
+                    ws.column_dimensions[get_column_letter(col + j)].width = 14
+                else:
+                    c.fill = SUBHEADER_FILL
             block_spans.append((col, metric_name, region))
             col += span
 
     # Data rows.
     data_start = sub_row + 1
     mkeys = modality_order(legacy, dataset)
+    # column index (absolute) -> list of values collected across modality rows,
+    # used afterwards to compute the trailing MEAN row.
+    column_values = defaultdict(list)
+    # metric_name -> region -> {"Mean": value, "Std": value} from the MEAN row.
+    region_stats = {metric_name: {} for metric_name, _suffix in metrics}
+
     for r_off, mkey in enumerate(mkeys):
         row = data_start + r_off
         for i, present in enumerate(mkey):
@@ -350,7 +395,20 @@ def write_table(ws, start_row, dataset, legacy, folds_by_ds, display_name):
                 )
                 error = (legacy_val - mean) if (legacy_val is not None and mean is not None) else None
 
-                values = [legacy_val] + fold_vals + [mean, std, error]
+                internal_vals = [
+                    internal_folds.get(fl, {}).get(mkey, {}).get(region + suffix)
+                    for fl in internal_fold_labels
+                ]
+                present_internal_vals = [v for v in internal_vals if v is not None]
+                internal_mean = statistics.fmean(present_internal_vals) if present_internal_vals else None
+                internal_std = statistics.pstdev(present_internal_vals) if len(present_internal_vals) > 1 else (
+                    0.0 if len(present_internal_vals) == 1 else None
+                )
+
+                values = (
+                    [legacy_val] + fold_vals + [mean, std, error]
+                    + internal_vals + [internal_mean, internal_std]
+                )
                 for j, v in enumerate(values):
                     c = ws.cell(row=row, column=col + j)
                     if v is not None:
@@ -358,10 +416,41 @@ def write_table(ws, start_row, dataset, legacy, folds_by_ds, display_name):
                     c.alignment, c.border = CENTER, BORDER
                     if per_region[j] == "Error" and v is not None:
                         c.fill = ERROR_FILL
+                    elif per_region[j] in internal_fold_col_labels or per_region[j] in ("Internal Mean", "Internal Std"):
+                        if v is not None:
+                            c.fill = INTERNAL_FILL
+                    if v is not None:
+                        column_values[col + j].append(v)
                 col += len(per_region)
 
-    end_row = data_start + len(mkeys)
-    return end_row + 2  # leave a blank spacer row
+    # MEAN row: column-wise mean, across all modality rows, of every column.
+    mean_row = data_start + len(mkeys)
+    ws.merge_cells(start_row=mean_row, start_column=1, end_row=mean_row, end_column=4)
+    mlab = ws.cell(row=mean_row, column=1, value="MEAN")
+    mlab.font, mlab.fill, mlab.alignment, mlab.border = BOLD, SUBHEADER_FILL, CENTER, BORDER
+
+    col = 5
+    for metric_name, suffix in metrics:
+        for region in REGIONS:
+            for j, label in enumerate(per_region):
+                vals = column_values.get(col + j, [])
+                v = statistics.fmean(vals) if vals else None
+                c = ws.cell(row=mean_row, column=col + j)
+                if v is not None:
+                    c.value = round(v, 4)
+                c.font, c.alignment, c.border = BOLD, CENTER, BORDER
+                if label == "Error":
+                    c.fill = ERROR_FILL
+                elif label in internal_fold_col_labels or label in ("Internal Mean", "Internal Std"):
+                    c.fill = INTERNAL_FILL
+                else:
+                    c.fill = SUBHEADER_FILL
+                if label in ("Mean", "Std"):
+                    region_stats[metric_name].setdefault(region, {})[label] = v
+            col += len(per_region)
+
+    end_row = mean_row
+    return end_row + 2, region_stats  # leave a blank spacer row
 
 
 def safe_sheet_title(name):
@@ -446,7 +535,7 @@ def write_summary_sheet(wb, report, display_names, models):
 def main():
     legacy_path = os.path.join(RESULTS_DIR, LEGACY_FILE)
     legacy, display_names = parse_legacy(legacy_path)
-    models = discover(RESULTS_DIR)
+    models, internal_models = discover(RESULTS_DIR)
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
@@ -465,22 +554,79 @@ def main():
         ws = wb.create_sheet(title=safe_sheet_title(display))
         ws.sheet_view.showGridLines = False
         folds_by_ds = models[model_norm]
+        internal_folds_by_ds = internal_models.get(model_norm, {})
 
         next_row = 1
-        for dataset in DATASETS.values():
-            next_row = write_table(ws, next_row, dataset, legacy, folds_by_ds, display)
+        stats_by_dataset = {}
+        for dsnum, dataset in DATASETS.items():
+            next_row, region_stats = write_table(
+                ws, next_row, dataset, legacy, folds_by_ds, internal_folds_by_ds, display
+            )
+            stats_by_dataset[dsnum] = region_stats
+
+        # Score block, kept separate per metric so Dice and HD95 (different
+        # scales) are never averaged together:
+        #   - Dice score / HD95 score: mean of that metric's per-region Mean
+        #     (across WT/TC/ET), per dataset and overall.
+        #   - Mean Std: mean of every per-region Std value collected above
+        #     (both metrics, all regions), per dataset and overall.
+        dice_scores, hd95_scores, mean_stds = {}, {}, {}
+        for dsnum, stats in stats_by_dataset.items():
+            dice_means = [v.get("Mean") for v in stats.get("Dice", {}).values() if v.get("Mean") is not None]
+            hd95_means = [v.get("Mean") for v in stats.get("HD95", {}).values() if v.get("Mean") is not None]
+            all_stds = [
+                v.get("Std")
+                for metric_stats in stats.values()
+                for v in metric_stats.values()
+                if v.get("Std") is not None
+            ]
+            dice_scores[dsnum] = statistics.fmean(dice_means) if dice_means else None
+            hd95_scores[dsnum] = statistics.fmean(hd95_means) if hd95_means else None
+            mean_stds[dsnum] = statistics.fmean(all_stds) if all_stds else None
+
+        def _overall(per_dataset):
+            present = [v for v in per_dataset.values() if v is not None]
+            return statistics.fmean(present) if present else None
+
+        dice_score_all = _overall(dice_scores)
+        hd95_score_all = _overall(hd95_scores)
+        mean_std_all = _overall(mean_stds)
+
+        next_row += 1
+
+        def _write_score_row(row, label, value):
+            label_cell = ws.cell(row=row, column=1, value=label)
+            label_cell.font = BOLD
+            value_cell = ws.cell(row=row, column=2, value=round(value, 4) if value is not None else None)
+            value_cell.font, value_cell.alignment, value_cell.border = BOLD, CENTER, BORDER
+            return row + 1
+
+        for dsnum, dataset in DATASETS.items():
+            next_row = _write_score_row(next_row, f"Dice score {dsnum}", dice_scores.get(dsnum))
+            next_row = _write_score_row(next_row, f"HD95 score {dsnum}", hd95_scores.get(dsnum))
+            next_row = _write_score_row(next_row, f"Mean Std {dsnum}", mean_stds.get(dsnum))
+        next_row = _write_score_row(next_row, "Dice score all", dice_score_all)
+        next_row = _write_score_row(next_row, "HD95 score all", hd95_score_all)
+        next_row = _write_score_row(next_row, "Mean Std all", mean_std_all)
 
         # Reasonable column widths.
         ws.column_dimensions["A"].width = 5
         for i in range(2, 5):
             ws.column_dimensions[get_column_letter(i)].width = 5
         for i in range(5, ws.max_column + 1):
-            ws.column_dimensions[get_column_letter(i)].width = 9
+            letter = get_column_letter(i)
+            if ws.column_dimensions[letter].width != 14:
+                ws.column_dimensions[letter].width = 9
         ws.freeze_panes = "E4"
 
     out_path = os.path.join(RESULTS_DIR, OUTPUT_FILE)
     wb.save(out_path)
     print(f"Wrote {out_path}")
+
+    os.makedirs(REPO_OUTPUTS_DIR, exist_ok=True)
+    repo_out_path = os.path.join(REPO_OUTPUTS_DIR, OUTPUT_FILE)
+    wb.save(repo_out_path)
+    print(f"Wrote {repo_out_path}")
     print(f"Tabs ({len(available)}): {', '.join(display_names.get(m, m) for m in available)}")
     for model_norm in available:
         for ds, folds in models[model_norm].items():

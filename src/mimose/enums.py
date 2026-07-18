@@ -7,6 +7,7 @@ class DatasetType(StrEnum):
     BRATS18 = "brats18"
     BRATS23 = "brats23"
     BRATS25 = "brats25"
+    INTERNAL = "internal"
 
 
 class CropMode(StrEnum):
@@ -43,6 +44,7 @@ class TrainerKind(StrEnum):
     RFL = "rfl"
     LCKD = "lckd"
     MANYMIMOSAS = "manymimosas"
+    MANYMIMOSASKD = "manymimosaskd"
     MCPL = "mcpl"
     MAMBAVITAKD = "mambavitakd"
 
@@ -55,6 +57,7 @@ class ModelKind(StrEnum):
     A2FSEG = "a2fseg"
     TINYMIMOSA = "tinymimosa"
     MANYMIMOSAS = "manymimosas"
+    MANYMIMOSASKD = "manymimosaskd"
     UHVED = "uhved"
     ROBUSTSEG = "robustseg"
     M2FTRANS = "m2ftrans"
@@ -112,6 +115,7 @@ class LossKind(StrEnum):
     LCKD = "lckd"
     INOUTFUSION = "inoutfusion"
     MAMBAVITAKD = "mambavitakd"
+    MANYMIMOSASKD = "manymimosaskd"
     MCPL = "mcpl"
 
 

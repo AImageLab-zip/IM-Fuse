@@ -8,6 +8,7 @@ from mimose.training.trainers.m3ae import M3AETrainer
 from mimose.training.trainers.m3fecon import M3FeConTrainer
 from mimose.training.trainers.mambavitakd import MambaVitAKDTrainer
 from mimose.training.trainers.many_mimosas import ManyMimosasTrainer
+from mimose.training.trainers.many_mimosas_kd import ManyMimosasKDTrainer
 from mimose.training.trainers.mcpl import MCPLTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
 from mimose.training.trainers.mstkdnet import MSTKDTrainer
@@ -29,6 +30,7 @@ __all__ = [
     "M3FeConTrainer",
     "MambaVitAKDTrainer",
     "ManyMimosasTrainer",
+    "ManyMimosasKDTrainer",
     "MCPLTrainer",
     "MIFPNTrainer",
     "MSTKDTrainer",

@@ -52,8 +52,8 @@ class TinyMimosa(AbstractModel):
             raise ValueError(
                 "TinyMimosa input_shape must contain three positive spatial dimensions"
             )
-        if num_modals != NUM_MODALITIES:
-            raise ValueError(f"TinyMimosa expects exactly {NUM_MODALITIES} modalities")
+        if num_modals <= 0:
+            raise ValueError("TinyMimosa num_modals must be positive")
         if not features_per_stage:
             raise ValueError("TinyMimosa features_per_stage cannot be empty")
         if len(features_per_stage) < 4:

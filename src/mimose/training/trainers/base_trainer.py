@@ -38,6 +38,7 @@ from mimose.losses.config import LossConfig
 from mimose.models.abstract_model import AbstractModel
 from mimose.models.config import ModelConfig
 from mimose.training.transforms.base_transforms import TransformManager
+from mimose.utils.seed import set_seed
 
 
 LOGGER = logging.getLogger(__name__)
@@ -125,6 +126,8 @@ class BaseTrainer(AbstractTrainer):
             strict=self.resume_requested,
         )
         self._setup_distributed()
+        if self.seed is not None:
+            set_seed(self.seed)
         self.model = self._build_model()
         self._maybe_compile_model()
         self.wrap_model_for_distributed()
@@ -276,7 +279,8 @@ class BaseTrainer(AbstractTrainer):
             return self.checkpoint_dir / "final_weights_only.safetensors"
 
         final_path = self.checkpoint_dir / "final_weights_only.safetensors"
-        return save_weights_only_checkpoint(model, final_path)
+        export_model = model.model_for_export() if hasattr(model, "model_for_export") else model
+        return save_weights_only_checkpoint(export_model, final_path)
 
     def _build_model(self) -> torch.nn.Module:
         if self.model_config is None:

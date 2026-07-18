@@ -15,8 +15,8 @@ if [ "${#scripts[@]}" -eq 0 ]; then
 fi
 
 for script in "${scripts[@]}"; do
-    for i in 1 2 3 4; do
-        echo "Submitting ${script} (${i}/4)"
-        sbatch --dependency=singleton "${script}"
+    for i in 1 2 3 4 5 6 7 8 9; do
+        echo "Submitting ${script} (${i}/9)"
+        sbatch --nice=10 --dependency=singleton "${script}"
     done
 done

@@ -546,7 +546,22 @@ def preprocess(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Dataset split to use. One of: brats18, brats23, brats25",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
+        rich_help_panel="Input/Output",
+    ),
+    modal_suffixes: list[str] | None = typer.Option(
+        None,
+        "--modal-suffixes",
+        help="Filename suffixes for the modality volumes, in channel order. "
+        "Each case's file is expected at '<input_dir>/<case_id>/<case_id>-<suffix>.nii.gz'. "
+        "Defaults to: t1c t1n t2f t2w.",
+        rich_help_panel="Input/Output",
+    ),
+    seg_suffix: str | None = typer.Option(
+        None,
+        "--seg-suffix",
+        help="Filename suffix for the segmentation mask. "
+        "Expected at '<input_dir>/<case_id>/<case_id>-<suffix>.nii.gz'. Defaults to: seg.",
         rich_help_panel="Input/Output",
     ),
     crop_mode: str = typer.Option(
@@ -557,13 +572,13 @@ def preprocess(
         + ". Custom function names from preprocessing.cropping are also accepted.",
         rich_help_panel="Cropping",
     ),
-    crop_size: list[int] | None = typer.Option(
+    crop_size: tuple[int, int, int] | None = typer.Option(
         None,
         "--crop-size",
         help="Center crop size as three integers: X Y Z.",
         rich_help_panel="Cropping",
     ),
-    crop_min_size: list[int] | None = typer.Option(
+    crop_min_size: tuple[int, int, int] | None = typer.Option(
         None,
         "--crop-min-size",
         help="Minimum non-empty crop size as three integers: X Y Z.",
@@ -650,6 +665,8 @@ def preprocess(
         norm_mean=norm_mean,
         norm_std=norm_std,
         yes=yes,
+        modal_suffixes=modal_suffixes,
+        seg_suffix=seg_suffix,
     )
     workflows.run_preprocess_from_merged(merged, console=console, yes=yes)
 
@@ -1074,7 +1091,7 @@ def train(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Dataset split to use. One of: brats18, brats23, brats25",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
         rich_help_panel="Input/Output",
     ),
     run_suffix: str | None = typer.Option(
@@ -1275,7 +1292,7 @@ def test(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Dataset split to use. One of: brats18, brats23, brats25",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
         rich_help_panel="Input/Output",
     ),
     run_suffix: str | None = typer.Option(
@@ -1451,7 +1468,7 @@ def push(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Dataset split to use. One of: brats18, brats23, brats25",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
         rich_help_panel="Input/Output",
     ),
     run_suffix: str | None = typer.Option(
@@ -1619,7 +1636,7 @@ def export(
     dataset_type: DatasetType = typer.Option(
         None,
         "--dataset-type",
-        help="Dataset split to use. One of: brats18, brats23, brats25",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
         rich_help_panel="Input/Output",
     ),
     run_suffix: str | None = typer.Option(

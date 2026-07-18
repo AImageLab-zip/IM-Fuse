@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +24,7 @@ from torch.utils.data import DataLoader
 from mimose.checkpoints import load_weights_only_checkpoint
 from mimose.datasets import DatasetType, IMFuseDataset
 from mimose.models.abstract_model import AbstractModel
+from mimose.utils.seed import set_seed
 
 MASKS: list[list[bool]] = [
     [False, False, False, True],
@@ -71,13 +71,6 @@ class AverageMeter:
         self.count += n
         self.avg = self.sum / self.count
         self.val = value
-
-
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 
 def softmax_output_dice_class4(

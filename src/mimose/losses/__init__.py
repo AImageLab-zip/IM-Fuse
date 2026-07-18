@@ -5,6 +5,7 @@ from mimose.losses.inoutfusion import InOutFusionLoss
 from mimose.losses.lckd import LCKDLoss
 from mimose.losses.m3ae import M3AELoss
 from mimose.losses.m3fecon import M3FeConLoss
+from mimose.losses.many_mimosas_kd import ManyMimosasKDLoss
 from mimose.losses.mifpn import MIFPNLoss
 from mimose.losses.mstkdnet import MSTKDNetLoss
 from mimose.losses.rfl import RFLLoss
@@ -24,6 +25,7 @@ __all__ = [
     "LCKDLoss",
     "M3AELoss",
     "M3FeConLoss",
+    "ManyMimosasKDLoss",
     "MIFPNLoss",
     "MSTKDNetLoss",
     "RFLLoss",

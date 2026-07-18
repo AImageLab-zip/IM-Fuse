@@ -18,11 +18,25 @@ except ImportError:  # pragma: no cover - exercised when optional dependency is 
 
 
 class AbstractModel(nn.Module, PyTorchModelHubMixin, ABC):
+    def model_for_export(self) -> "AbstractModel":
+        """The model whose weights should be persisted as the deployable
+        checkpoint (``final_weights_only.safetensors`` / HF export).
+
+        Defaults to ``self``. KD-style wrappers that carry training-only
+        submodules alongside the deployable model (e.g. a teacher network,
+        hint adapters) override this to return just the deployable part, so
+        the resumable ``model_last.pth``/``best.pth`` checkpoints (which use
+        ``self.state_dict()`` directly, not this hook) can still keep full
+        training state while the exported artifact stays lean.
+        """
+        return self
+
     def get_hf_config(self) -> dict[str, Any]:
+        target = self.model_for_export()
         return {
-            "model_class": self.__class__.__name__,
-            "model_kwargs": dict(getattr(self, "_mimose_model_kwargs", {})),
-            "mimose_model_name": getattr(self, "_mimose_model_name", self.__class__.__name__),
+            "model_class": target.__class__.__name__,
+            "model_kwargs": dict(getattr(target, "_mimose_model_kwargs", {})),
+            "mimose_model_name": getattr(target, "_mimose_model_name", target.__class__.__name__),
         }
 
     def export_hf_pretrained(self, save_directory: str | Path) -> Path:
@@ -39,7 +53,7 @@ class AbstractModel(nn.Module, PyTorchModelHubMixin, ABC):
         target_dir = Path(save_directory)
         target_dir.mkdir(parents=True, exist_ok=True)
         save_weights_only_checkpoint(
-            self,
+            self.model_for_export(),
             target_dir / "final_weights_only.safetensors",
         )
 

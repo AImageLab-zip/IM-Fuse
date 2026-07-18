@@ -36,10 +36,9 @@ def preprocess_case(
     crop_config: CropConfig,
     clamp_config: ClampConfig,
     norm_config: NormConfig,
+    modals: list[str],
 ) -> str:
     output_file = output_dir / f"{file['name']}.npz"
-
-    modals = ["t1c", "t1n", "t2f", "t2w"]
 
     image_files = []
 
@@ -57,6 +56,10 @@ def preprocess_case(
     np.savez_compressed(output_file, images=images.astype(np.float32), seg=seg.astype(np.uint8))
     return str(output_file)
 
+DEFAULT_MODAL_SUFFIXES = ["t1c", "t1n", "t2f", "t2w"]
+DEFAULT_SEG_SUFFIX = "seg"
+
+
 def run_preprocessing(
     input_dir: Path,
     output_dir: Path,
@@ -65,8 +68,12 @@ def run_preprocessing(
     norm_config: NormConfig,
     yes: bool,
     dataset_type: DatasetType | None = None,
+    modal_suffixes: list[str] | None = None,
+    seg_suffix: str = DEFAULT_SEG_SUFFIX,
 ) -> None:
     """Run the preprocessing pipeline with the selected crop configuration."""
+    modal_suffixes = modal_suffixes if modal_suffixes else DEFAULT_MODAL_SUFFIXES
+
     if output_dir.exists():
         if not output_dir.is_dir():
             raise click.BadParameter(
@@ -123,21 +130,20 @@ def run_preprocessing(
                 continue
             if allowed_case_ids is not None and sub.name not in allowed_case_ids:
                 continue
-            input_files.append({
-                'name':sub.name,
-                't1c':sub/f'{sub.name}-t1c.nii.gz',
-                't1n':sub/f'{sub.name}-t1n.nii.gz',
-                't2f':sub/f'{sub.name}-t2f.nii.gz',
-                't2w':sub/f'{sub.name}-t2w.nii.gz',
-                'seg':sub/f'{sub.name}-seg.nii.gz'
-            })
+            case_file = {
+                'name': sub.name,
+                'seg': sub / f'{sub.name}-{seg_suffix}.nii.gz',
+            }
+            for modal in modal_suffixes:
+                case_file[modal] = sub / f'{sub.name}-{modal}.nii.gz'
+            input_files.append(case_file)
 
 
         num_workers = len(os.sched_getaffinity(0))
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [
-                executor.submit(preprocess_case, file, output_dir, crop_config,clamp_config,norm_config)
+                executor.submit(preprocess_case, file, output_dir, crop_config, clamp_config, norm_config, modal_suffixes)
                 for file in input_files
             ]
 
