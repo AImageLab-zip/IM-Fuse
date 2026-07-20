@@ -4,11 +4,11 @@ This document explains how to extend dataset loading and split handling.
 
 Relevant files:
 
-- `src/brainchmark/datasets/base.py`
-- `src/brainchmark/datasets/imfuse.py`
-- `src/brainchmark/datasets/config.py`
-- `src/brainchmark/data/splits/`
-- `src/brainchmark/preprocessing/pipeline.py`
+- `src/mimose/datasets/base.py`
+- `src/mimose/datasets/imfuse.py`
+- `src/mimose/datasets/config.py`
+- `src/mimose/data/splits/`
+- `src/mimose/preprocessing/pipeline.py`
 
 ## Mental Model
 
@@ -56,7 +56,7 @@ Create a new loader module when:
 
 Typical steps:
 
-1. create a new dataset module under `src/brainchmark/datasets/`
+1. create a new dataset module under `src/mimose/datasets/`
 2. subclass `BaseDataset`
 3. implement `build_sample(...)`
 4. implement `__getitem__(...)`
@@ -74,7 +74,7 @@ Typical steps:
 
 ## Split Files
 
-The active split path uses JSON under `src/brainchmark/data/splits/`.
+The active split path uses JSON under `src/mimose/data/splits/`.
 
 Each dataset section typically contains:
 

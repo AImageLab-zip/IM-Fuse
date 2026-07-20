@@ -1,0 +1,113 @@
+# Combined M3AE reference config for BraTS 2025.
+# This mirrors legacy M3AE fine-tuning defaults as closely as possible under
+# the current MiMoSe CLI/config API. Legacy M3AE also has a separate
+# masked-autoencoder pretraining stage and a cross-view consistency loss
+# during fine-tuning. The pretraining stage IS reproduced here (opt-in via
+# custom_trainer_kwargs.pretrain_fraction below); the cross-view consistency
+# loss and deep supervision are reproduced too, via a second masked view per
+# step (see custom_trainer_kwargs.deep_supervised / consistency_weight).
+#
+# Note: the current CLI still expects command-specific flat YAML files, so this
+# combined file is a reference/source-of-truth file rather than a single file
+# both commands can consume directly.
+
+# preprocess
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/m3ae-preprocessed/
+dataset_type: brats25
+
+crop_mode: non_empty
+crop_size: null
+crop_min_size: [128, 128, 128]
+
+clamp_mode: none
+clamp_percentile: null
+clamp_min: null
+clamp_max: null
+
+norm_mode: subject_zscore
+norm_min_max_range: null
+norm_mean: null
+norm_std: null
+
+yes: false
+
+# training
+data_dir: /path/to/preprocessed/m3ae-preprocessed
+art_dir: /path/to/artifacts/m3ae25
+results_dir: /path/to/results/m3ae_25
+
+trainer: m3ae
+model: m3ae
+loss: m3ae
+
+custom_model_kwargs:
+  num_cls: 5
+
+custom_loss_kwargs:
+  log_clamp_min: 0.005
+
+custom_trainer_kwargs:
+  iter_per_epoch: null
+  patch_size: 128
+  debug: false
+  transform_kind: imfuse
+  train_masking_mode: random
+  val_masking_mode: validation
+  # Two-stage schedule matching legacy M3AE's separate pretrain.py/train.py:
+  # the first pretrain_fraction of num_epochs reconstructs the (masked) input
+  # and trains `limage` at limage_lr; the rest freezes `limage` and trains
+  # segmentation as usual. Set to 0.0 to disable (single-stage, as before).
+  pretrain_fraction: 0.15
+  limage_lr: 0.005
+  limage_reg_weight: 0.005
+  # Deep supervision + cross-view consistency (legacy M3AE fine-tuning).
+  # Each step forwards a second, independently-masked view of the same
+  # crop; both views are deep-supervised and their coarse out4 logits are
+  # matched by consistency_weight * MSE (legacy weight_kl, feature_level=2).
+  # consistency_weight: 0.0 keeps deep supervision but drops the 2nd view;
+  # deep_supervised: false falls back to plain single-output Dice+CE.
+  deep_supervised: true
+  consistency_weight: 1.0
+
+optimizer: adam
+betas: [0.9, 0.999]
+momentum: 0.9
+
+scheduler: cosine
+poly_total_iters: null
+poly_power: null
+cosine_t_max: 300
+cosine_eta_min: 0.0
+step_step_size: null
+step_gamma: null
+multistep_milestones: null
+multistep_gamma: null
+plateau_mode: null
+plateau_factor: null
+plateau_patience: null
+
+lr: 0.0024
+num_epochs: 300
+validation_every: 10
+batch_size: 8
+weight_decay: 0.00001
+num_workers: 8
+fp16: false
+compile: false
+
+resume: false
+pretrain: null
+seed: 999
+
+fold: 1
+wandb_project: MiMoSe
+wandb_entity: null
+wandb_mode: online
+wandb_run_name: m3ae25
+push_to_hf: false
+hf_repo: /path/to/huggingface/owner-repo
+
+# testing
+checkpoint_path: /path/to/artifacts/m3ae25/checkpoints/final_weights_only.safetensors
+output_path: /path/to/results/m3ae_25/results.txt

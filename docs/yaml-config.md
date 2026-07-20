@@ -1,23 +1,23 @@
 # YAML Config Guide
 
-This document explains how to write a YAML config for BrainchMark.
+This document explains how to write a YAML config for MiMoSe.
 
 If you are extending the codebase itself rather than just writing configs, the detailed component extension guides live under [docs/components/README.md](components/README.md).
 
-BrainchMark uses a flat YAML style. One file can contain fields for:
+MiMoSe uses a flat YAML style. One file can contain fields for:
 
 - preprocessing
 - training
 - testing
 
-Each command reads only the keys it needs and ignores the rest. While it is possible to have 3 different yaml files, it is strongly consigliato to use a unified config, since there a
+Each command reads only the keys it needs and ignores the rest. One YAML file can hold preprocess, train, and test fields together, and that is the recommended setup for most runs.
 
 ## General Rules
 
 - CLI values override YAML values when both are provided.
 - Most fields are top-level keys.
 - `custom_model_kwargs`, `custom_loss_kwargs`, and `custom_trainer_kwargs` are nested dictionaries.
-- Shipped examples live in `src/brainchmark/data/configs/`.
+- Shipped examples live in `src/mimose/data/configs/`.
 
 The easiest workflow is:
 
@@ -34,6 +34,7 @@ The easiest workflow is:
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `crop_mode`: string enum
   - `none`
   - `center`
@@ -64,14 +65,55 @@ The easiest workflow is:
 - `trainer`: string enum
   - `imfuse`
   - `dcseg`
+  - `uhved`
+  - `robustseg`
+  - `shaspec`
+  - `m3ae`
+  - `m3fecon`
+  - `srmnet`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `rfl`
+  - `lckd`
 - `model`: string enum
   - `imfuse`
   - `mmformer`
   - `dcseg`
   - `rfnet`
-- `loss`: string enum
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `m2ftrans`
+  - `sfusion`
+  - `shaspec`
+  - `m3ae`
+  - `m3fecon`
+  - `srmnet`
+  - `mmmvit`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `rfl`
+  - `unetmfi`
+  - `lckd`
+  - `inoutfusion`
+- `loss`: built-in string choice
   - `imfuse`
   - `dcseg`
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `shaspec`
+  - `m3ae`
+  - `m3fecon`
+  - `srmnet`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `rfl`
+  - `lckd`
+  - `inoutfusion`
 - `optimizer`: string enum
   - `radam`
   - `adamw`
@@ -94,6 +136,8 @@ The easiest workflow is:
 - `multistep_milestones`: list of integers or `null`
 - `multistep_gamma`: float or `null`
 - `plateau_mode`: string or `null`
+  - `min`
+  - `max`
 - `plateau_factor`: float or `null`
 - `plateau_patience`: integer or `null`
 - `lr`: float
@@ -107,15 +151,18 @@ The easiest workflow is:
 - `seed`: integer or `null`
 - `wandb_project`: string or `null`
 - `wandb_mode`: string or `null`
+  - `online`
+  - `offline`
+  - `disabled`
 - `wandb_run_name`: string or `null`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `split_file`: path or `null`
 - `transform_kind`: string enum or `null`
   - `imfuse`
-  - `dcseg`
-  - `rfnet`
+  - `tinymimosa`
 
 ### Testing
 
@@ -127,9 +174,27 @@ The easiest workflow is:
   - `mmformer`
   - `dcseg`
   - `rfnet`
+  - `tinymimosa`
+  - `uhved`
+  - `robustseg`
+  - `m2ftrans`
+  - `sfusion`
+  - `shaspec`
+  - `m3ae`
+  - `m3fecon`
+  - `srmnet`
+  - `mmmvit`
+  - `ims2trans`
+  - `mstkdnet`
+  - `mifpn`
+  - `rfl`
+  - `unetmfi`
+  - `lckd`
+  - `inoutfusion`
 - `dataset_type`: string enum
   - `brats18`
   - `brats23`
+  - `brats25`
 - `num_workers`: integer
 - `seed`: integer or `null`
 - `split_file`: path or `null`
@@ -148,7 +213,7 @@ Path-like values are written as strings:
 
 ```yaml
 data_dir: /work/user/preprocessed
-checkpoint_path: /work/user/run/checkpoints/model_last.pth
+checkpoint_path: /work/user/run/checkpoints/final_weights_only.safetensors
 ```
 
 ### Enums
@@ -159,6 +224,8 @@ Enum-like values are written as lowercase strings:
 trainer: dcseg
 optimizer: adam
 dataset_type: brats23
+transform_kind: tinymimosa
+wandb_mode: offline
 ```
 
 ### Booleans
@@ -232,7 +299,7 @@ custom_model_kwargs:
 
 custom_trainer_kwargs:
   patch_size: 112
-  transform_kind: dcseg
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
   use_recon_loss: true
@@ -267,7 +334,7 @@ dataset_type: brats23
 
 ```yaml
 data_dir: /path/to/preprocessed
-checkpoint_path: /path/to/checkpoint.pth
+checkpoint_path: /path/to/final_weights_only.safetensors
 output_path: /path/to/results.txt
 model: dcseg
 
@@ -315,7 +382,7 @@ Type: dictionary with trainer-specific keys.
 ```yaml
 custom_trainer_kwargs:
   patch_size: 112
-  transform_kind: dcseg
+  transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
 ```
@@ -327,6 +394,9 @@ Common trainer-specific keys and types:
 - `patch_size`: integer
 - `debug`: boolean
 - `transform_kind`: string enum
+- `transform_kind` values:
+  - `imfuse`
+  - `tinymimosa`
 - `train_masking_mode`: string enum
   - `random`
   - `validation`
@@ -341,6 +411,8 @@ Common trainer-specific keys and types:
 - `use_mod_contrastive`: boolean
 - `regularization_alpha`: float
 - `anatomy_contrastive_method`: string
+  - `cos_sim`
+  - `ssim`
 
 ## Nulls and Lists
 
@@ -359,9 +431,9 @@ Use YAML lists for sequences:
 
 It is normal for one config to include preprocess, train, and test fields together.
 
-- `brainchmark preprocess --config ...` reads preprocess keys
-- `brainchmark train --config ...` reads train keys
-- `brainchmark test --config ...` reads test keys
+- `mimose preprocess --config ...` reads preprocess keys
+- `mimose train --config ...` reads train keys
+- `mimose test --config ...` reads test keys
 
 You do not need separate files unless that is easier for your workflow.
 
@@ -369,14 +441,46 @@ You do not need separate files unless that is easier for your workflow.
 
 Recommended examples:
 
-- `src/brainchmark/data/configs/imfuse_18.yaml`
-- `src/brainchmark/data/configs/imfuse_23.yaml`
-- `src/brainchmark/data/configs/mmformer_18.yaml`
-- `src/brainchmark/data/configs/mmformer_23.yaml`
-- `src/brainchmark/data/configs/dcseg_18.yaml`
-- `src/brainchmark/data/configs/dcseg_23.yaml`
-- `src/brainchmark/data/configs/rfnet_18.yaml`
-- `src/brainchmark/data/configs/rfnet_23.yaml`
+- `src/mimose/data/configs/imfuse_18.yaml`
+- `src/mimose/data/configs/imfuse_23.yaml`
+- `src/mimose/data/configs/mmformer_18.yaml`
+- `src/mimose/data/configs/mmformer_23.yaml`
+- `src/mimose/data/configs/dcseg_18.yaml`
+- `src/mimose/data/configs/dcseg_23.yaml`
+- `src/mimose/data/configs/rfnet_18.yaml`
+- `src/mimose/data/configs/rfnet_23.yaml`
+- `src/mimose/data/configs/uhved_18.yaml`
+- `src/mimose/data/configs/uhved_23.yaml`
+- `src/mimose/data/configs/robustseg_18.yaml`
+- `src/mimose/data/configs/robustseg_23.yaml`
+- `src/mimose/data/configs/m2ftrans_18.yaml`
+- `src/mimose/data/configs/m2ftrans_23.yaml`
+- `src/mimose/data/configs/sfusion_18.yaml`
+- `src/mimose/data/configs/sfusion_23.yaml`
+- `src/mimose/data/configs/shaspec_18.yaml`
+- `src/mimose/data/configs/shaspec_23.yaml`
+- `src/mimose/data/configs/m3ae_18.yaml`
+- `src/mimose/data/configs/m3ae_23.yaml`
+- `src/mimose/data/configs/m3fecon_18.yaml`
+- `src/mimose/data/configs/m3fecon_23.yaml`
+- `src/mimose/data/configs/srmnet_18.yaml`
+- `src/mimose/data/configs/srmnet_23.yaml`
+- `src/mimose/data/configs/mmmvit_18.yaml`
+- `src/mimose/data/configs/mmmvit_23.yaml`
+- `src/mimose/data/configs/ims2trans_18.yaml`
+- `src/mimose/data/configs/ims2trans_23.yaml`
+- `src/mimose/data/configs/mstkdnet_18.yaml`
+- `src/mimose/data/configs/mstkdnet_23.yaml`
+- `src/mimose/data/configs/mifpn_18.yaml`
+- `src/mimose/data/configs/mifpn_23.yaml`
+- `src/mimose/data/configs/rfl_18.yaml`
+- `src/mimose/data/configs/rfl_23.yaml`
+- `src/mimose/data/configs/unetmfi_18.yaml`
+- `src/mimose/data/configs/unetmfi_23.yaml`
+- `src/mimose/data/configs/lckd_18.yaml`
+- `src/mimose/data/configs/lckd_23.yaml`
+- `src/mimose/data/configs/inoutfusion_18.yaml`
+- `src/mimose/data/configs/inoutfusion_23.yaml`
 
 ## Related Docs
 

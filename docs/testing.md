@@ -1,6 +1,6 @@
 # Testing
 
-`brainchmark test` evaluates a checkpoint by sweeping the standard 15 missing-modality masks and writing a text report plus an Excel summary.
+`mimose test` evaluates a checkpoint by sweeping the standard 15 missing-modality masks and writing a text report plus an Excel summary.
 
 The active testing path currently uses:
 
@@ -13,15 +13,29 @@ The active testing path currently uses:
 Run from YAML:
 
 ```bash
-brainchmark test --config src/brainchmark/data/configs/imfuse_23.yaml
+mimose test --config src/mimose/data/configs/imfuse_23.yaml
 ```
 
 Run from CLI:
 
 ```bash
-brainchmark test \
+mimose test \
   --data-dir /path/to/preprocessed \
-  --checkpoint-path /path/to/checkpoint.pth \
+  --checkpoint-path /path/to/final_weights_only.safetensors \
+  --output-path /path/to/results.txt \
+  --dataset-type brats23 \
+  --model dcseg
+```
+
+Run from CLI with an online checkpoint cache:
+
+```bash
+mimose test \
+  --data-dir /path/to/preprocessed \
+  --art-dir /path/to/artifacts/run1 \
+  --online \
+  --hf-repo owner/repo \
+  --hf-run-name run1 \
   --output-path /path/to/results.txt \
   --dataset-type brats23 \
   --model dcseg
@@ -33,12 +47,17 @@ The test command requires:
 
 - `data_dir`
 - `output_path`
-- `checkpoint_path`
 - `dataset_type`
+
+Use one of these checkpoint inputs:
+
+- `checkpoint_path` for a local `.safetensors` weights file
+- `hf_repo` together with `hf_run_name`, `online=true`, and `art_dir` for a downloaded cached checkpoint
+- `art_dir` by itself to auto-resolve `art_dir/checkpoints/final_weights_only.safetensors`
 
 `model` is optional in the CLI because it defaults to `imfuse`, but for a real run you should set it explicitly unless the config already does.
 
-For the overall BrainchMark YAML format, see [docs/yaml-config.md](yaml-config.md).
+For the overall MiMoSe YAML format, see [docs/yaml-config.md](yaml-config.md).
 For a very detailed extension guide for the testing path, see [docs/components/testing.md](components/testing.md).
 
 Active tested model choices currently include:
@@ -47,6 +66,13 @@ Active tested model choices currently include:
 - `mmformer`
 - `dcseg`
 - `rfnet`
+- `tinymimosa`
+
+Dataset type choices:
+
+- `brats18`
+- `brats23`
+- `brats25`
 
 ## What It Produces
 
@@ -79,12 +105,18 @@ The current metrics reported are:
 
 If a checkpoint is missing, the command raises a clean CLI error.
 
+If `online` is enabled, MiMoSe downloads the checkpoint from Hugging Face using `hf_repo` and `hf_run_name`, stores it at `art_dir/checkpoints/hf/<repo>/<run>/final_weights_only.safetensors`, and reuses that cached file on later runs if it is already present.
+
 ## YAML Fields
 
 The test command reads these fields from the combined config files:
 
 - `data_dir`
 - `checkpoint_path`
+- `art_dir`
+- `online`
+- `hf_repo`
+- `hf_run_name`
 - `output_path`
 - `model`
 - `custom_model_kwargs`
@@ -96,13 +128,28 @@ The test command reads these fields from the combined config files:
 ## Example
 
 ```yaml
-data_dir: /work/grana_neuro/brainchmark/dcseg23-preprocessed
-checkpoint_path: /work/grana_neuro/brainchmark/runs/dcseg23/checkpoints/model_last.pth
-output_path: /work/grana_neuro/brainchmark/runs/dcseg23/results.txt
+data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
+checkpoint_path: /work/grana_neuro/mimose/runs/dcseg23/checkpoints/final_weights_only.safetensors
+output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
 model: dcseg
 custom_model_kwargs:
   num_cls: 4
   fusion_type: RFM
+dataset_type: brats23
+num_workers: 8
+seed: 42
+```
+
+Online-checkpoint example:
+
+```yaml
+data_dir: /work/grana_neuro/mimose/dcseg23-preprocessed
+art_dir: /work/grana_neuro/mimose/runs/dcseg23
+online: true
+hf_repo: owner/repo
+hf_run_name: dcseg23
+output_path: /work/grana_neuro/mimose/runs/dcseg23/results.txt
+model: dcseg
 dataset_type: brats23
 num_workers: 8
 seed: 42

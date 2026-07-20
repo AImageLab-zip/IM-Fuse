@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import typer
 
-from brainchmark.flops import (
+from mimose.flops import (
     all_modalities_mask,
     center_crop_or_pad_volume,
     merge_model_kwargs,

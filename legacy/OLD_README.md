@@ -67,7 +67,7 @@ python test.py \
 
 ## How to Run Competitor Models
 We provide implementations for evaluating the primary competitor models on the BraTS 2023 dataset. Please consult the respective README files for detailed instructions on installation, usage, and reproduction of results.
-- [Missing as Masking](MaM/README.md)
+- [Missing as Masking](M3FeCon/README.md)
 - [M3AE](m3ae/README.md)
 - [ShaSpec](ShaSpec/README.md)
 - [SFusion](SFusion/README.md)

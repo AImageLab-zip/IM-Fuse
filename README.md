@@ -1,8 +1,8 @@
-# BrainchMark🧠
+# MiMoSe🧠
 
-BrainchMark is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
+MiMoSe is the main package in this repository for benchmarking brain tumor segmentation with missing imaging modalities.
 
-The code you should actually use lives in `src/brainchmark`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `brainchmark`. 
+The code you should actually use lives in `src/mimose`. The rest of the repo includes legacy model folders and older experiment workspaces that are still useful for reference, but the maintained CLI and package surface is `mimose`.
 
 We also encourage fellow researchers to extend the repository and open PRs with new models, trainers, datasets, and evaluation ideas. More detail: [docs/extending.md](docs/extending.md).
 
@@ -15,8 +15,8 @@ Recommended setup with `uv`:
 Ensure that `uv` is installed system-wide before running the setup steps below.
 
 ```bash
-git clone https://github.com/AImageLab-zip/IM-Fuse
-cd IM-Fuse
+git clone https://github.com/AImageLab-zip/MiMoSe
+cd MiMoSe
 bash install.sh
 ```
 
@@ -25,12 +25,12 @@ The installation step can take a while the first time. Some dependencies, includ
 After the installation, rewrite the packaged reference configs running:
 
 ```bash
-brainchmark setup
+mimose setup
 ```
 
 ## Supported Hardware and Software
 
-BrainchMark is currently supported on:
+MiMoSe is currently supported on:
 
 - Linux
 - NVIDIA GPUs based on the Turing architecture or newer
@@ -44,14 +44,14 @@ Linux is the only supported operating system for now.
 After installation:
 
 ```bash
-brainchmark --help
-brainchmark-gui
-brainchmark --version
+mimose --help
+mimose --version
 ```
 
 CLI commands:
 
 - `setup`
+- `update`
 - `preprocess`
 - `preprocess-train`
 - `train`
@@ -63,33 +63,34 @@ CLI commands:
 
 ## What Exists Today
 
-BrainchMark currently provides:
+MiMoSe currently provides:
 
 - an interactive `setup` command for generating local configs from packaged templates
 - dataset-aware preprocessing for BraTS-style datasets
 - a Typer CLI with `preprocess`, `train`, and `test`
 - YAML-driven execution with CLI overrides
-- a small GUI generated from the CLI surface
-- active model integrations for `imfuse`, `mmformer`, `dcseg`, and `rfnet`
+- active model integrations for `imfuse`, `mmformer`, `dcseg`, `rfnet`, and `tinymimosa`
 
 Supported dataset types:
 
 - `brats18`
 - `brats23`
+- `brats25`
+
 ## Preprocessing Quick Start
 
-This copies the packaged templates from `src/brainchmark/data/config_templates` into `src/brainchmark/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.
+This copies the packaged templates from `src/mimose/data/config_templates` into `src/mimose/data/configs`, then patches the local dataset, preprocessing-output, and artifact-root paths.
 
 Run preprocessing from YAML:
 
 ```bash
-brainchmark preprocess --config imfuse_23.yaml
+mimose preprocess --config imfuse_23.yaml
 ```
 
 Run preprocessing followed immediately by training:
 
 ```bash
-brainchmark preprocess-train --config imfuse_23.yaml
+mimose preprocess-train --config imfuse_23.yaml
 ```
 
 The preprocessing output is one compressed `.npz` file per case containing:
@@ -104,7 +105,7 @@ More detail: [docs/preprocessing.md](docs/preprocessing.md)
 Example with a reference config:
 
 ```bash
-brainchmark train --config imfuse_23.yaml
+mimose train --config imfuse_23.yaml
 ```
 
 More detail: [docs/training.md](docs/training.md)
@@ -114,7 +115,7 @@ More detail: [docs/training.md](docs/training.md)
 Evaluate a checkpoint across the standard 15 mask patterns:
 
 ```bash
-brainchmark test --config imfuse_23.yaml
+mimose test --config imfuse_23.yaml
 ```
 
 The test command writes the text report at `output_path` and also creates a sibling Excel summary with the same stem and `.xlsx` suffix.
@@ -130,25 +131,11 @@ The common pattern is:
 
 CLI values override YAML values when both are present.
 
-Reference configs live in [src/brainchmark/data/configs](src/brainchmark/data/configs).
+Reference configs live in [src/mimose/data/configs](src/mimose/data/configs).
 
 For a dedicated guide to writing configs, see [docs/yaml-config.md](docs/yaml-config.md).
 
 For training startup, the CLI now shows a Rich `dots` status immediately while it loads training modules, resolves config, and initializes the trainer. This is expected before the full launch summary panel appears.
-
-## GUI
-
-Launch the GUI with:
-
-```bash
-brainchmark-gui
-```
-
-It is useful for:
-
-- browsing command options
-- filling config/CLI parameters interactively
-- launching CLI-backed workflows without typing long commands
 
 ## Contributing
 
@@ -159,8 +146,7 @@ Contributions are welcome and will be evaluated quickly.
 The installed package version is exposed through:
 
 ```bash
-brainchmark --version
-brainchmark version
+mimose --version
 ```
 
 If you want to add your own model, trainer, dataset integration, runtime component, or other custom extension, follow [docs/extending.md](docs/extending.md).
@@ -169,13 +155,13 @@ If you want to add your own model, trainer, dataset integration, runtime compone
 
 Key package areas:
 
-- [src/brainchmark/cli.py](src/brainchmark/cli.py): CLI entrypoints
-- [src/brainchmark/gui.py](src/brainchmark/gui.py): GUI launcher
-- [src/brainchmark/preprocessing/](src/brainchmark/preprocessing): preprocessing config and pipeline
-- [src/brainchmark/models/](src/brainchmark/models): active model integrations
-- [src/brainchmark/datasets/](src/brainchmark/datasets): dataset abstractions and masking logic
-- [src/brainchmark/training/](src/brainchmark/training): trainer/runtime/config code
-- [src/brainchmark/testing/](src/brainchmark/testing): evaluation pipeline
+- [src/mimose/cli.py](src/mimose/cli.py): CLI entrypoints
+- [src/mimose/gui.py](src/mimose/gui.py): GUI launcher
+- [src/mimose/preprocessing/](src/mimose/preprocessing): preprocessing config and pipeline
+- [src/mimose/models/](src/mimose/models): active model integrations
+- [src/mimose/datasets/](src/mimose/datasets): dataset abstractions and masking logic
+- [src/mimose/training/](src/mimose/training): trainer/runtime/config code
+- [src/mimose/testing/](src/mimose/testing): evaluation pipeline
 
 Documentation:
 

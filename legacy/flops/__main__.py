@@ -20,6 +20,7 @@ from .core import (
 
 
 console = Console()
+progress_console = Console(stderr=True)
 
 
 def _parse_shape(values: list[str] | None) -> tuple[int, int, int] | None:
@@ -56,6 +57,63 @@ def _write_csv(target: str, reports: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _measurement_status_summary(report: dict[str, Any]) -> str:
+    measurements = report.get("measurements", [])
+    if not measurements:
+        return "no measurements"
+    parts = []
+    for measurement in measurements:
+        name = measurement.get("measurement", "unknown")
+        status = measurement.get("status", "unknown")
+        parts.append(f"{name}={status}")
+    return ", ".join(parts)
+
+
+def _failure_summary(report: dict[str, Any]) -> str | None:
+    for measurement in report.get("measurements", []):
+        if measurement.get("status") == "ok":
+            continue
+        name = measurement.get("measurement", "unknown")
+        note = str(measurement.get("note", "")).strip()
+        if note:
+            return f"{name} failed: {note}"
+        return f"{name} failed"
+    return None
+
+
+def _run_all_methods(
+    *,
+    batch_size: int,
+    measure: str,
+    shape: tuple[int, int, int] | None,
+    full_volume_shape: tuple[int, int, int] | None,
+    verbose: bool,
+) -> list[dict[str, Any]]:
+    names = method_names()
+    reports: list[dict[str, Any]] = []
+
+    for index, name in enumerate(names, start=1):
+        progress_console.print(f"[{index}/{len(names)}] Running {name}...")
+        report = run_flops_subprocess(
+            name,
+            batch_size=batch_size,
+            measure=measure,
+            shape=shape,
+            full_volume_shape=full_volume_shape,
+        )
+        reports.append(report)
+
+        summary = _measurement_status_summary(report)
+        if verbose:
+            progress_console.print(f"[{index}/{len(names)}] Finished {name}: {summary}")
+        else:
+            failure = _failure_summary(report)
+            outcome = failure or "ok"
+            progress_console.print(f"[{index}/{len(names)}] Finished {name}: {outcome}")
+
+    return reports
 
 
 def main() -> None:
@@ -110,16 +168,13 @@ def main() -> None:
     reports: list[dict[str, Any]] = []
 
     if args.all:
-        for name in method_names():
-            reports.append(
-                run_flops_subprocess(
-                    name,
-                    batch_size=args.batch_size,
-                    measure=args.measure,
-                    shape=shape,
-                    full_volume_shape=full_volume_shape,
-                )
-            )
+        reports = _run_all_methods(
+            batch_size=args.batch_size,
+            measure=args.measure,
+            shape=shape,
+            full_volume_shape=full_volume_shape,
+            verbose=args.verbose,
+        )
     else:
         report = run_flops_for_method(
             args.method,

@@ -4,12 +4,12 @@ This document explains how to extend the preprocessing stack in detail.
 
 Relevant files:
 
-- `src/brainchmark/preprocessing/config.py`
-- `src/brainchmark/preprocessing/cropping.py`
-- `src/brainchmark/preprocessing/clamping.py`
-- `src/brainchmark/preprocessing/normalization.py`
-- `src/brainchmark/preprocessing/pipeline.py`
-- `src/brainchmark/cli.py`
+- `src/mimose/preprocessing/config.py`
+- `src/mimose/preprocessing/cropping.py`
+- `src/mimose/preprocessing/clamping.py`
+- `src/mimose/preprocessing/normalization.py`
+- `src/mimose/preprocessing/pipeline.py`
+- `src/mimose/cli.py`
 
 ## Mental Model
 
@@ -110,7 +110,7 @@ If you are adding a new dataset layout, this file usually needs changes.
    - add fields to `CropConfig`
    - validate them in `build_crop_config(...)`
    - expose them in `cli.py`
-6. Test it through `brainchmark preprocess`.
+6. Test it through `mimose preprocess`.
 
 ### Add a custom clamp mode
 

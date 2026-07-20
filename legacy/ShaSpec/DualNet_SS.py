@@ -6,10 +6,18 @@ from dsn import DomainSpecificNorm3d as DSN_Layer
 
 import torch.distributions as tdist
 import math
-from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
 import numpy as np
 import random
+
+try:
+    from sklearn.manifold import TSNE
+except ImportError:
+    TSNE = None
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 gaussian_att = False
 visualization = False
@@ -19,6 +27,8 @@ tsne_colors = []
 
 
 def plot_embedding_2D(data, label, colors, title):
+    if plt is None:
+        raise RuntimeError("matplotlib is required for ShaSpec visualization")
     x_min, x_max = np.min(data, 0), np.max(data, 0)
     data = (data - x_min) / (x_max - x_min)
     fig = plt.figure()
@@ -33,6 +43,8 @@ def plot_embedding_2D(data, label, colors, title):
 
 
 def plot_embedding_3D(data, label, title):
+    if plt is None:
+        raise RuntimeError("matplotlib is required for ShaSpec visualization")
     x_min, x_max = np.min(data,axis=0), np.max(data,axis=0)
     data = (data- x_min) / (x_max - x_min)
     #ax = plt.figure().add_subplot(111,projection='3d')
@@ -351,7 +363,7 @@ class DualNet_SS(nn.Module):
         if self_att or cross_att:
             d, h, w = map(int, args.input_size.split(','))
             embed_dim = 125
-            self.multihead_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=5).cuda()
+            self.multihead_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=5)
 
         self.compos_layer = CompositionalLayer(weight_std=weight_std)  # a shared compos layer
         self.dom_classifier = nn.Linear(in_features=256, out_features=4, bias=True)  # Nx256x1x1x1 at bottleneck
@@ -432,6 +444,8 @@ class DualNet_SS(nn.Module):
 
         # visualization of shared-specific fts here
         if visualization:
+            if TSNE is None:
+                raise RuntimeError("scikit-learn is required for ShaSpec visualization")
             # collecting enough data points
             # tsne_2D = TSNE(n_components=2, random_state=0)
             tsne_2D = TSNE(n_components=2, init='pca', random_state=0)

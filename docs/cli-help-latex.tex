@@ -1,0 +1,317 @@
+\documentclass{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[most]{tcolorbox}
+\usepackage{fvextra}
+\usepackage{xcolor}
+
+\definecolor{lightgreenbg}{RGB}{239,248,239}
+\definecolor{lightgreenframe}{RGB}{108,158,120}
+
+\begin{document}
+
+\section*{MiMoSe CLI Help Boxes}
+  
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe CLI,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Global]
+  --version                Version
+  --install-completion     Install completion
+  --show-completion        Show completion
+  --help                   Help
+
+Commands
+  setup                    Init config
+  preprocess               Prep data
+  preprocess-train         Prep + train
+  train                    Train model
+  test                     Run test
+  flops                    Profile FLOPs
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Command-line interface of the MiMoSe framework}
+\label{fig:mimose_cli}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe setup,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [General]
+  --help                   Help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe setup command}
+\label{fig:mimose_setup}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe preprocess,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Config / I/O]
+  --config PATH                         Config
+  --input-dir DIRECTORY                 Input dir
+  --output-dir DIRECTORY                Output dir
+  --dataset-type [brats18|brats23]      Dataset
+
+  [Cropping]
+  --crop-mode TEXT                      Crop mode
+  --crop-size INT INT INT               Crop size
+  --crop-min-size INT INT INT           Min crop
+
+  [Clamping]
+  --clamp-mode TEXT                     Clamp mode
+  --clamp-percentile FP [FP]            Percentiles
+  --clamp-min INT [INT ...]             Clamp min
+  --clamp-max INT [INT ...]             Clamp max
+
+  [Normalization]
+  --norm-mode TEXT                      Norm mode
+  --norm-min-max-range FP FP            Min-max range
+  --norm-mean FP FP FP FP               Mean
+  --norm-std FP FP FP FP                Std
+
+  [Execution]
+  --yes, -y                             Confirm
+  --help                                Help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe preprocess command. FP means floating-point number, INT means integer number, DIR means existing directory name, and STR means string.}
+\label{fig:mimose_preprocess}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe preprocess-train,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Config / Execution]
+  --config PATH                         Config
+  --yes, -y                             Confirm
+
+  [Runtime]
+  --distributed / --no-distributed      DDP
+  --nproc-per-node INT                  Procs
+  --help                                Help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe preprocess-train command}
+\label{fig:mimose_preprocess_train}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe train: config and model,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Config / I/O]
+  --config PATH
+  --data-dir DIRECTORY
+  --art-dir DIRECTORY
+  --dataset-type [brats18|brats23]
+  --split-file PATH
+
+  [Trainer / Model]
+  --trainer TEXT
+  --model TEXT
+  --custom-model-kwargs TEXT
+  --custom-trainer-kwargs TEXT
+  --transform-kind TEXT
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe train command: configuration and model options}
+\label{fig:mimose_train_config_model}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe train: loss and optimization,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+
+  [Loss]
+  --loss TEXT
+  --custom-loss-kwargs TEXT
+  --loss-num-classes INT
+  --fuse-weight FP
+  --sep-weight FP
+  --prm-weight FP
+  --loss-eps FP
+  --log-clamp-min FP
+
+  [Optimization]
+  --optimizer TEXT
+  --betas FP FP
+  --momentum FP
+  --lr FP
+  --weight-decay FP
+
+  [Scheduler]
+  --scheduler TEXT
+  --poly-total-iters INT
+  --poly-power FP
+  --cosine-t-max INT
+  --cosine-eta-min FP
+  --step-step-size INT
+  --step-gamma FP
+  --multistep-milestones INT
+  --multistep-gamma FP
+  --plateau-mode TEXT
+  --plateau-factor FP
+  --plateau-patience INT
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe train command: loss, optimization, and scheduler options}
+\label{fig:mimose_train_optimization}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe train: execution and logging,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+
+  [Training]
+  --num-epochs INT
+  --batch-size INT
+
+  [Runtime]
+  --num-workers INT
+  --distributed / --no-distributed
+  --nproc-per-node INT
+  --fp16
+  --seed INT
+
+  [Checkpointing / Logging]
+  --resume
+  --pretrain PATH
+  --wandb-project TEXT
+  --wandb-mode TEXT
+  --wandb-run-name TEXT
+  --help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe train command: training, runtime, and logging options}
+\label{fig:mimose_train_runtime}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe test,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Config / I/O]
+  --config PATH                         Config
+  --data-dir DIRECTORY                  Data dir
+  --output-path PATH                    Output
+  --art-dir DIRECTORY                   Art dir
+  --checkpoint-path PATH                Checkpoint
+  --checkpoint-link TEXT                Ckpt URL
+  --online                              Online ckpt
+  --dataset-type [brats18|brats23]      Dataset
+  --split-file PATH                     Split
+
+  [Model]
+  --model TEXT                          Model
+  --custom-model-kwargs TEXT            Model args
+
+  [Runtime]
+  --num-workers INT                     Workers
+  --seed INT                            Seed
+  --help                                Help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe test command}
+\label{fig:mimose_test}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[
+  colback=lightgreenbg,
+  colframe=lightgreenframe,
+  arc=2mm,
+  boxrule=0.6pt,
+  title=MiMoSe flops,
+  fonttitle=\bfseries
+]
+\begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+Options
+  [Config / Model]
+  --config PATH                         Config
+  --model TEXT                          Model
+  --custom-model-kwargs TEXT            Model args
+
+  [Runtime]
+  --device TEXT                         Device
+  --all                                 All cfgs
+  --help                                Help
+\end{Verbatim}
+\end{tcolorbox}
+\caption{Help box for the MiMoSe flops command}
+\label{fig:mimose_flops}
+\end{figure}
+
+\end{document}

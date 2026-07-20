@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from brainchmark.losses.imfuse import IMFuseLoss, dice_loss, softmax_weighted_loss
+from mimose.losses.imfuse import IMFuseLoss, dice_loss, softmax_weighted_loss
 
 
 def _load_legacy_criterions():
@@ -61,9 +61,7 @@ def test_imfuse_losses_match_legacy_criterions() -> None:
     )
 
     metrics = new_loss.training_loss(
-        fuse_pred,
-        sep_preds,
-        prm_preds,
+        (fuse_pred, sep_preds, prm_preds),
         target,
         include_fuse=True,
     )
@@ -114,16 +112,12 @@ def test_imfuse_training_loss_respects_region_fusion_flag() -> None:
     prm_preds = [_random_probabilities(batch=1, num_classes=num_classes, size=6)]
 
     with_fuse = loss.training_loss(
-        fuse_pred,
-        sep_preds,
-        prm_preds,
+        (fuse_pred, sep_preds, prm_preds),
         target,
         include_fuse=True,
     )
     without_fuse = loss.training_loss(
-        fuse_pred,
-        sep_preds,
-        prm_preds,
+        (fuse_pred, sep_preds, prm_preds),
         target,
         include_fuse=False,
     )

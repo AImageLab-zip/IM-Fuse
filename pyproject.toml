@@ -3,11 +3,11 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "BrainchMark"
+name = "MiMoSe"
 version = "0.0.2"
 description = "This repository provides a unified benchmark for brain tumor segmentation under missing modality conditions, built on the BraTS 2023 dataset. It offers a standardized framework to fairly reproduce, evaluate, and compare state-of-the-art methods designed for incomplete multimodal medical imaging."
 readme = "README.md"
-requires-python = "==3.12.13"
+requires-python = "==3.12.*"
 license = { text = "MIT" }
 authors = [
   { name = "Omar Carpentiero", email = "omar.carpentiero@unimore.it" },
@@ -18,6 +18,12 @@ authors = [
   { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
 ]
 dependencies = [
+    "causal-conv1d>=1.4.0",
+    "mamba-ssm",
+    "dynamic-network-architectures>=0.4.3",
+    "h5py>=3.16.0",
+    "huggingface_hub>=0.34.0",
+    "matplotlib>=3.10.9",
     "medpy>=0.5.2",
     "ninja>=1.13.0",
     "numpy>=2.4.3",
@@ -28,7 +34,12 @@ dependencies = [
     "ptflops>=0.7.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
+    "safetensors>=0.6.2",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
+    "thop>=0.1.1.post2209072238",
     "torch==2.9.1",
+    "torchvision==0.24.1",
     "tqdm>=4.67.3",
     "ttkbootstrap>=1.20.2",
     "typer>=0.24.1",
@@ -47,7 +58,7 @@ dev = [
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-brainchmark = [
+mimose = [
   "data/dummy_brain.npz",
   "data/configs/*.yaml",
   "data/config_templates/*.yaml",
@@ -62,6 +73,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+causal-conv1d = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl" }
+mamba-ssm = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl" }
 
 [tool.ruff]
 line-length = 88
@@ -80,5 +95,5 @@ dev = [
 ]
 
 [project.scripts]
-brainchmark = "brainchmark.cli:app"
-brainchmark-gui = "brainchmark.gui:launch"
+mimose = "mimose.cli:app"
+mimose-gui = "mimose.gui:launch"
