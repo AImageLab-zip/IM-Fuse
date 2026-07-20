@@ -79,6 +79,7 @@ class BaseTrainer(AbstractTrainer):
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
+        wandb_entity: str | None = None,
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
         dataset_type: str | None = None,
@@ -105,6 +106,7 @@ class BaseTrainer(AbstractTrainer):
             seed=seed,
             pretrain=pretrain,
             wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
             wandb_mode=wandb_mode,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,
@@ -537,6 +539,10 @@ class BaseTrainer(AbstractTrainer):
             "config": self._wandb_config_payload(),
         }
         wandb_init_kwargs["name"] = self.wandb_run_name
+        # Omit "entity" entirely (rather than passing None) so wandb falls back to the
+        # user's default entity instead of an explicit unset value.
+        if self.wandb_entity is not None:
+            wandb_init_kwargs["entity"] = self.wandb_entity
         if self.resume is not None and run_id is not None:
             wandb_init_kwargs["id"] = run_id
             wandb_init_kwargs["resume"] = "must"

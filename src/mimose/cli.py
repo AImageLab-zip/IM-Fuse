@@ -340,6 +340,7 @@ def setup() -> None:
         current_table.add_row("Results Root", current["results_root_dir"] or "[dim]not set[/dim]")
         current_table.add_row("HF Repo", current["hf_repo"] or "[dim]not set[/dim]")
         current_table.add_row("W&B Mode", current["wandb_mode"] or "[dim]not set[/dim]")
+        current_table.add_row("W&B Entity", current["wandb_entity"] or "[dim]not set[/dim]")
         console.print(
             Panel(
                 current_table,
@@ -432,6 +433,11 @@ def setup() -> None:
         choices=wandb_choices,
         default=current_wandb_mode if current_wandb_mode in wandb_choices else "online",
     )
+    wandb_entity = prompt_path(
+        "Weights & Biases entity (team or username) to log runs under. Leave empty to use "
+        "your default entity",
+        default=current.get("wandb_entity") or "",
+    ).strip() or None
 
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", no_wrap=True)
@@ -447,6 +453,7 @@ def setup() -> None:
     table.add_row("Results Root", str(results_root_dir))
     table.add_row("HF Repo", hf_repo or "template-driven")
     table.add_row("W&B Mode", wandb_mode)
+    table.add_row("W&B Entity", wandb_entity or "template-driven")
     table.add_row(
         "Mode",
         "Edit existing configs" if edit_existing else "New configs from templates (overwrite)",
@@ -548,6 +555,7 @@ def setup() -> None:
             results_root_dir=results_root_dir,
             hf_repo=hf_repo,
             wandb_mode=wandb_mode,
+            wandb_entity=wandb_entity,
         )
 
     result_table = Table.grid(padding=(0, 2))
@@ -562,6 +570,7 @@ def setup() -> None:
     result_table.add_row("Results Root", str(results_root_dir))
     result_table.add_row("HF Repo", hf_repo or "template-driven")
     result_table.add_row("W&B Mode", wandb_mode)
+    result_table.add_row("W&B Entity", wandb_entity or "template-driven")
     result_table.add_row("Files", ", ".join(path.name for path in updated_files))
 
     console.print(
@@ -1130,6 +1139,12 @@ def train(
         help="Weights & Biases project name.",
         rich_help_panel="Logging",
     ),
+    wandb_entity: str | None = typer.Option(
+        None,
+        "--wandb-entity",
+        help="Weights & Biases entity (team or username) to log runs under.",
+        rich_help_panel="Logging",
+    ),
     wandb_mode: str | None = typer.Option(
         None,
         "--wandb-mode",
@@ -1234,6 +1249,7 @@ def train(
             pretrain=pretrain,
             seed=seed,
             wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
             wandb_mode=wandb_mode,
             wandb_run_name=wandb_run_name,
             dataset_type=dataset_type,

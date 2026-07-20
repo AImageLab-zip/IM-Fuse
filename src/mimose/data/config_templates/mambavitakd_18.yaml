@@ -129,6 +129,7 @@ pretrain: null
 seed: 999
 
 wandb_project: SegmentationMM
+wandb_entity: null
 wandb_mode: online
 wandb_run_name: mambavitakd18_training
 push_to_hf: false

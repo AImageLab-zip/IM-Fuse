@@ -230,6 +230,7 @@ def build_train_merged_config(
     hf_repo: str | None,
     run_suffix: str | None = None,
     fold: int | None = None,
+    wandb_entity: str | None = None,
 ) -> dict[str, object]:
     from mimose.training.config import parse_kv_list
     from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
@@ -298,6 +299,7 @@ def build_train_merged_config(
         pretrain=pretrain,
         seed=seed,
         wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
         wandb_mode=wandb_mode,
         wandb_run_name=wandb_run_name,
         dataset_type=dataset_type,
@@ -863,6 +865,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         seed=int(merged.get("seed", 69)) if merged.get("seed") is not None else None,
         pretrain=merged.get("pretrain"),
         wandb_project=merged.get("wandb_project"),
+        wandb_entity=merged.get("wandb_entity"),
         wandb_mode=merged.get("wandb_mode"),
         wandb_run_name=merged.get("wandb_run_name"),
         dataset_type=merged.get("dataset_type"),

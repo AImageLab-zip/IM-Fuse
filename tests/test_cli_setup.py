@@ -131,7 +131,7 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
         CONSOLE = FakeConsole()
 
         @staticmethod
-        def prompt_path(prompt: str) -> str:
+        def prompt_path(prompt: str, *, default: str = "") -> str:
             return ""
 
         @staticmethod

@@ -35,6 +35,7 @@ class AbstractTrainer(ABC):
         seed: int | None = None,
         pretrain: str | Path | None = None,
         wandb_project: str | None = None,
+        wandb_entity: str | None = None,
         wandb_mode: str | None = None,
         wandb_run_name: str | None = None,
         dataset_type: str | None = None,
@@ -64,6 +65,7 @@ class AbstractTrainer(ABC):
         self.seed = seed
         self.pretrain = Path(pretrain) if pretrain is not None else None
         self.wandb_project = wandb_project
+        self.wandb_entity = wandb_entity
         self.wandb_mode = wandb_mode
         self.wandb_run_name = wandb_run_name or "training"
         self.dataset_type = dataset_type

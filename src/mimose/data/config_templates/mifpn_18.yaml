@@ -92,6 +92,7 @@ seed: 999
 
 fold: 1
 wandb_project: MiMoSe
+wandb_entity: null
 wandb_mode: online
 wandb_run_name: mifpn18
 push_to_hf: false
