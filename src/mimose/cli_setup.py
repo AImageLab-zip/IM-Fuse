@@ -156,6 +156,38 @@ def update_setup_config(
     config_path.write_text(content, encoding="utf-8")
 
 
+def read_current_setup_values(config_path: Path) -> dict[str, str | None]:
+    """Read the current local-path fields out of an already-configured YAML file.
+
+    `update_setup_config` always writes `output_dir`/`art_dir`/`results_dir` as
+    `<root>/<per-config suffix>`, so the root of each is just the parent of the
+    current value. These are reused as editable defaults when re-running setup
+    against an existing config.
+    """
+    content = config_path.read_text(encoding="utf-8")
+
+    def _value(key: str) -> str | None:
+        value = get_yaml_line_value(content, key=key)
+        if not value or value.strip() in {"null", "none", "~", ""}:
+            return None
+        return value.strip()
+
+    def _root(key: str) -> str | None:
+        value = _value(key)
+        if value is None:
+            return None
+        return str(Path(value.rstrip("/")).parent)
+
+    return {
+        "brats_data_dir": _value("input_dir"),
+        "preprocessed_root_dir": _root("output_dir"),
+        "artifacts_root_dir": _root("art_dir"),
+        "results_root_dir": _root("results_dir"),
+        "hf_repo": _value("hf_repo"),
+        "wandb_mode": _value("wandb_mode"),
+    }
+
+
 def templates_require_hf_repo_prompt() -> bool:
     for template_path in sorted(CONFIG_TEMPLATES_DIR.glob("*.y*ml")):
         content = template_path.read_text(encoding="utf-8")

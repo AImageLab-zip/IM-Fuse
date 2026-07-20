@@ -70,9 +70,17 @@ def prompt_zip_file(*, label: str, prompt: str, default_dir: Path | None = None)
         return candidate
 
 
-def prompt_required_existing_directory(*, label: str, prompt: str) -> Path:
+def prompt_required_existing_directory(
+    *,
+    label: str,
+    prompt: str,
+    default_dir: Path | None = None,
+) -> Path:
     while True:
-        raw_value = prompt_path(prompt)
+        raw_value = prompt_path(
+            prompt,
+            default=f"{default_dir}/" if default_dir is not None else "",
+        )
         if not raw_value:
             CONSOLE.print(
                 Panel(

@@ -139,7 +139,9 @@ def test_setup_defaults_artifacts_root_to_data_root_runs(monkeypatch, tmp_path: 
             raise AssertionError("ZIP prompt should not be used when unpack is disabled")
 
         @staticmethod
-        def prompt_required_existing_directory(*, label: str, prompt: str) -> Path:
+        def prompt_required_existing_directory(
+            *, label: str, prompt: str, default_dir: Path | None = None
+        ) -> Path:
             if label == "Unpacked Data":
                 return data_root / "unpacked"
             raise AssertionError(f"Unexpected label: {label}")

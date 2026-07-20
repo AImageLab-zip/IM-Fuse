@@ -306,7 +306,53 @@ def setup() -> None:
         )
     )
 
-    want_unpack = Confirm.ask("Do you want to unpack BraTS ZIP archives?", default=True)
+    existing_configs = sorted(CONFIGS_DIR.glob("*.y*ml")) if CONFIGS_DIR.exists() else []
+    edit_existing = False
+    if existing_configs:
+        console.print(
+            Panel(
+                f"Found [bold]{len(existing_configs)}[/bold] existing config file(s) in "
+                f"[bold]{CONFIGS_DIR}[/bold].",
+                title="[bold yellow]Existing Configs Found[/bold yellow]",
+                border_style="yellow",
+                expand=False,
+            )
+        )
+        mode = Prompt.ask(
+            "Edit the existing configs in place, or start fresh from the packaged templates "
+            "(overwrites any manual edits)?",
+            choices=["edit", "new"],
+            default="edit",
+        )
+        edit_existing = mode == "edit"
+
+    current: dict[str, str | None] = {}
+    if edit_existing:
+        current = cli_setup.read_current_setup_values(existing_configs[0])
+        current_table = Table.grid(padding=(0, 2))
+        current_table.add_column(style="bold cyan", no_wrap=True)
+        current_table.add_column(style="white")
+        current_table.add_row("Unpacked Data", current["brats_data_dir"] or "[dim]not set[/dim]")
+        current_table.add_row(
+            "Preprocessed Data Root", current["preprocessed_root_dir"] or "[dim]not set[/dim]"
+        )
+        current_table.add_row("Artifacts Root", current["artifacts_root_dir"] or "[dim]not set[/dim]")
+        current_table.add_row("Results Root", current["results_root_dir"] or "[dim]not set[/dim]")
+        current_table.add_row("HF Repo", current["hf_repo"] or "[dim]not set[/dim]")
+        current_table.add_row("W&B Mode", current["wandb_mode"] or "[dim]not set[/dim]")
+        console.print(
+            Panel(
+                current_table,
+                title="[bold green]Current Values[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        console.print("[dim]Press Enter to keep a value, or type a new one to change it.[/dim]\n")
+
+    want_unpack = Confirm.ask(
+        "Do you want to (re-)unpack BraTS ZIP archives?", default=not edit_existing
+    )
 
     if want_unpack:
         gli_pre_zip = prompt_zip_file(
@@ -330,10 +376,13 @@ def setup() -> None:
             default_dir=post_extra_dir,
         )
 
+    current_brats_data_dir = Path(current["brats_data_dir"]) if current.get("brats_data_dir") else None
+
     if want_unpack:
         data_root = prompt_required_directory(
             label="Data Root",
             prompt="Root directory for the unpacked data",
+            default_dir=current_brats_data_dir.parent if current_brats_data_dir else None,
         )
         # Some users type the eventual unpacked-data path itself here rather
         # than its parent; avoid nesting an extra "unpacked" folder inside it.
@@ -343,37 +392,45 @@ def setup() -> None:
         brats_data_dir = prompt_required_existing_directory(
             label="Unpacked Data",
             prompt="Path to the existing unpacked data directory",
+            default_dir=current_brats_data_dir,
         )
         data_root = brats_data_dir.parent
 
     preprocessed_root_dir = prompt_required_directory(
         label="Preprocessed Data Root",
         prompt="Root directory for preprocessed data",
-        default_dir=data_root,
+        default_dir=Path(current["preprocessed_root_dir"]) if current.get("preprocessed_root_dir") else data_root,
     )
 
     artifacts_root_dir = prompt_required_directory(
         label="Artifacts Root",
         prompt="Root directory for training artifacts",
-        default_dir = data_root / 'runs'
+        default_dir=Path(current["artifacts_root_dir"]) if current.get("artifacts_root_dir") else data_root / 'runs',
     )
     results_root_dir = prompt_required_directory(
         label="Results Root",
         prompt="Root directory for testing results",
-        default_dir = data_root / 'results'
+        default_dir=Path(current["results_root_dir"]) if current.get("results_root_dir") else data_root / 'results',
     )
     templates_require_hf_repo_prompt = cli_setup.templates_require_hf_repo_prompt
     hf_repo: str | None = None
-    if templates_require_hf_repo_prompt():
+    if edit_existing:
+        hf_repo = prompt_path(
+            "Provide a Hugging Face repo to push checkpoints to. Leave empty to skip",
+            default=current.get("hf_repo") or "",
+        ).strip() or None
+    elif templates_require_hf_repo_prompt():
         hf_repo = prompt_path(
             "Provide a Hugging Face repo to push checkpoints to (recommended). "
             "Leave empty to skip"
         ).strip() or None
 
+    wandb_choices = ["online", "offline", "disabled"]
+    current_wandb_mode = current.get("wandb_mode")
     wandb_mode = Prompt.ask(
         "Preferred Weights & Biases mode",
-        choices=["online", "offline", "disabled"],
-        default="online",
+        choices=wandb_choices,
+        default=current_wandb_mode if current_wandb_mode in wandb_choices else "online",
     )
 
     table = Table.grid(padding=(0, 2))
@@ -390,6 +447,10 @@ def setup() -> None:
     table.add_row("Results Root", str(results_root_dir))
     table.add_row("HF Repo", hf_repo or "template-driven")
     table.add_row("W&B Mode", wandb_mode)
+    table.add_row(
+        "Mode",
+        "Edit existing configs" if edit_existing else "New configs from templates (overwrite)",
+    )
     table.add_row("Templates", str(CONFIG_TEMPLATES_DIR))
     table.add_row("Configs", str(CONFIGS_DIR))
     table.add_row("Checkpoint Path", "<art_dir>/checkpoints/final_weights_only.safetensors")
@@ -418,7 +479,12 @@ def setup() -> None:
         if not Confirm.ask("Overwrite existing files in unpacked/?", default=False):
             raise typer.Abort()
 
-    if not Confirm.ask("Copy templates and rewrite local MiMoSe configs?", default=True):
+    confirm_prompt = (
+        "Rewrite the local path fields in the existing MiMoSe configs?"
+        if edit_existing
+        else "Copy templates and rewrite local MiMoSe configs?"
+    )
+    if not Confirm.ask(confirm_prompt, default=True):
         raise typer.Abort()
 
     if want_unpack:
@@ -472,7 +538,7 @@ def setup() -> None:
             for p in procs:
                 p.join()
 
-    updated_files = copy_config_templates()
+    updated_files = existing_configs if edit_existing else copy_config_templates()
     for config_path in updated_files:
         update_setup_config(
             config_path=config_path,
