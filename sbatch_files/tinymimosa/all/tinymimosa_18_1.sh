@@ -13,6 +13,7 @@
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
 mimose train --config tinymimosa_18.yaml --fold 1 --run-suffix fold1 --seed 0 --try-resume
 mimose test --config tinymimosa_18.yaml --fold 1 --run-suffix fold1 --fp16

@@ -27,8 +27,10 @@ if [[ -n "${SLURM_JOB_ID:-}" ]]; then
 else
   # No allocation yet: request one (CPU-only, doesn't need a GPU node).
   PARTITION="${PARTITION:-all_serial}"
+  ACCOUNT="${ACCOUNT:-phd_mimose}"
   srun \
     --partition="${PARTITION}" \
+    --account="${ACCOUNT}" \
     --cpus-per-task=8 \
     --mem=32G \
     --time=01:00:00 \
