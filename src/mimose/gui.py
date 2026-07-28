@@ -93,6 +93,34 @@ def _option_help(param: inspect.Parameter) -> str:
     return ""
 
 
+def _option_panel(param: inspect.Parameter) -> str:
+    option = _extract_option_info(param)
+    if option is not None and getattr(option, "rich_help_panel", None):
+        return option.rich_help_panel
+    return "Options"
+
+
+_COMMAND_ICONS: dict[str, str] = {
+    "preprocess": "🧹",
+    "train": "🏋️",
+    "test": "🧪",
+    "push": "📤",
+    "export": "📦",
+    "flops": "⚡",
+    "setup": "🛠️",
+    "version": "ℹ️",
+    "destruct": "💥",
+}
+
+
+def _command_icon(name: str) -> str:
+    key = name.replace("-", "_")
+    for keyword, icon in _COMMAND_ICONS.items():
+        if keyword in key:
+            return icon
+    return "🔧"
+
+
 class Field:
     def get_value(self) -> Any:
         raise NotImplementedError
@@ -413,7 +441,7 @@ class AutoCommandForm(ttk.Frame):
         on_back: Callable[[], None],
         on_quit: Callable[[], None],
     ) -> None:
-        super().__init__(parent, padding=16)
+        super().__init__(parent, padding=(20, 16))
         self.command_name = command_name
         self.command_help = command_help
         self.command_fn = command_fn
@@ -421,37 +449,66 @@ class AutoCommandForm(ttk.Frame):
         self.on_quit = on_quit
         self.fields: dict[str, Field] = {}
 
+        header = ttk.Frame(self)
+        header.pack(fill="x", pady=(0, 4))
+
+        icon = _command_icon(command_name)
         title = command_name.replace("-", " ").title()
-        ttk.Label(self, text=title, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(header, text=f"{icon}  {title}", style="Title.TLabel").pack(anchor="w")
 
         if command_help:
-            ttk.Label(self, text=command_help, style="Help.TLabel").pack(anchor="w", pady=(0, 4))
-        ttk.Label(self, text="Generated automatically from the Typer command signature.", style="Help.TLabel").pack(anchor="w", pady=(0, 12))
+            ttk.Label(self, text=command_help, style="Help.TLabel", wraplength=640, justify="left").pack(
+                anchor="w", pady=(2, 4)
+            )
+        ttk.Label(
+            self,
+            text="Generated automatically from the Typer command signature.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 14))
 
         self._build_form()
         self._update_field_states()
 
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(16, 0))
+        ttk.Separator(self).pack(fill="x", pady=(4, 12))
 
-        ttk.Button(actions, text=f"Run {command_name}", command=self._run).pack(side="left")
-        ttk.Button(actions, text="Back", command=self.on_back).pack(side="right", padx=(8, 0))
-        ttk.Button(actions, text="Quit", command=self.on_quit).pack(side="right")
+        actions = ttk.Frame(self)
+        actions.pack(fill="x")
+
+        ttk.Button(
+            actions, text=f"▶  Run {title}", command=self._run, bootstyle="success"
+        ).pack(side="left", ipadx=6)
+        ttk.Button(
+            actions, text="✕  Quit", command=self.on_quit, bootstyle="danger-outline"
+        ).pack(side="right")
+        ttk.Button(
+            actions, text="←  Back", command=self.on_back, bootstyle="secondary-outline"
+        ).pack(side="right", padx=(0, 8))
 
     def _build_form(self) -> None:
         sig = inspect.signature(self.command_fn)
+
+        panels: dict[str, ttk.Labelframe] = {}
 
         for name, param in sig.parameters.items():
             annotation, _ = _unwrap_optional(param.annotation)
             help_text = _option_help(param)
             default = _option_default(param)
             label = name.replace("_", " ").title()
+            panel_name = _option_panel(param)
+
+            panel = panels.get(panel_name)
+            if panel is None:
+                panel = ttk.Labelframe(
+                    self, text=f"  {panel_name}  ", padding=(14, 10), bootstyle="secondary"
+                )
+                panel.pack(fill="x", pady=(0, 12))
+                panels[panel_name] = panel
 
             on_change = self._update_field_states if name in {"crop_mode", "clamp_mode", "norm_mode"} else None
 
             if _is_enum_type(annotation):
                 field = EnumButtonsField(
-                    self,
+                    panel,
                     label,
                     annotation,
                     help_text,
@@ -460,24 +517,24 @@ class AutoCommandForm(ttk.Frame):
                 )
             elif _is_path_type(annotation):
                 directory = "dir" in name or name.endswith("_dir")
-                field = PathField(self, label, directory=directory, help_text=help_text)
+                field = PathField(panel, label, directory=directory, help_text=help_text)
             elif _is_tuple_of_ints(annotation):
                 if len(get_args(annotation)) == 3:
-                    field = Tuple3IntField(self, label, help_text, default)
+                    field = Tuple3IntField(panel, label, help_text, default)
                 else:
-                    field = SequenceField(self, label, help_text, default)
+                    field = SequenceField(panel, label, help_text, default)
             elif _is_tuple_of_floats(annotation) or _is_list_of_ints(annotation) or _is_list_of_floats(annotation):
-                field = SequenceField(self, label, help_text, default)
+                field = SequenceField(panel, label, help_text, default)
             elif annotation is bool:
                 field = BoolField(
-                    self,
+                    panel,
                     label,
                     help_text,
                     default=bool(default),
                     on_change=on_change,
                 )
             else:
-                field = EntryField(self, label, help_text, default=default)
+                field = EntryField(panel, label, help_text, default=default)
 
             self.fields[name] = field
 
@@ -591,12 +648,11 @@ class CommandGrid(ttk.Frame):
         commands: list[dict[str, Any]],
         on_select: Callable[[dict[str, Any]], None],
     ) -> None:
-        super().__init__(parent, padding=16)
+        super().__init__(parent, padding=(20, 16))
 
-        ttk.Label(self, text=APP_TITLE, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             self,
-            text="Choose a top-level command.",
+            text=f"Choose a command to configure and run — {len(commands)} available.",
             style="Help.TLabel",
         ).pack(anchor="w", pady=(0, 16))
 
@@ -610,19 +666,35 @@ class CommandGrid(ttk.Frame):
         for index, command in enumerate(commands):
             row = index // columns
             col = index % columns
-            card = ttk.Frame(grid, padding=16, relief="ridge", borderwidth=1)
+
+            card = ttk.Frame(grid, padding=1, bootstyle="secondary")
             card.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
+            inner = ttk.Frame(card, padding=16)
+            inner.pack(fill="both", expand=True)
 
             title = command["name"].replace("-", " ").title()
-            ttk.Label(card, text=title, style="Subtitle.TLabel").pack(anchor="w")
+            icon = _command_icon(command["name"])
+            ttk.Label(inner, text=f"{icon}  {title}", style="Subtitle.TLabel").pack(anchor="w")
             ttk.Label(
-                card,
+                inner,
                 text=command["help"] or "Open this command.",
                 style="Help.TLabel",
                 wraplength=260,
                 justify="left",
-            ).pack(anchor="w", pady=(6, 12))
-            ttk.Button(card, text="Open", command=lambda c=command: on_select(c)).pack(anchor="w")
+            ).pack(anchor="w", pady=(6, 14))
+            ttk.Button(
+                inner,
+                text="Open  →",
+                command=lambda c=command: on_select(c),
+                bootstyle="info-outline",
+            ).pack(anchor="w", fill="x")
+
+            clickable = [card, inner] + [
+                w for w in inner.winfo_children() if not isinstance(w, ttk.Button)
+            ]
+            for widget in clickable:
+                widget.configure(cursor="hand2")
+                widget.bind("<Button-1>", lambda _e, c=command: on_select(c))
 
 
 class BrainchMarkGUI:
@@ -630,20 +702,32 @@ class BrainchMarkGUI:
         self.root = root
         self.typer_app = typer_app
         self.commands = _iter_top_level_commands(typer_app)
+        self.current_view: ttk.Frame | None = None
+
+        header = ttk.Frame(root, padding=(20, 14, 20, 12))
+        header.pack(fill="x")
+        ttk.Label(header, text=f"🧠  {APP_TITLE}", style="Header.TLabel").pack(side="left")
+        self.breadcrumb = ttk.Label(header, text="Home", style="Breadcrumb.TLabel")
+        self.breadcrumb.pack(side="right")
+        ttk.Separator(root).pack(fill="x")
+
         self.container = ttk.Frame(root)
         self.container.pack(fill="both", expand=True)
-        self.current_view: ttk.Frame | None = None
 
         self.show_home()
 
-    def _set_view(self, view: ttk.Frame) -> None:
+    def _set_view(self, view: ttk.Frame, *, breadcrumb: str) -> None:
         if self.current_view is not None:
             self.current_view.destroy()
         self.current_view = view
         self.current_view.pack(fill="both", expand=True)
+        self.breadcrumb.configure(text=breadcrumb)
 
     def show_home(self) -> None:
-        self._set_view(CommandGrid(self.container, self.commands, self.show_command))
+        self._set_view(
+            CommandGrid(self.container, self.commands, self.show_command),
+            breadcrumb="Home",
+        )
 
     def show_command(self, command: dict[str, Any]) -> None:
         scrollable = ScrollableFrame(self.container)
@@ -656,18 +740,29 @@ class BrainchMarkGUI:
             on_quit=self.root.destroy,
         )
         form.pack(fill="both", expand=True)
-        self._set_view(scrollable)
+        title = command["name"].replace("-", " ").title()
+        self._set_view(scrollable, breadcrumb=f"Home  ›  {title}")
 
 
 def launch() -> None:
-    root = tb.Window(themename="cyborg")
-    root.title(APP_TITLE)
-    root.geometry("760x620")
+    root = tb.Window(themename="superhero")
+    root.title(f"{APP_TITLE} — Model Toolkit")
+
+    width, height = 920, 700
+    root.minsize(720, 560)
+    root.update_idletasks()
+    x = (root.winfo_screenwidth() - width) // 2
+    y = (root.winfo_screenheight() - height) // 3
+    root.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
 
     style = ttk.Style(root)
-    style.configure("Title.TLabel", font=("TkDefaultFont", 16, "bold"))
+    muted = root.style.colors.get("secondary")
+    style.configure("Header.TLabel", font=("TkDefaultFont", 17, "bold"))
+    style.configure("Breadcrumb.TLabel", foreground=muted)
+    style.configure("Title.TLabel", font=("TkDefaultFont", 15, "bold"))
     style.configure("Subtitle.TLabel", font=("TkDefaultFont", 12, "bold"))
-    style.configure("Help.TLabel", foreground="#666666")
+    style.configure("Help.TLabel", foreground=muted)
+    style.configure("Muted.TLabel", foreground=muted, font=("TkDefaultFont", 9))
 
     BrainchMarkGUI(root, app)
     root.mainloop()
