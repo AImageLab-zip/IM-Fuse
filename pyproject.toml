@@ -14,8 +14,8 @@ authors = [
   { name = "Kevin Marchesini", email = "kevin.marchesini@unimore.it" },
   { name = "Vittorio Pipoli", email = "vittorio.pipoli@unimore.it" },
   { name = "Alessia Saporita", email = "alessia.saporita@unimore.it" },
-  { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" },
-  { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
+  { name = "Costantino Grana", email = "costantino.grana@unimore.it" },
+    { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" }
 ]
 dependencies = [
     "causal-conv1d>=1.4.0",

@@ -126,7 +126,7 @@ compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 wandb_project: SegmentationMM
 wandb_entity: null

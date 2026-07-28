@@ -545,7 +545,7 @@ class BaseTrainer(AbstractTrainer):
             wandb_init_kwargs["entity"] = self.wandb_entity
         if self.resume is not None and run_id is not None:
             wandb_init_kwargs["id"] = run_id
-            wandb_init_kwargs["resume"] = "must"
+            wandb_init_kwargs["resume"] = "allow"
 
         try:
             self.wandb_run = wandb.init(
@@ -836,7 +836,15 @@ class BaseTrainer(AbstractTrainer):
             f"validate every {self.validation_every}[/dim]",
         )
         table.add_row("Batch", f"per-rank {per_rank_batch}  [dim]global {global_batch}[/dim]")
-        table.add_row("Workers", str(self.num_workers))
+        per_rank_workers = self.num_workers if self.num_workers is not None else "?"
+        global_workers = (
+            self.num_workers * self.world_size
+            if self.num_workers is not None
+            else "?"
+        )
+        table.add_row(
+            "Workers", f"per-rank {per_rank_workers}  [dim]global {global_workers}[/dim]"
+        )
         table.add_row("Resume", resume_text)
         table.add_row("Seed", str(self.seed) if self.seed is not None else "none")
         table.add_row("W&B", wandb_text)

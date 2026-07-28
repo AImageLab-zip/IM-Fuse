@@ -359,23 +359,60 @@ def setup() -> None:
         gli_pre_zip = prompt_zip_file(
             label="BraTS2025-GLI-pre ZIP",
             prompt="Path to BraTS2025-GLI-pre ZIP",
+            optional=True,
         )
-        
-        candidate_post = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-TrainingData.zip' 
-        post_dir = candidate_post if candidate_post.exists() else gli_pre_zip.parent
+
+        pre_dir = gli_pre_zip.parent if gli_pre_zip is not None else None
+        candidate_post = pre_dir / "BraTS2024-BraTS-GLI-TrainingData.zip" if pre_dir else None
+        post_dir = candidate_post if candidate_post and candidate_post.exists() else pre_dir
         gli_post_zip = prompt_zip_file(
             label="BraTS2024-GLI-post ZIP",
             prompt="Path to BraTS2024-GLI-post ZIP",
             default_dir=post_dir,
+            optional=True,
         )
-            
-        candidate_post_extra = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-AdditionalTrainingData.zip' 
-        post_extra_dir = candidate_post_extra if candidate_post_extra.exists() else gli_pre_zip.parent
+
+        candidate_post_extra = (
+            pre_dir / "BraTS2024-BraTS-GLI-AdditionalTrainingData.zip" if pre_dir else None
+        )
+        post_extra_dir = (
+            candidate_post_extra if candidate_post_extra and candidate_post_extra.exists() else pre_dir
+        )
         gli_post_extra_zip = prompt_zip_file(
             label="BraTS2024-GLI-post-additional-data ZIP",
             prompt="Path to BraTS2024-GLI-post-additional-data ZIP",
             default_dir=post_extra_dir,
+            optional=True,
         )
+
+        provided_zips = {
+            "BraTS2025-GLI-pre": gli_pre_zip,
+            "BraTS2024-GLI-post": gli_post_zip,
+            "BraTS2024-GLI-post-additional-data": gli_post_extra_zip,
+        }
+        skipped = [name for name, path in provided_zips.items() if path is None]
+        if skipped:
+            console.print(
+                Panel(
+                    "The following archives were not provided and will be skipped:\n"
+                    + "\n".join(f"  - {name}" for name in skipped)
+                    + "\n\nOnly the provided archives will be unpacked; "
+                    "re-run `mimose setup` later to add the rest.",
+                    title="[bold yellow]Partial ZIP Set[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+        if all(path is None for path in provided_zips.values()):
+            console.print(
+                Panel(
+                    "No BraTS ZIP archives were provided; skipping the unpack step entirely.",
+                    title="[bold yellow]Nothing to Unpack[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+            want_unpack = False
 
     current_brats_data_dir = Path(current["brats_data_dir"]) if current.get("brats_data_dir") else None
 
@@ -443,9 +480,12 @@ def setup() -> None:
     table.add_column(style="bold cyan", no_wrap=True)
     table.add_column(style="white")
     if want_unpack:
-        table.add_row("BraTS2025-GLI-pre ZIP", str(gli_pre_zip))
-        table.add_row("BraTS2024-GLI-post ZIP", str(gli_post_zip))
-        table.add_row("BraTS2024-GLI-post-additional-data ZIP", str(gli_post_extra_zip))
+        table.add_row("BraTS2025-GLI-pre ZIP", str(gli_pre_zip) if gli_pre_zip else "[dim]skipped[/dim]")
+        table.add_row("BraTS2024-GLI-post ZIP", str(gli_post_zip) if gli_post_zip else "[dim]skipped[/dim]")
+        table.add_row(
+            "BraTS2024-GLI-post-additional-data ZIP",
+            str(gli_post_extra_zip) if gli_post_extra_zip else "[dim]skipped[/dim]",
+        )
     table.add_row("Data Root", str(data_root))
     table.add_row("Unpacked Data", str(brats_data_dir))
     table.add_row("Preprocessed Data Root", str(preprocessed_root_dir))
@@ -505,7 +545,7 @@ def setup() -> None:
         )
 
         brats_data_dir.mkdir(parents=True, exist_ok=True)
-        zip_files = [gli_pre_zip, gli_post_zip, gli_post_extra_zip]
+        zip_files = [z for z in (gli_pre_zip, gli_post_zip, gli_post_extra_zip) if z is not None]
         totals = [cli_setup.zip_member_count(z) for z in zip_files]
         queue: mp.Queue = mp.Queue()
 
@@ -1065,7 +1105,7 @@ def train(
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
-        help="Mini-batch size.",
+        help="Mini-batch size, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Training",
     ),
     weight_decay: float | None = typer.Option(
@@ -1077,7 +1117,7 @@ def train(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers.",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     distributed: bool | None = typer.Option(
@@ -1355,7 +1395,7 @@ def test(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers.",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1470,6 +1510,221 @@ def test(
     )
 
 
+@app.command("test-fast")
+def test_fast(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        file_okay=False,
+        dir_okay=True,
+        exists=True,
+        readable=True,
+        help="Directory containing the preprocessed test data.",
+        rich_help_panel="Input/Output",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help="Text file where mask-sweep test results will be written.",
+        rich_help_panel="Input/Output",
+    ),
+    art_dir: Path | None = typer.Option(
+        None,
+        "--art-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Artifact directory used to cache online checkpoints.",
+        rich_help_panel="Input/Output",
+    ),
+    checkpoint_path: Path | None = typer.Option(
+        None,
+        "--checkpoint-path",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Path to a weights-only .safetensors checkpoint to evaluate.",
+        rich_help_panel="Checkpointing",
+    ),
+    online: bool = typer.Option(
+        False,
+        "--online",
+        help="Download the checkpoint from Hugging Face into art_dir/checkpoints and reuse it if already cached.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_repo: str | None = typer.Option(
+        None,
+        "--hf-repo",
+        help="Hugging Face model repo id used when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_run_name: str | None = typer.Option(
+        None,
+        "--hf-run-name",
+        help="Run-name subdirectory inside the Hugging Face repo used when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    model: ModelKind | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=split_shell_complete,
+        help="Split file path. Relative paths are resolved under mimose/data/splits.",
+        rich_help_panel="Data Pipeline",
+        show_default="split.json",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
+        rich_help_panel="Runtime",
+    ),
+    batch_size: int = typer.Option(
+        1,
+        "--batch-size",
+        help="Number of subjects to run through the model together per mask, "
+        "instead of one at a time.",
+        rich_help_panel="Runtime",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
+    ),
+    fp16: bool | None = typer.Option(
+        None,
+        "--fp16",
+        help="Run inference under torch.autocast(dtype=float16) on CUDA.",
+        rich_help_panel="Runtime",
+        is_flag=True,
+    ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
+        rich_help_panel="Input/Output",
+    ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir, hf_run_name, and output_path (e.g. a "
+            "seed) so this matches the same suffixed run produced by "
+            "`mimose train --run-suffix` and keeps repeated test reports separate."
+        ),
+        rich_help_panel="Runtime",
+    ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help=(
+            "Cross-validation fold to test on. When set and no --split-file is given, "
+            "the fold-nested splits_5fold.json is used and this fold's test set is selected."
+        ),
+        rich_help_panel="Data Pipeline",
+    ),
+) -> None:
+    """Run mask-sweep testing like `test`, but load each subject once and reuse
+    it across all 15 masks (instead of once per mask), batching `--batch-size`
+    subjects per forward pass."""
+    from mimose.models.config import (
+        ModelKind as TestingModelKind,
+        build_model_config,
+    )
+    from mimose.testing import run_testing_fast
+    from mimose.training.config import parse_kv_list
+
+    yaml_config = load_yaml_config(config)
+    merged = merge_cli_overrides(
+        yaml_config,
+        data_dir=data_dir,
+        output_path=output_path,
+        art_dir=art_dir,
+        checkpoint_path=checkpoint_path,
+        online=online,
+        hf_repo=hf_repo,
+        hf_run_name=hf_run_name,
+        model=model,
+        custom_model_kwargs=parse_kv_list(custom_model_kwargs) if custom_model_kwargs else None,
+        split_file=split_file,
+        num_workers=num_workers,
+        run_suffix=run_suffix,
+        seed=seed,
+        fp16=fp16,
+        dataset_type=dataset_type,
+    )
+    # A CLI --fold overrides the config's default `fold`.
+    if fold is None and merged.get("fold") is not None:
+        fold = int(merged["fold"])
+    split_file_value = merged.get("split_file")
+    if split_file_value is None and fold is not None:
+        from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
+
+        split_file_value = KFOLD_SPLIT_FILENAME
+    resolved_split_file = resolve_split_path(split_file_value)
+    merged["split_file"] = str(resolved_split_file)
+    _require_values(
+        merged,
+        "data_dir",
+        "output_path",
+        "dataset_type",
+    )
+    apply_run_suffix(merged)
+    resolved_checkpoint_path = _resolve_test_checkpoint(merged)
+    merged["checkpoint_path"] = str(resolved_checkpoint_path)
+
+    model_kind = TestingModelKind(merged.get("model", TestingModelKind.IMFUSE))
+    model_config = build_model_config(
+        model_kind=model_kind,
+        model_kwargs=merged.get("custom_model_kwargs"),
+    )
+    output_file = run_testing_fast(
+        data_dir=Path(merged["data_dir"]),
+        output_path=Path(merged["output_path"]),
+        checkpoint_path=resolved_checkpoint_path,
+        dataset_type=DatasetType(merged["dataset_type"]),
+        model_class=model_config.model_class,
+        model_kwargs=model_config.kwargs,
+        split_file=resolved_split_file,
+        fold=fold,
+        num_workers=int(merged.get("num_workers", 8)),
+        batch_size=batch_size,
+        seed=int(merged.get("seed", 42)),
+        fp16=bool(merged.get("fp16", False)),
+    )
+    typer.echo(f"Test report written to {output_file}")
+    typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
+    typer.echo(
+        f"Per-subject scores written to "
+        f"{output_file.with_name(f'{output_file.stem}_per_subject.csv')}"
+    )
+
+
 @app.command()
 def push(
     config: Path | None = typer.Option(
@@ -1526,7 +1781,7 @@ def push(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers used while rebuilding the trainer.",
+        help="Number of dataloader workers used while rebuilding the trainer, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1700,7 +1955,7 @@ def export(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers used while rebuilding the trainer.",
+        help="Number of dataloader workers used while rebuilding the trainer, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1796,6 +2051,18 @@ def flops(
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
     ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Text file where the FLOPs report will be written. Defaults to "
+            "<results_dir>/flops.txt using --config's results_dir. Cannot be "
+            "combined with --all, since each config there gets its own report."
+        ),
+        rich_help_panel="Input/Output",
+    ),
 ) -> None:
     """Profile model FLOPs from a model name or config."""
     from mimose.flops import (
@@ -1803,6 +2070,8 @@ def flops(
         resolve_2023_config_paths,
         run_flops_analysis,
         validate_flops_selection,
+        write_flops_report,
+        write_flops_summary_csv,
     )
     from mimose.training.config import parse_kv_list
 
@@ -1813,6 +2082,12 @@ def flops(
         config_path=config,
         model_name=model,
     )
+    if all_configs and output_path is not None:
+        raise typer.BadParameter(
+            "--output-path cannot be combined with --all; each config's own "
+            "results_dir is used instead",
+            param_hint="--output-path",
+        )
     parsed_model_kwargs = parse_kv_list(custom_model_kwargs)
 
     with console.status(
@@ -1854,3 +2129,22 @@ def flops(
         if config_path is not None:
             console.print(f"[bold]Config:[/bold] {config_path}")
         console.print(build_flops_table(report))
+
+        resolved_output_path = output_path
+        if resolved_output_path is None and config_path is not None:
+            results_dir = load_yaml_config(config_path).get("results_dir")
+            if results_dir:
+                resolved_output_path = Path(results_dir) / "flops.txt"
+
+        if resolved_output_path is not None:
+            device_suffix = "cpu" if report.device == "cpu" else "gpu"
+            resolved_output_path = resolved_output_path.with_name(
+                f"{resolved_output_path.stem}_{device_suffix}{resolved_output_path.suffix}"
+            )
+            write_flops_report(report, resolved_output_path)
+            csv_path = resolved_output_path.with_suffix(".csv")
+            write_flops_summary_csv(report, csv_path)
+            console.print(
+                f"[dim]FLOPs report written to {resolved_output_path} "
+                f"(summary: {csv_path})[/dim]"
+            )

@@ -52,10 +52,35 @@ echo "ld:  $(command -v ld) ($(ld --version | { head -1 || true; }))"
 ldd --version | { head -1 || true; }
 
 # Compile the __libc_single_threaded shim (see glibc_compat_shim.c) with the
-# same compiler that will link the extensions, and feed it in via LDFLAGS -
-# distutils/setuptools append $LDFLAGS to the final link command, so this
-# gets pulled into both packages' .so files without patching their setup.py.
+# same compiler that will link the extensions.
 gcc -c -fPIC -o glibc_compat_shim.o glibc_compat_shim.c
+
+# torch's cpp_extension builds these packages via ninja (installed above),
+# which constructs its own link command and does NOT reliably forward the
+# shell's $LDFLAGS the way plain distutils/setuptools does -- so the shim
+# object above was silently dropped from the final link despite LDFLAGS.
+# CC/CXX, on the other hand, are read by both the ninja and distutils build
+# paths (they need it just to know what compiler to invoke at all), so wrap
+# the real compilers to unconditionally append the shim object to every
+# invocation instead. Passing an extra .o file to a compile-only (`-c`)
+# invocation is harmless (gcc just warns it's unused), so this is safe to
+# apply blindly to every compile *and* link call.
+REAL_CC="$(command -v gcc)"
+REAL_CXX="$(command -v g++)"
+WRAPPER_DIR="${PWD}/cc_wrappers"
+mkdir -p "${WRAPPER_DIR}"
+cat > "${WRAPPER_DIR}/cc" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_CC}" "\$@" "${PWD}/glibc_compat_shim.o"
+EOF
+cat > "${WRAPPER_DIR}/cxx" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_CXX}" "\$@" "${PWD}/glibc_compat_shim.o"
+EOF
+chmod +x "${WRAPPER_DIR}/cc" "${WRAPPER_DIR}/cxx"
+export CC="${WRAPPER_DIR}/cc"
+export CXX="${WRAPPER_DIR}/cxx"
+# Keep LDFLAGS too, in case any step does honor it -- harmless either way.
 export LDFLAGS="${PWD}/glibc_compat_shim.o ${LDFLAGS:-}"
 
 WHEELHOUSE="wheelhouse"

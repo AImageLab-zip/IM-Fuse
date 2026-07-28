@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -449,6 +450,302 @@ def run_testing(
                     mask_hd95_avg = np.asarray(mask_specific_hd95.avg)[0]
                     mask_separate_score_avg = np.asarray(mask_specific_separate_score.avg)[0]
                     mask_separate_hd95_avg = np.asarray(mask_specific_separate_hd95.avg)[0]
+                    total_score.update(mask_score_avg)
+                    total_hd95.update(mask_hd95_avg)
+                    total_separate_score.update(mask_separate_score_avg)
+                    total_separate_hd95.update(mask_separate_hd95_avg)
+                    evaluate_fields = ", ".join(
+                        f"{label} = {value:.4f}" for label, value in zip(evaluate_labels, mask_score_avg)
+                    )
+                    evaluate_hd95_fields = ", ".join(
+                        f"{label}_hd95 = {value:.4f}"
+                        for label, value in zip(evaluate_labels, mask_hd95_avg)
+                    )
+                    separate_fields = ", ".join(
+                        f"{label}_dice = {value:.4f}"
+                        for label, value in zip(separate_labels, mask_separate_score_avg)
+                    )
+                    separate_hd95_fields = ", ".join(
+                        f"{label}_hd95 = {value:.4f}"
+                        for label, value in zip(separate_labels, mask_separate_hd95_avg)
+                    )
+                    _append_report_line(
+                        output_path,
+                        (
+                            f"Available modals = {mask_label:<21}--> "
+                            f"{evaluate_fields}, {evaluate_hd95_fields}, "
+                            f"{separate_fields}, {separate_hd95_fields}"
+                        ),
+                    )
+
+        avg_total_score = np.asarray(total_score.avg)
+        avg_total_hd95 = np.asarray(total_hd95.avg)
+        avg_total_separate_score = np.asarray(total_separate_score.avg)
+        avg_total_separate_hd95 = np.asarray(total_separate_hd95.avg)
+        avg_evaluate_fields = ", ".join(
+            f"{label} = {value:.4f}" for label, value in zip(evaluate_labels, avg_total_score)
+        )
+        avg_evaluate_hd95_fields = ", ".join(
+            f"{label}_hd95 = {value:.4f}" for label, value in zip(evaluate_labels, avg_total_hd95)
+        )
+        avg_separate_fields = ", ".join(
+            f"{label}_dice = {value:.4f}"
+            for label, value in zip(separate_labels, avg_total_separate_score)
+        )
+        avg_separate_hd95_fields = ", ".join(
+            f"{label}_hd95 = {value:.4f}"
+            for label, value in zip(separate_labels, avg_total_separate_hd95)
+        )
+        _append_report_line(
+            output_path,
+            (
+                f"Avg scores {'':<29}--> "
+                f"{avg_evaluate_fields}, {avg_evaluate_hd95_fields}, "
+                f"{avg_separate_fields}, {avg_separate_hd95_fields}"
+            ),
+        )
+        _write_excel_summary(output_path)
+        _write_per_subject_report(output_path, subject_records)
+        return output_path
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from None
+
+
+def _pad_to_shape(tensor: torch.Tensor, target_hwd: tuple[int, int, int]) -> torch.Tensor:
+    _, h, w, d = tensor.shape
+    target_h, target_w, target_d = target_hwd
+    return torch.nn.functional.pad(tensor, [0, target_d - d, 0, target_w - w, 0, target_h - h])
+
+
+def _variable_size_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collate for batch_size > 1: subjects have different spatial shapes
+    after this pipeline's non-empty-bbox crop preprocessing (see
+    BRATS_FULL_VOLUME_SHAPE above), so plain `torch.stack` (default_collate)
+    fails across a batch. Zero-pads every sample up to the batch's max H/W/D
+    instead; callers must crop predictions/targets back to each sample's
+    `orig_shape` before scoring so the padding never affects metrics."""
+    max_hwd = (
+        max(item["images"].shape[-3] for item in batch),
+        max(item["images"].shape[-2] for item in batch),
+        max(item["images"].shape[-1] for item in batch),
+    )
+    return {
+        "sub": [item["sub"] for item in batch],
+        "images": torch.stack([_pad_to_shape(item["images"], max_hwd) for item in batch], dim=0),
+        "seg": torch.stack([_pad_to_shape(item["seg"], max_hwd) for item in batch], dim=0),
+        "orig_shape": [tuple(item["images"].shape[-3:]) for item in batch],
+    }
+
+
+def run_testing_fast(
+    *,
+    data_dir: Path,
+    output_path: Path,
+    checkpoint_path: Path,
+    dataset_type: DatasetType,
+    model_class: type[AbstractModel],
+    model_kwargs: dict[str, Any] | None = None,
+    split_file: Path,
+    fold: int | None = None,
+    num_workers: int = 8,
+    batch_size: int = 1,
+    seed: int = 42,
+    fp16: bool = False,
+) -> Path:
+    """Same mask-sweep evaluation as `run_testing`, restructured for speed.
+
+    Each subject volume is loaded from disk once and its 15 mask
+    combinations are run against that one already-loaded (and already
+    GPU-resident) batch, instead of `run_testing`'s one-DataLoader-pass-
+    per-mask approach, which reloads/decompresses every subject's `.npz`
+    15 times. Subjects are also grouped into `batch_size`-sized batches for
+    the forward pass. Writes the same per-subject CSV as `run_testing`.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError("Testing currently requires at least one CUDA device")
+    if output_path.exists() and output_path.is_dir():
+        raise ValueError(f"{output_path} must be a file path, not a directory")
+    if not checkpoint_path.is_file():
+        raise click.ClickException(f"Checkpoint not found: {checkpoint_path}")
+
+    set_seed(seed)
+    device = torch.device("cuda")
+
+    try:
+        split = _load_test_split(split_file=split_file, dataset_type=dataset_type, fold=fold)
+        test_set = IMFuseDataset(
+            root=data_dir,
+            masking_mode=None,
+            split=split,
+        )
+        test_loader = DataLoader(
+            dataset=test_set,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            persistent_workers=num_workers > 0,
+            collate_fn=_variable_size_collate,
+        )
+
+        model = model_class(**(model_kwargs or {}))
+        if not isinstance(model, AbstractModel):
+            raise RuntimeError(f"{model_class.__name__} must inherit from AbstractModel")
+        model = model.to(device)
+        load_weights_only_checkpoint(model, checkpoint_path, device=device)
+        model.eval()
+        if hasattr(model, "is_training"):
+            model.is_training = False
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.exists():
+            output_path.unlink()
+
+        include_rc = dataset_type == DatasetType.BRATS25
+        evaluate_labels = ("WT", "TC", "ET", "ETpp")
+        separate_labels = ("NCR_NET", "Edema", "Enhancing") + (("RC",) if include_rc else ())
+        dice_fn = softmax_output_dice_class5 if include_rc else softmax_output_dice_class4
+        hd95_separate_fn = (
+            softmax_output_hd95_separate_class5 if include_rc else softmax_output_hd95_separate_class4
+        )
+
+        total_score = AverageMeter()
+        total_hd95 = AverageMeter()
+        total_separate_score = AverageMeter()
+        total_separate_hd95 = AverageMeter()
+        mask_meters: dict[str, tuple[AverageMeter, AverageMeter, AverageMeter, AverageMeter]] = {
+            _mask_name(mask): (AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter())
+            for mask in MASKS
+        }
+        subject_records: list[dict[str, Any]] = []
+
+        total_steps = len(MASKS) * len(test_loader)
+        # Rich's Progress live-redraws in place using cursor-movement escape
+        # codes, which only makes sense on a real terminal. Under sbatch,
+        # stdout is redirected to a plain .out file (not a tty), so Rich
+        # suppresses the animated redraws entirely -- combined with
+        # transient=True (which erases the bar on exit), nothing about
+        # progress ever reaches the log file. Fall back to plain periodic
+        # lines via click.echo in that case instead.
+        log_to_stdout = not sys.stdout.isatty()
+        step = 0
+        with torch.no_grad():
+            with Progress(
+                TextColumn("[bold cyan]{task.description}"),
+                BarColumn(bar_width=None),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("{task.fields[metrics]}", style="magenta"),
+                transient=True,
+                disable=log_to_stdout,
+            ) as progress:
+                task_id = progress.add_task(
+                    "Testing masks (fast)",
+                    total=total_steps,
+                    metrics="",
+                )
+                for batch in test_loader:
+                    images = batch["images"].to(device, non_blocking=True)
+                    target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
+                    orig_shapes: list[tuple[int, int, int]] = batch["orig_shape"]
+                    current_batch_size = images.shape[0]
+
+                    for mask in MASKS:
+                        mask_label = _mask_name(mask)
+                        mask_score, mask_hd95, mask_separate_score, mask_separate_hd95 = mask_meters[
+                            mask_label
+                        ]
+                        mask_tensor = (
+                            torch.tensor(mask, dtype=torch.bool, device=device)
+                            .unsqueeze(0)
+                            .expand(current_batch_size, -1)
+                        )
+
+                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                            output = model.predict(images, mask_tensor)
+                        prediction = torch.argmax(output, dim=1)
+
+                        # Batch members may have been zero-padded (see
+                        # _variable_size_collate) to a common shape for the
+                        # stack/forward pass; crop each one back to its own
+                        # original volume shape before scoring so the padding
+                        # never affects dice/HD95.
+                        for i in range(current_batch_size):
+                            h, w, d = orig_shapes[i]
+                            pred_i = prediction[i : i + 1, :h, :w, :d]
+                            target_i = target[i : i + 1, :h, :w, :d]
+
+                            brats_dice_separate, brats_dice = dice_fn(
+                                output=pred_i,
+                                target=target_i,
+                            )
+                            brats_hd95 = softmax_output_hd95_class4(
+                                output=pred_i,
+                                target=target_i,
+                            )
+                            brats_hd95_separate = hd95_separate_fn(
+                                output=pred_i,
+                                target=target_i,
+                            )
+                            mask_score.update(brats_dice)
+                            mask_hd95.update(brats_hd95)
+                            mask_separate_score.update(brats_dice_separate)
+                            mask_separate_hd95.update(brats_hd95_separate)
+                            subject_records.append(
+                                {
+                                    "subject": batch["sub"][i],
+                                    "modalities": mask_label,
+                                    **{
+                                        f"{label}_dice": float(brats_dice[0, index])
+                                        for index, label in enumerate(evaluate_labels)
+                                    },
+                                    **{
+                                        f"{label}_dice": float(brats_dice_separate[0, index])
+                                        for index, label in enumerate(separate_labels)
+                                    },
+                                    **{
+                                        f"{label}_hd95": float(brats_hd95[0, index])
+                                        for index, label in enumerate(evaluate_labels)
+                                    },
+                                    **{
+                                        f"{label}_hd95": float(brats_hd95_separate[0, index])
+                                        for index, label in enumerate(separate_labels)
+                                    },
+                                }
+                            )
+
+                        current_avg = np.asarray(mask_score.avg)[0]
+                        current_hd95_avg = np.asarray(mask_hd95.avg)[0]
+                        metrics_text = (
+                            f"{mask_label}"
+                            f"  |  DS: WT {current_avg[0]:.4f}  "
+                            f"TC {current_avg[1]:.4f}  "
+                            f"ET {current_avg[2]:.4f}  |  "
+                            f"HD95: WT {current_hd95_avg[0]:.4f}  "
+                            f"TC {current_hd95_avg[1]:.4f}  "
+                            f"ET {current_hd95_avg[2]:.4f}"
+                        )
+                        if include_rc:
+                            current_separate_avg = np.asarray(mask_separate_score.avg)[0]
+                            current_separate_hd95_avg = np.asarray(mask_separate_hd95.avg)[0]
+                            metrics_text += (
+                                f"  |  RC: DS {current_separate_avg[-1]:.4f}  "
+                                f"HD95 {current_separate_hd95_avg[-1]:.4f}"
+                            )
+                        step += 1
+                        if log_to_stdout:
+                            click.echo(f"[{step}/{total_steps}] {metrics_text}")
+                        progress.update(task_id, advance=1, metrics=metrics_text)
+
+                for mask in MASKS:
+                    mask_label = _mask_name(mask)
+                    mask_score, mask_hd95, mask_separate_score, mask_separate_hd95 = mask_meters[mask_label]
+                    mask_score_avg = np.asarray(mask_score.avg)[0]
+                    mask_hd95_avg = np.asarray(mask_hd95.avg)[0]
+                    mask_separate_score_avg = np.asarray(mask_separate_score.avg)[0]
+                    mask_separate_hd95_avg = np.asarray(mask_separate_hd95.avg)[0]
                     total_score.update(mask_score_avg)
                     total_hd95.update(mask_hd95_avg)
                     total_separate_score.update(mask_separate_score_avg)

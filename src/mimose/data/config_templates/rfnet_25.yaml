@@ -67,18 +67,18 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.006
+lr: 0.004
 num_epochs: 300
 validation_every: 10
-batch_size: 6
+batch_size: 4
 weight_decay: 0.0001
 num_workers: 8
-fp16: true
+fp16: false
 compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 fold: 1
 wandb_project: MiMoSe

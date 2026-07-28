@@ -97,7 +97,7 @@ compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 fold: 1
 wandb_project: MiMoSe
