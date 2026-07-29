@@ -56,6 +56,7 @@ class ModelKind(StrEnum):
     RFNET = "rfnet"
     A2FSEG = "a2fseg"
     TINYMIMOSA = "tinymimosa"
+    SIMPLEUNET = "simpleunet"
     MANYMIMOSAS = "manymimosas"
     MANYMIMOSASKD = "manymimosaskd"
     UHVED = "uhved"

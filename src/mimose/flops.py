@@ -460,7 +460,7 @@ def measure_latency(
     mask: torch.Tensor,
     use_predict: bool,
     device: torch.device,
-    warmup: int = 1,
+    warmup: int = 5,
     repeats: int = 3,
 ) -> tuple[float, float]:
     """(mean, std) wall-clock time (seconds) of one forward/predict call, over

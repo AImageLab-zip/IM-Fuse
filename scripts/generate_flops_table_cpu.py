@@ -25,6 +25,29 @@ OUTPUT_DIR = os.path.join(
 CSV_FILENAME = "flops_cpu.csv"
 
 
+def sort_alphabetically(
+    rows: list[tuple[str, dict[str, dict[str, str] | None]]],
+) -> list[tuple[str, dict[str, dict[str, str] | None]]]:
+    """Row order for this file only -- gft.collect_rows sorts by FLOPs (shared
+    with generate_flops_table.py's GPU tables, which stays that way), so
+    re-sort here rather than changing the shared helper. Case-insensitive so
+    a lowercase-leading display name (e.g. "mmFormer") sorts next to its
+    peers instead of after every upper-case name."""
+    return sorted(rows, key=lambda r: r[0].lower())
+
+
+# Dropped from the full (unrestricted) tables only -- the "restricted" tables
+# are defined (see gft.PAPER_TABLE1_MODELS) as the paper's Table 1 PLUS these
+# two, so excluding them there would contradict what "restricted" means.
+EXCLUDED_DISPLAY_NAMES = {"TinyMimosa", "ManyMimosas"}
+
+
+def exclude_models(
+    rows: list[tuple[str, dict[str, dict[str, str] | None]]],
+) -> list[tuple[str, dict[str, dict[str, str] | None]]]:
+    return [r for r in rows if r[0] not in EXCLUDED_DISPLAY_NAMES]
+
+
 def _cell(value_text: str, i: int, best: int | None, second: int | None) -> str:
     if value_text == "-":
         return value_text
@@ -229,10 +252,12 @@ def main() -> None:
             file=sys.stderr,
         )
         return
+    rows = sort_alphabetically(exclude_models(rows))
 
     restricted_rows = gft.collect_rows(
         gft.RESULTS_DIR, allowed_models=gft.PAPER_TABLE1_MODELS, filename=CSV_FILENAME
     )
+    restricted_rows = sort_alphabetically(restricted_rows)
 
     tables_path = os.path.join(OUTPUT_DIR, "tables.tex")
     with open(tables_path, "w") as f:

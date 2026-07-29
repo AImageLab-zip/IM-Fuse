@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""Build per-dataset summary tables: models x (WT, TC, ET), each region
-showing overall Dice and HD95 as mean +/- std over ALL modality-presence
+"""Build class-specific (per-region) summary tables: one table per tumor
+region (WT, TC, ET), each with one row per model and four column-groups:
+  - BraTS18     -- official BraTS2018 test split (results_fold*.xlsx)
+  - BraTS25-pre -- official BraTS25-pre test split (the `_23` results dir;
+    display label only -- the on-disk dsnum/config suffix stays "23")
+  - MB-96 - BraTS18 chp -- internal cohort, scored with the BraTS18-trained
+    checkpoint (results_internal_fold*.xlsx under the `_18` results dir)
+  - MB-96 - BraTS25-pre chp -- internal cohort, scored with the
+    BraTS25-pre-trained checkpoint (both internal evaluations are kept side
+    by side rather than picked/merged, since they come from different
+    checkpoints)
+
+Each group shows: Rank (by Dice, among models with data for that group) |
+Dice mean+-std | HD95 mean+-std, aggregated over ALL modality-presence
 combinations and folds.
 
-For every dataset found under RESULTS_DIR (BraTS 2018 / 2023 / 2025, ...)
-this emits two tables:
-  - the official test-set table (results_fold*.xlsx)
-  - the internal-dataset table, scored with the same checkpoints against the
-    internal cohort (results_internal_fold*.xlsx)
+A model only needs COMPLETE data (all of EXPECTED_FOLDS present, all 15
+modality-presence combinations, every WT/TC/ET Dice+HD95 populated) for a
+given group to have that group populated; groups it lacks show "--". A model
+is included in a table at all if it has at least one complete group.
 
-A model is only included in a given table if it has COMPLETE results for it:
-all of EXPECTED_FOLDS present, each covering all 15 modality-presence
-combinations, with every WT/TC/ET Dice and HD95 value populated. Partial
-results are silently dropped from that table (a model can appear in the
-official table but be missing from the internal one, or vice versa).
-
-Per model/region, the reported value is:
+Per model/region/group, the reported value is:
   mean over the 15 modality combinations of (mean over folds), "+-"
   mean over the 15 modality combinations of (std over folds)
 i.e. the column-wise mean of the "Mean" and "Std" columns that
 build_reproduction_comparison.py computes per modality row.
 
-Writes one `.tex` file with all tables plus a standalone `main.tex` wrapper
-into OUTPUT_DIR, then compiles it to PDF with `tectonic` (if available).
+Writes one `.tex` file with all three tables plus a standalone `main.tex`
+wrapper into OUTPUT_DIR, then compiles it to PDF with `tectonic` (if available).
 """
 
 from __future__ import annotations
@@ -52,11 +57,55 @@ REGION_LABELS = {"WT": "Whole Tumor", "TC": "Tumor Core", "ET": "Enhancing Tumor
 METRICS = ["Dice", "HD95"]
 EXPECTED_FOLDS = brc.EXPECTED_FOLDS  # ["fold1", "fold3", "fold5"]
 MODALITY_KEY_ORDER = brc.MODALITY_KEY_ORDER  # 15 combinations
-DATASET_LABELS = {"18": "BraTS 2018", "23": "BraTS 2023", "25": "BraTS 2025"}
-EXCLUDED_MODELS = {brc.normalize(n) for n in ("tinymimosaweighted", "shaspec", "mstkdnet", "m3ae")}
+DATASET_LABELS = {"18": "BraTS 2018", "23": "BraTS 2025-pre", "25": "BraTS 2025"}
+EXCLUDED_MODELS = {
+    brc.normalize(n)
+    for n in (
+        "tinymimosaweighted",
+        "shaspec",
+        "mstkdnet",
+        "m3ae",
+        "manymimosas",
+        "tinymimosa",
+        "olduhved",
+    )
+}
 # Fallback display names for models not present in the legacy display-name
 # file (kept consistent with generate_flops_table.py's DISPLAY_NAMES).
 FALLBACK_DISPLAY_NAMES = {"tinymimosa": "TinyMimosa", "manymimosas": "ManyMimosas"}
+
+# Optional bibkey per model_norm, rendered as "Name~\cite{key}" in the Model
+# column when present. Models without an entry just show their display name.
+CITATION_KEYS: dict[str, str] = {
+    "a2fseg": "Wang2023A",
+    "dcseg": "Li2025B",
+    "imfuse": "Pipoli2025",
+    "ims2trans": "Zhang2024",
+    "inoutfusion": "Liu2025",
+    "lckd": "Wang2023B",
+    "m2ftrans": "Shi2023",
+    "m3fecon": "Zeng2024",
+    "mifpn": "Diao2025",
+    "mmformer": "Zhang2022",
+    "mmmvit": "Qiu2024",
+    "rfl": "Fan2025",
+    "rfnet": "Ding2021",
+    "robustseg": "Chen2019",
+    "sfusion": "Liu2023",
+    "srmnet": "Li2024",
+    "uhved": "Dorent2019",
+    "unetmfi": "Zhao2022",
+}
+
+# (column-group label, source ("official"/"internal"), dsnum). "official"
+# reads from `models` (results_fold*.xlsx), "internal" from `internal_models`
+# (results_internal_fold*.xlsx, scored with that dsnum's trained checkpoint).
+GROUPS = [
+    ("BraTS18", "official", "18"),
+    ("BraTS25-pre", "official", "23"),
+    ("MB-96 - BraTS18 chp", "internal", "18"),
+    ("MB-96 - BraTS25-pre chp", "internal", "23"),
+]
 
 
 def dataset_label(dsnum: str) -> str:
@@ -151,37 +200,41 @@ def aggregate(folds: dict) -> dict:
     return out
 
 
-SOURCES = ["BraTS", "Internal"]
+def build_class_rows(models: dict, internal_models: dict, display_names: dict):
+    """Return [(display_name, {group_label: stats_or_None}), ...], stats shaped
+    {region: {"Dice": (mean,std), "HD95": (mean,std)}} per GROUPS entry.
 
-
-def build_rows(models: dict, internal_models: dict, dsnum: str, display_names: dict):
-    """Return [(display_name, {region: {metric: {"BraTS": (mean,std), "Internal": (mean,std)}}}), ...].
-
-    Only models with COMPLETE results on both the official test split and the
-    internal cohort (for this dataset) are included, since every row needs
-    both subcolumns populated."""
+    A model's entry for a given group is None (rendered "--") unless that
+    group's folds are COMPLETE (see is_complete); a model is included in the
+    output at all iff at least one of its four groups is complete."""
+    all_model_norms = set(models) | set(internal_models)
     rows = []
-    for model_norm in models:
+    for model_norm in sorted(all_model_norms):
         if model_norm in EXCLUDED_MODELS:
             continue
-        official_folds = models.get(model_norm, {}).get(dsnum)
-        internal_folds = internal_models.get(model_norm, {}).get(dsnum)
-        if not official_folds or not is_complete(official_folds):
-            continue
-        if not internal_folds or not is_complete(internal_folds):
+
+        group_stats = {}
+        any_present = False
+        for label, source, dsnum in GROUPS:
+            source_dict = models if source == "official" else internal_models
+            folds = source_dict.get(model_norm, {}).get(dsnum)
+            if folds and is_complete(folds):
+                group_stats[label] = aggregate(folds)
+                any_present = True
+            else:
+                group_stats[label] = None
+        if not any_present:
             continue
 
-        official_agg = aggregate(official_folds)
-        internal_agg = aggregate(internal_folds)
-        stats = {
-            region: {
-                metric: {"BraTS": official_agg[region][metric], "Internal": internal_agg[region][metric]}
-                for metric in METRICS
-            }
-            for region in REGIONS
-        }
         display = display_names.get(model_norm) or FALLBACK_DISPLAY_NAMES.get(model_norm, model_norm.upper())
-        rows.append((display, stats))
+        # Escape the plain name now, then append the \cite{} macro unescaped
+        # (build_table renders this string as-is, without a second tex_escape
+        # pass, precisely so this macro survives).
+        display = tex_escape(display)
+        key = CITATION_KEYS.get(model_norm)
+        if key:
+            display = f"{display}~\\cite{{{key}}}"
+        rows.append((display, group_stats))
     rows.sort(key=lambda r: r[0].lower())
     return rows
 
@@ -193,9 +246,12 @@ def tex_escape(s: str) -> str:
     return re.sub(r"([&%$#_{}])", r"\\\1", s)
 
 
-def best_per_column(rows, region, metric, source):
-    """Index of the best row for (region, metric, source): max for Dice, min for HD95."""
-    values = [(i, r[1][region][metric][source][0]) for i, r in enumerate(rows)]
+def best_per_group(rows, region, metric, label):
+    """Index of the best row for (region, metric, group label): max for Dice,
+    min for HD95. Rows lacking that group (None) are excluded."""
+    values = [
+        (i, r[1][label][region][metric][0]) for i, r in enumerate(rows) if r[1][label] is not None
+    ]
     if not values:
         return None
     if metric == "Dice":
@@ -203,9 +259,14 @@ def best_per_column(rows, region, metric, source):
     return min(values, key=lambda t: t[1])[0]
 
 
-def second_best_per_column(rows, region, metric, source, best_idx):
-    """Index of the runner-up row for (region, metric, source), excluding the best."""
-    values = [(i, r[1][region][metric][source][0]) for i, r in enumerate(rows) if i != best_idx]
+def second_best_per_group(rows, region, metric, label, best_idx):
+    """Index of the runner-up row for (region, metric, group label), excluding
+    the best and any row lacking that group."""
+    values = [
+        (i, r[1][label][region][metric][0])
+        for i, r in enumerate(rows)
+        if r[1][label] is not None and i != best_idx
+    ]
     if not values:
         return None
     if metric == "Dice":
@@ -213,78 +274,87 @@ def second_best_per_column(rows, region, metric, source, best_idx):
     return min(values, key=lambda t: t[1])[0]
 
 
-def dice_official_ranks(rows, region) -> dict[int, int]:
-    """{row_index: rank}, rank 1 = highest Dice on the official BraTS split for
-    this region. Ties broken by the rows' existing (alphabetical) order."""
-    order = sorted(range(len(rows)), key=lambda i: -rows[i][1][region]["Dice"]["BraTS"][0])
+def dice_ranks_per_group(rows, region, label) -> dict[int, int]:
+    """{row_index: rank}, rank 1 = highest Dice for this group/region, among
+    rows that have data for this group. Rows lacking it get no entry."""
+    present = [i for i, r in enumerate(rows) if r[1][label] is not None]
+    order = sorted(present, key=lambda i: -rows[i][1][label][region]["Dice"][0])
     return {row_i: rank for rank, row_i in enumerate(order, start=1)}
 
 
 def build_table(rows, region, caption, label):
-    """One table for a single region: rows are models, columns are a Dice(BraTS)
-    rank, then Dice/HD95 x BraTS/Internal."""
+    """One table for a single region: rows are models, columns are, per
+    GROUPS entry, a Dice-based rank then Dice/HD95 mean+-std."""
     if not rows:
         return ""
 
+    group_labels = [g[0] for g in GROUPS]
     bests = {
-        (metric, source): best_per_column(rows, region, metric, source)
+        (lbl, metric): best_per_group(rows, region, metric, lbl)
+        for lbl in group_labels
         for metric in METRICS
-        for source in SOURCES
     }
     runners_up = {
-        (metric, source): second_best_per_column(rows, region, metric, source, bests[(metric, source)])
+        (lbl, metric): second_best_per_group(rows, region, metric, lbl, bests[(lbl, metric)])
+        for lbl in group_labels
         for metric in METRICS
-        for source in SOURCES
     }
-    ranks = dice_official_ranks(rows, region)
+    ranks_by_group = {lbl: dice_ranks_per_group(rows, region, lbl) for lbl in group_labels}
 
     body = []
-    for i, (name, stats) in enumerate(rows):
-        cells = [str(ranks[i]), tex_escape(name)]
-        for metric in METRICS:
-            for source in SOURCES:
-                mean, std = stats[region][metric][source]
+    for i, (name, group_stats) in enumerate(rows):
+        cells = [name]
+        for lbl in group_labels:
+            stats = group_stats[lbl]
+            if stats is None:
+                cells.extend(["--", "--", "--"])
+                continue
+            rank = ranks_by_group[lbl].get(i)
+            cells.append(str(rank) if rank is not None else "--")
+            for metric in METRICS:
+                mean, std = stats[region][metric]
                 text = f"{mean:.1f}$\\pm${std:.1f}"
-                if bests[(metric, source)] == i:
+                if bests[(lbl, metric)] == i:
                     text = f"\\textbf{{{text}}}"
-                elif runners_up[(metric, source)] == i:
+                elif runners_up[(lbl, metric)] == i:
                     text = f"\\underline{{{text}}}"
                 cells.append(text)
         body.append(" & ".join(cells) + r" \\")
 
-    n_sub = len(SOURCES)  # columns per metric (2)
+    n_sub = 3  # Rank, Dice, HD95
 
-    # Level 1: Dice / HD95, each spanning its 2 sources. Rank + Model are the
-    # first two (unspanned) columns.
-    metric_header = " & ".join(
-        f"\\multicolumn{{{n_sub}}}{{c}}{{\\textbf{{{m}}}}}" for m in METRICS
+    # Level 1: one group per GROUPS entry, each spanning its 3 sub-columns.
+    # Model is the first (unspanned) column.
+    group_header = " & ".join(
+        f"\\multicolumn{{{n_sub}}}{{c}}{{\\textbf{{{lbl}}}}}" for lbl in group_labels
     )
-    metric_cmidrules = " ".join(
-        f"\\cmidrule(lr){{{3 + i * n_sub}-{2 + (i + 1) * n_sub}}}" for i in range(len(METRICS))
+    group_cmidrules = " ".join(
+        f"\\cmidrule(lr){{{2 + i * n_sub}-{1 + (i + 1) * n_sub}}}" for i in range(len(group_labels))
     )
 
-    # Level 2: BraTS / Internal.
-    source_header = " & ".join(f"{s}" for _ in METRICS for s in SOURCES)
+    # Level 2: Rank / Dice / HD95, repeated per group.
+    sub_header = " & ".join("R & Dice & HD95" for _ in group_labels)
 
-    colspec = "cl" + "".join("cc" for _ in range(len(METRICS)))
+    colspec = "l" + "ccc" * len(group_labels)
 
     lines = [
-        r"\begin{table}[!ht]",
+        r"\begin{table*}[!ht]",
         r"\centering",
         f"\\caption{{{caption}}}",
         f"\\label{{{label}}}",
+        r"\fontsize{8}{10}\selectfont",
         r"\setlength{\tabcolsep}{3pt}",
         r"\rowcolors{3}{gray!8}{white}",
         f"\\begin{{tabular}}{{{colspec}}}",
         r"\toprule",
-        f"\\textbf{{Rank}} & \\textbf{{Model}} & {metric_header} \\\\",
-        metric_cmidrules,
-        f" & & {source_header} \\\\",
+        f" & {group_header} \\\\",
+        group_cmidrules,
+        f"\\textbf{{Model}} & {sub_header} \\\\",
         r"\midrule",
         *body,
         r"\bottomrule",
         r"\end{tabular}",
-        r"\end{table}",
+        r"\end{table*}",
         "",
     ]
     return "\n".join(lines)
@@ -302,29 +372,25 @@ def main():
         print("No result directories found in", RESULTS_DIR)
         return
 
+    rows = build_class_rows(models, internal_models, display_names)
+    if not rows:
+        print("No model has at least one complete group (BraTS18/BraTS25-pre/MB-96); nothing to write")
+        return
+
     sections = []
-    for dsnum in dsnums:
-        label = dataset_label(dsnum)
-        sections.append(f"\\section*{{{label}}}")
-
-        rows = build_rows(models, internal_models, dsnum, display_names)
-        if not rows:
-            print(f"{label}: no model complete on both splits, skipping tables")
-            sections.append(r"\clearpage")
-            continue
-
-        for region in REGIONS:
-            caption = (
-                f"{label}, {REGION_LABELS[region]} ({region}): mean $\\pm$ std Dice (\\%) and "
-                "HD95 (mm) over all modality-presence combinations and folds, evaluated on the "
-                "official BraTS test split and on the internal cohort (using the same "
-                "checkpoints trained on this dataset). Rank is by Dice on the official BraTS "
-                "split. Bold marks the best model per column."
-            )
-            table = build_table(rows, region, caption, f"tab:{dsnum}_{region.lower()}")
-            sections.append(table)
-
-        sections.append(r"\clearpage")
+    for region in REGIONS:
+        caption = (
+            f"{REGION_LABELS[region]} ({region}): mean $\\pm$ std Dice (\\%) and HD95 (mm) "
+            "over all modality-presence combinations and folds, per dataset. BraTS18/BraTS25-pre "
+            "are the official test splits, averaged over our three folds; MB-96 - BraTS18 chp/"
+            "MB-96 - BraTS25-pre chp are the internal cohort, scored with the BraTS18-trained and "
+            "BraTS25-pre-trained checkpoints respectively, also averaged over the three fold "
+            "checkpoints. "
+            "Rank is by Dice, among models with data for that group. Bold marks the best model "
+            "per column, underline the runner-up."
+        )
+        table = build_table(rows, region, caption, f"tab:{region.lower()}")
+        sections.append(table)
 
     tables_path = os.path.join(OUTPUT_DIR, "tables.tex")
     with open(tables_path, "w") as f:
@@ -334,7 +400,7 @@ def main():
     # the tables as a standalone PDF. It is NOT AAAI-compliant (geometry and
     # \input are both explicitly banned by the AAAI author instructions) and
     # must never be copied into the paper's actual .tex source -- only the
-    # \begin{table}...\end{table} blocks from tables.tex should be pasted in.
+    # \begin{table*}...\end{table*} blocks from tables.tex should be pasted in.
     main_tex = r"""\documentclass[12pt]{article}
 \usepackage[paperwidth=10in, paperheight=13in, margin=0.6in]{geometry}
 \usepackage{booktabs}
