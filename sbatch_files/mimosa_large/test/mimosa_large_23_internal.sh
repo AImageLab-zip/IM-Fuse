@@ -3,12 +3,12 @@
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=100G
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=200G
 #SBATCH --time=24:00:00
 #SBATCH -e /homes/ocarpentiero/slurm/outerr/mimosa_large_23_test_internal.err
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/mimosa_large_23_test_internal.out
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --account=phd_mimose
 
 cd /homes/ocarpentiero/MiMoSe

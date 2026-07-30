@@ -17,10 +17,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]   # repo root; hardcode if this is wrong
 
 SIZES = {
-    "mimosa_small":  (8, 16, 32, 64, 128),
-    "mimosa_medium": (16, 32, 64, 128, 256),
-    "mimosa_large":  (32, 64, 128, 256, 512),
-    "mimosa_huge":   (64, 128, 256, 512, 512),
+    "mimosa_micro":  (16, 32, 48, 64),
+    "mimosa_tiny":  (16, 32, 64, 128),
+    "mimosa_small":  (16, 32, 64, 128, 256),
+    "mimosa_medium": (24, 48, 96, 192, 384),
+    "mimosa_base":   (32, 64, 128, 256, 512),
+    "mimosa_large":  (40, 80, 160, 320, 640),
+    "mimosa_huge":   (48, 96, 192, 384, 768),
+    "mimosa_gargantuan": (64, 128, 256, 512, 1024),
+}
+
+# Per-size top-level scalar overrides (e.g. mimosa_huge needs a smaller batch
+# to fit + a correspondingly scaled-down lr). Applied after the base config's
+# own value, keyed by size name -> {yaml key: value}.
+HYPERPARAM_OVERRIDES: dict[str, dict[str, object]] = {
+    "mimosa_micro": {"batch_size": 32, "lr": 0.0032},
+    "mimosa_tiny": {"batch_size": 32, "lr": 0.0032},
+    "mimosa_small": {"batch_size": 32, "lr": 0.0032},
+    "mimosa_medium": {"batch_size": 20, "lr": 0.0020},
+    "mimosa_large": {"batch_size": 12, "lr": 0.0012},
+    "mimosa_huge": {"batch_size": 8, "lr": 0.0008},
+    "mimosa_gargantuan": {"batch_size": 6, "lr": 0.0006},
 }
 
 # All mimosa_[size] configs (every size, every dataset) point at this one
@@ -58,6 +75,10 @@ def rename(text: str, name: str) -> str:
 def build_config(src: Path, name: str, features: tuple[int, ...]) -> str:
     text = rename(src.read_text(), name)
     text = text.replace("simpleunet-preprocessed", MIMOSA_PREPROCESSED_DIR)
+    text = re.sub(r"^num_workers:.*$", "num_workers: 12", text, count=1, flags=re.MULTILINE)
+
+    for key, value in HYPERPARAM_OVERRIDES.get(name, {}).items():
+        text = re.sub(rf"(?m)^{key}:.*$", f"{key}: {value}", text, count=1)
 
     # Drop any inherited features_per_stage (incl. the broken string form) first.
     text = re.sub(r"^ +features_per_stage:.*\n", "", text, flags=re.MULTILINE)

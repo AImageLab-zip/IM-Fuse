@@ -1,4 +1,4 @@
-# mimosa_medium = SimpleUnet with features_per_stage=(16, 32, 64, 128, 256)
+# mimosa_medium = SimpleUnet with features_per_stage=(24, 48, 96, 192, 384)
 # (128x128x128 patches, IM-Fuse-style preprocessing -- see
 # mimose.models.simple_unet). Model/trainer/loss/transforms match the
 # simpleunet ones; only the per-stage width changes, so the sweep is
@@ -38,7 +38,7 @@ loss: tinymimosa
 custom_model_kwargs:
   num_cls: 5
   input_shape: [128, 128, 128]
-  features_per_stage: [16, 32, 64, 128, 256]
+  features_per_stage: [24, 48, 96, 192, 384]
 
 custom_loss_kwargs:
   dice_weight: 0.5
@@ -68,12 +68,12 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0016
+lr: 0.002
 num_epochs: 500
 validation_every: 10
-batch_size: 16
+batch_size: 20
 weight_decay: 0.0001
-num_workers: 8
+num_workers: 12
 fp16: true
 compile: false
 

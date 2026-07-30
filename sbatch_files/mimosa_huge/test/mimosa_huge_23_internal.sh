@@ -3,13 +3,14 @@
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=100G
+#SBATCH --cpus-per-task=60
+#SBATCH --mem=400G
 #SBATCH --time=24:00:00
 #SBATCH -e /homes/ocarpentiero/slurm/outerr/mimosa_huge_23_test_internal.err
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/mimosa_huge_23_test_internal.out
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --account=phd_mimose
+#SBATCH --constraint=gpu_RTXPro6000B_96G
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
@@ -30,5 +31,6 @@ for trained_fold in 1 3 5; do
         --split-file "$SPLIT_FILE" \
         --fold 1 \
         --data-dir "$DATA_DIR" \
-        --output-path "/work/phd_mimose/results/mimosa_huge_23/results_internal.txt"
+        --output-path "/work/phd_mimose/results/mimosa_huge_23/results_internal.txt" \
+        --num-workers 60
 done

@@ -99,6 +99,10 @@ class TinyMimosa(AbstractModel):
             self.features_per_stage[-1],
         )
 
+        for module in self.modules():
+            if isinstance(module, (nn.Conv3d, nn.ConvTranspose3d, nn.Linear)):
+                nn.init.kaiming_normal_(module.weight)
+
     def forward(
         self,
         images: torch.Tensor,

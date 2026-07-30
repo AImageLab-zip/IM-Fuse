@@ -3,16 +3,16 @@
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=100G
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=200G
 #SBATCH --time=24:00:00
 #SBATCH -e /homes/ocarpentiero/slurm/outerr/mimosa_large_18_67.err
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/mimosa_large_18_67.out
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --account=phd_mimose
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
-mimose train --config mimosa_large_18.yaml --run-suffix seed67 --seed 67 --try-resume
+mimose train --config mimosa_large_18.yaml --run-suffix seed67 --seed 67 --try-resume --distributed
