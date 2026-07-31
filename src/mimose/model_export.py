@@ -21,14 +21,21 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+EXCLUDED_TOP_LEVEL_DIRS = {"testing"}
+
+
 def build_mimose_zipapp(output_path: Path) -> Path:
-    """Bundle the full installed `mimose` package into a single-file `.pyz`.
+    """Bundle the installed `mimose` package into a single-file `.pyz`.
 
     Every `.py` file (plus packaged `data/configs`, `data/splits` assets)
     under `mimose.paths.PACKAGE_ROOT` is written into the archive as real
     files under a `mimose/` prefix, so the result is importable via
     `sys.path.insert(0, str(output_path))`. `__pycache__` directories are
-    skipped.
+    skipped, as is `mimose/testing/` (`EXCLUDED_TOP_LEVEL_DIRS`) -- the
+    mask-sweep/Dice/HD95 scoring loop deliberately never ships inside a
+    `.mimosepkg`; only what's needed to reconstruct the model and call
+    `predict()` does. See `docker/harness/testing_loop.py` for the harness's
+    own copy of that loop, which runs outside the package instead.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +52,8 @@ def build_mimose_zipapp(output_path: Path) -> Path:
                 if "__pycache__" in source_path.parts:
                     continue
                 relative_path = source_path.relative_to(PACKAGE_ROOT)
+                if relative_path.parts[0] in EXCLUDED_TOP_LEVEL_DIRS:
+                    continue
                 arcname = (Path("mimose") / relative_path).as_posix()
                 zf.write(source_path, arcname)
                 written.add(arcname)
@@ -75,9 +84,10 @@ def build_export_package(
     """Package a trained model into a single self-contained `.mimosepkg` archive.
 
     The archive contains the model's HF-style config, the weights-only
-    checkpoint, and a `.pyz` zipapp of the full `mimose` package (real files,
-    not references) so it can be reconstructed and called with no dependency
-    on the rest of this repository being installed.
+    checkpoint, and a `.pyz` zipapp of the `mimose` package (real files, not
+    references, minus `mimose/testing/` -- see `build_mimose_zipapp`) so it
+    can be reconstructed and called with no dependency on the rest of this
+    repository being installed.
 
     `preprocessing_config`, when given, is the exact crop/clamp/norm/dataset_type
     settings this run's training data was preprocessed with (see

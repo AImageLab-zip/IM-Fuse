@@ -21,6 +21,10 @@ dependencies = [
     "causal-conv1d>=1.4.0",
     "mamba-ssm",
     "dynamic-network-architectures>=0.4.3",
+    "fastapi>=0.128.0",
+    "python-dotenv>=1.2.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.40.0",
     "h5py>=3.16.0",
     "huggingface_hub>=0.34.0",
     "matplotlib>=3.10.9",
@@ -97,3 +101,4 @@ dev = [
 [project.scripts]
 mimose = "mimose.cli:app"
 mimose-gui = "mimose.gui:launch"
+mimose-runner = "runner.app:main"

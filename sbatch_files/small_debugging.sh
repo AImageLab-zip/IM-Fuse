@@ -9,7 +9,7 @@
 #SBATCH -e /homes/ocarpentiero/slurm/outerr/small_debugging.err
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/small_debugging.out
 #SBATCH --gres=gpu:1
-#SBATCH --account=grana_neuro
+#SBATCH --account=phd_mimose
 #_SBATCH --constraint=gpu_L40S_48G|gpu_A40_48G|gpu_RTXA5000_24G|gpu_RTX6000_24G
 
 sleep infinity

@@ -102,6 +102,7 @@ def run_flops_analysis(
     model_name: str | None,
     custom_model_kwargs: dict[str, Any] | None,
     device: str = "auto",
+    warmup: int = 0,
 ) -> FlopsReport:
     yaml_config = load_yaml_config(config_path)
     resolved_model_name = resolve_model_name(yaml_config, model_name)
@@ -170,6 +171,7 @@ def run_flops_analysis(
                 mask=mask,
                 use_predict=use_predict,
                 device=torch_device,
+                warmup=warmup,
             )
             per_modality.append(
                 ModalityMeasurement(

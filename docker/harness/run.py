@@ -1,6 +1,9 @@
 """Docker entrypoint: ingest a `.mimosepkg` archive and run mask-sweep test
-inference against a preprocessed data directory, reusing the exact same
-`mimose.testing.run_testing` mask-sweep/Dice/HD95 pipeline `mimose test` uses.
+inference against a preprocessed data directory, using `harness.testing_loop`
+-- a harness-local copy of the same mask-sweep/Dice/HD95 loop `mimose test`
+uses, kept outside `src/mimose` because `mimose.testing` is deliberately
+excluded from every exported `.mimosepkg` (see `EXCLUDED_TOP_LEVEL_DIRS` in
+`src/mimose/model_export.py`).
 
 See `.claude/docker-inference-pipeline-guide.md` for the design this
 implements. Usage (inside the container, or locally against a venv that has
@@ -49,17 +52,16 @@ def main(argv: list[str] | None = None) -> None:
         f"model_class={manifest['model_class']} run_suffix={manifest.get('run_suffix')}"
     )
 
-    from mimose.enums import DatasetType
-    from mimose.testing import run_testing
+    from harness.testing_loop import run_testing_loop
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output_path = args.output_dir / "test_report.txt"
 
-    result_path = run_testing(
+    result_path = run_testing_loop(
         data_dir=args.data_dir,
         output_path=output_path,
         checkpoint_path=resolved["checkpoint_path"],
-        dataset_type=DatasetType(args.dataset_type),
+        dataset_type=args.dataset_type,
         model_class=resolved["model_class"],
         model_kwargs=resolved["model_kwargs"],
         split_file=args.split_file,

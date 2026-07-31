@@ -31,21 +31,11 @@ export REPO BASE RETRIES
 
 folders=()
 
-for fold in 1 3 5; do
-    folders+=("manymimosas18_fold${fold}")
-done
-
-for fold in 1 3 5; do
-    folders+=("manymimosas23_fold${fold}")
-done
-
-for fold in 1 3 5; do
-    folders+=("tinymimosa23_fold${fold}")
-done
-
-for model in lckd rfnet robustseg uhved inoutfusion ims2trans mmmvit rfl unetmfi m2ftrans srmnet; do
-    for fold in 1 3 5; do
-        folders+=("${model}23_fold${fold}")
+for brats in 18 23; do
+    for model in mimosamicro mimosatiny mimosasmall mimosamedium mimosalarge mimosahuge mimosabase mimosagargantuan; do
+        for fold in 1 3 5; do
+            folders+=("${model}${brats}_fold${fold}")
+        done
     done
 done
 

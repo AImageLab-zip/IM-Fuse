@@ -2039,6 +2039,12 @@ def flops(
         help="Device to use for profiling: auto, cpu, or cuda.",
         rich_help_panel="Runtime",
     ),
+    warmup: int = typer.Option(
+        0,
+        "--warmup",
+        help="Number of untracked warmup runs before timing latency.",
+        rich_help_panel="Runtime",
+    ),
     all_configs: bool = typer.Option(
         False,
         "--all",
@@ -2109,6 +2115,7 @@ def flops(
                             model_name=None,
                             custom_model_kwargs=parsed_model_kwargs,
                             device=device,
+                            warmup=warmup,
                         ),
                     )
                 )
@@ -2121,6 +2128,7 @@ def flops(
                         model_name=model,
                         custom_model_kwargs=parsed_model_kwargs,
                         device=device,
+                        warmup=warmup,
                     ),
                 )
             ]
