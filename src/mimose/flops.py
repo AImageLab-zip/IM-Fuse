@@ -62,6 +62,8 @@ class ModalityMeasurement:
     peak_memory_bytes: float | None
     latency_seconds: float | None
     latency_std_seconds: float | None
+    kernel_launches: int | None
+    peak_reserved_memory_bytes: float | None
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,14 @@ def run_flops_analysis(
                 device=torch_device,
                 warmup=warmup,
             )
+            kernel_launches, peak_reserved_memory_bytes = measure_kernel_launches_and_memory(
+                model,
+                images=prepared.images,
+                mask=mask,
+                use_predict=use_predict,
+                device=torch_device,
+                warmup=warmup,
+            )
             per_modality.append(
                 ModalityMeasurement(
                     modalities=modality_label(combo),
@@ -182,6 +192,8 @@ def run_flops_analysis(
                     peak_memory_bytes=peak_memory_bytes,
                     latency_seconds=latency_seconds,
                     latency_std_seconds=latency_std_seconds,
+                    kernel_launches=kernel_launches,
+                    peak_reserved_memory_bytes=peak_reserved_memory_bytes,
                 )
             )
 
@@ -494,6 +506,59 @@ def measure_latency(
     return mean, std
 
 
+def measure_kernel_launches_and_memory(
+    model: nn.Module,
+    *,
+    images: torch.Tensor,
+    mask: torch.Tensor,
+    use_predict: bool,
+    device: torch.device,
+    warmup: int = 0,
+) -> tuple[int | None, float | None]:
+    """(kernel launch count, peak reserved CUDA memory bytes) for one pass, or
+    (None, None) on CPU -- neither concept applies there: there's no discrete
+    kernel-launch model for CPU ops, and torch.cuda.max_memory_reserved has no
+    CPU equivalent.
+
+    Peak *reserved* memory (the allocator's cached/reserved footprint) is a
+    better proxy for device memory pressure than measure_pass's peak
+    *allocated* memory: the gap between the two reflects allocator
+    fragmentation/caching overhead that allocated-only figures hide.
+
+    Profiled via torch.profiler on a clean call, run separately from
+    measure_pass so ptflops's own op-counting hooks don't add extra kernel
+    launches or memory traffic that would skew either number.
+    """
+    if device.type != "cuda":
+        return None, None
+
+    wrapper = _FlopsWrapper(model, use_predict=use_predict)
+    wrapper.eval()
+
+    with torch.no_grad():
+        for _ in range(warmup):
+            wrapper(images, mask)
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+
+        with torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ]
+        ) as prof:
+            wrapper(images, mask)
+        torch.cuda.synchronize(device)
+
+    kernel_launches = sum(
+        1
+        for event in prof.events()
+        if event.device_type == torch.autograd.DeviceType.CUDA
+    )
+    peak_reserved_memory_bytes = float(torch.cuda.max_memory_reserved(device))
+    return kernel_launches, peak_reserved_memory_bytes
+
+
 def count_parameters(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters())
 
@@ -512,6 +577,26 @@ def _mac_stats(per_modality: tuple[ModalityMeasurement, ...]) -> dict[str, tuple
 
 def _memory_stats(per_modality: tuple[ModalityMeasurement, ...]) -> dict[str, float] | None:
     values = [m.peak_memory_bytes for m in per_modality if m.peak_memory_bytes is not None]
+    if not values:
+        return None
+    return {"Mean": statistics.fmean(values), "Max": max(values), "Min": min(values)}
+
+
+def _reserved_memory_stats(
+    per_modality: tuple[ModalityMeasurement, ...]
+) -> dict[str, float] | None:
+    values = [
+        m.peak_reserved_memory_bytes
+        for m in per_modality
+        if m.peak_reserved_memory_bytes is not None
+    ]
+    if not values:
+        return None
+    return {"Mean": statistics.fmean(values), "Max": max(values), "Min": min(values)}
+
+
+def _kernel_stats(per_modality: tuple[ModalityMeasurement, ...]) -> dict[str, float] | None:
+    values = [m.kernel_launches for m in per_modality if m.kernel_launches is not None]
     if not values:
         return None
     return {"Mean": statistics.fmean(values), "Max": max(values), "Min": min(values)}
@@ -578,16 +663,20 @@ def build_flops_table(report: FlopsReport) -> Group:
         table.add_column("MACs", justify="right")
         table.add_column("FLOPs", justify="right")
         table.add_column("Peak Memory", justify="right")
+        table.add_column("Reserved Memory", justify="right")
+        table.add_column("Kernel Launches", justify="right")
         table.add_column("Latency", justify="right")
 
         if path.note:
             table.add_column("Note")
-            table.add_row("-", "-", "-", "-", "-", path.note)
+            table.add_row("-", "-", "-", "-", "-", "-", "-", path.note)
             tables.append(table)
             continue
 
         mac_stats = _mac_stats(path.per_modality)
         memory_stats = _memory_stats(path.per_modality)
+        reserved_memory_stats = _reserved_memory_stats(path.per_modality)
+        kernel_stats = _kernel_stats(path.per_modality)
         time_stats = _time_stats(path.per_modality)
         time_std_stat = _time_std_stat(path.per_modality)
 
@@ -597,6 +686,8 @@ def build_flops_table(report: FlopsReport) -> Group:
                 _format_count(measurement.macs),
                 _format_count(measurement.flops),
                 _format_bytes(measurement.peak_memory_bytes),
+                _format_bytes(measurement.peak_reserved_memory_bytes),
+                _format_count(measurement.kernel_launches),
                 _format_seconds(measurement.latency_seconds, measurement.latency_std_seconds),
             )
 
@@ -605,6 +696,10 @@ def build_flops_table(report: FlopsReport) -> Group:
             for label in ("Mean", "Max", "Min"):
                 macs, flops = mac_stats[label]
                 memory = memory_stats[label] if memory_stats is not None else None
+                reserved_memory = (
+                    reserved_memory_stats[label] if reserved_memory_stats is not None else None
+                )
+                kernel_launches = kernel_stats[label] if kernel_stats is not None else None
                 latency = time_stats[label] if time_stats is not None else None
                 latency_std = time_std_stat if label == "Mean" else None
                 table.add_row(
@@ -612,6 +707,8 @@ def build_flops_table(report: FlopsReport) -> Group:
                     _format_count(macs),
                     _format_count(flops),
                     _format_bytes(memory),
+                    _format_bytes(reserved_memory),
+                    _format_count(kernel_launches),
                     _format_seconds(latency, latency_std),
                     style="bold",
                 )
@@ -645,6 +742,8 @@ def write_flops_summary_csv(report: FlopsReport, output_path: Path) -> None:
                 "mean_macs",
                 "mean_flops",
                 "mean_peak_memory_bytes",
+                "mean_peak_reserved_memory_bytes",
+                "mean_kernel_launches",
                 "mean_latency_seconds",
                 "latency_std_across_modalities_seconds",
                 "mean_latency_std_seconds",
@@ -657,10 +756,16 @@ def write_flops_summary_csv(report: FlopsReport, output_path: Path) -> None:
             if mac_stats is None:
                 continue
             memory_stats = _memory_stats(path.per_modality)
+            reserved_memory_stats = _reserved_memory_stats(path.per_modality)
+            kernel_stats = _kernel_stats(path.per_modality)
             time_stats = _time_stats(path.per_modality)
             time_std_stat = _time_std_stat(path.per_modality)
             mean_macs, mean_flops = mac_stats["Mean"]
             mean_memory = memory_stats["Mean"] if memory_stats is not None else ""
+            mean_reserved_memory = (
+                reserved_memory_stats["Mean"] if reserved_memory_stats is not None else ""
+            )
+            mean_kernel_launches = kernel_stats["Mean"] if kernel_stats is not None else ""
             mean_latency = time_stats["Mean"] if time_stats is not None else ""
             # Std, across the 15 modality-presence combinations, of each
             # combination's own (already repeat-averaged) latency -- how much
@@ -681,6 +786,8 @@ def write_flops_summary_csv(report: FlopsReport, output_path: Path) -> None:
                     mean_macs,
                     mean_flops,
                     mean_memory,
+                    mean_reserved_memory,
+                    mean_kernel_launches,
                     mean_latency,
                     latency_std_across_modalities,
                     mean_latency_std,

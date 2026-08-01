@@ -58,6 +58,21 @@ METRICS = ["Dice", "HD95"]
 EXPECTED_FOLDS = brc.EXPECTED_FOLDS  # ["fold1", "fold3", "fold5"]
 MODALITY_KEY_ORDER = brc.MODALITY_KEY_ORDER  # 15 combinations
 DATASET_LABELS = {"18": "BraTS 2018", "23": "BraTS 2025-pre", "25": "BraTS 2025"}
+# mimosa_[size] models (mimosa_base, mimosa_large, ...) are excluded here and
+# handled instead by generate_mimosa_size_tables.py.
+MIMOSA_SIZE_MODELS = {
+    brc.normalize(n)
+    for n in (
+        "mimosa_base",
+        "mimosa_gargantuan",
+        "mimosa_huge",
+        "mimosa_large",
+        "mimosa_medium",
+        "mimosa_micro",
+        "mimosa_small",
+        "mimosa_tiny",
+    )
+}
 EXCLUDED_MODELS = {
     brc.normalize(n)
     for n in (
@@ -69,7 +84,7 @@ EXCLUDED_MODELS = {
         "tinymimosa",
         "olduhved",
     )
-}
+} | MIMOSA_SIZE_MODELS
 # Fallback display names for models not present in the legacy display-name
 # file (kept consistent with generate_flops_table.py's DISPLAY_NAMES).
 FALLBACK_DISPLAY_NAMES = {"tinymimosa": "TinyMimosa", "manymimosas": "ManyMimosas"}
@@ -106,6 +121,11 @@ GROUPS = [
     ("MB-96 - BraTS18 chp", "internal", "18"),
     ("MB-96 - BraTS25-pre chp", "internal", "23"),
 ]
+
+# Group labels that have a legacy (published) baseline to compare against, and
+# hence get the extra "Avg Error" column; the internal MB-96 groups have no
+# legacy counterpart, so error is only ever shown for these two.
+OFFICIAL_GROUP_LABELS = {lbl for lbl, source, _dsnum in GROUPS if source == "official"}
 
 
 def dataset_label(dsnum: str) -> str:
@@ -200,9 +220,28 @@ def aggregate(folds: dict) -> dict:
     return out
 
 
-def build_class_rows(models: dict, internal_models: dict, display_names: dict):
+def aggregate_error(folds: dict, region: str, legacy_region_block: dict) -> float | None:
+    """Average, over the 15 modality combinations, of (our mean-over-folds Dice
+    - legacy Dice) at that combination. legacy_region_block is
+    legacy[dataset][region] ({mkey: value}); combos with no legacy value are
+    skipped. Dice-only, since the legacy workbook has no HD95 baseline (see
+    build_reproduction_comparison.py's module docstring)."""
+    if not legacy_region_block:
+        return None
+    diffs = []
+    for mkey in MODALITY_KEY_ORDER:
+        legacy_val = legacy_region_block.get(mkey)
+        if legacy_val is None:
+            continue
+        new_vals = [folds[fold][mkey][region] for fold in EXPECTED_FOLDS]
+        diffs.append(statistics.fmean(new_vals) - legacy_val)
+    return statistics.fmean(diffs) if diffs else None
+
+
+def build_class_rows(models: dict, internal_models: dict, display_names: dict, legacy: dict):
     """Return [(display_name, {group_label: stats_or_None}), ...], stats shaped
-    {region: {"Dice": (mean,std), "HD95": (mean,std)}} per GROUPS entry.
+    {region: {"Dice": (mean,std), "HD95": (mean,std), "Error": value_or_None}}
+    per GROUPS entry ("Error" only ever set for OFFICIAL_GROUP_LABELS groups).
 
     A model's entry for a given group is None (rendered "--") unless that
     group's folds are COMPLETE (see is_complete); a model is included in the
@@ -219,7 +258,16 @@ def build_class_rows(models: dict, internal_models: dict, display_names: dict):
             source_dict = models if source == "official" else internal_models
             folds = source_dict.get(model_norm, {}).get(dsnum)
             if folds and is_complete(folds):
-                group_stats[label] = aggregate(folds)
+                stats = aggregate(folds)
+                if label in OFFICIAL_GROUP_LABELS:
+                    dataset = brc.DATASETS.get(dsnum)
+                    for region in REGIONS:
+                        legacy_region_block = {
+                            mkey: vals.get(model_norm)
+                            for mkey, vals in legacy.get(dataset, {}).get(region, {}).items()
+                        }
+                        stats[region]["Error"] = aggregate_error(folds, region, legacy_region_block)
+                group_stats[label] = stats
                 any_present = True
             else:
                 group_stats[label] = None
@@ -301,13 +349,17 @@ def build_table(rows, region, caption, label):
     }
     ranks_by_group = {lbl: dice_ranks_per_group(rows, region, lbl) for lbl in group_labels}
 
+    # Official groups (with a legacy baseline) get a 4th "Avg Error" cell;
+    # internal groups (no legacy counterpart) stay at 3.
+    n_sub_by_label = {lbl: (4 if lbl in OFFICIAL_GROUP_LABELS else 3) for lbl in group_labels}
+
     body = []
     for i, (name, group_stats) in enumerate(rows):
         cells = [name]
         for lbl in group_labels:
             stats = group_stats[lbl]
             if stats is None:
-                cells.extend(["--", "--", "--"])
+                cells.extend(["--"] * n_sub_by_label[lbl])
                 continue
             rank = ranks_by_group[lbl].get(i)
             cells.append(str(rank) if rank is not None else "--")
@@ -319,23 +371,32 @@ def build_table(rows, region, caption, label):
                 elif runners_up[(lbl, metric)] == i:
                     text = f"\\underline{{{text}}}"
                 cells.append(text)
+            if lbl in OFFICIAL_GROUP_LABELS:
+                error = stats[region].get("Error")
+                cells.append(f"{error:+.1f}" if error is not None else "--")
         body.append(" & ".join(cells) + r" \\")
 
-    n_sub = 3  # Rank, Dice, HD95
+    # Level 1: one group per GROUPS entry, each spanning its own sub-columns
+    # (4 for official groups incl. Avg Error, 3 for internal). Model is the
+    # first (unspanned) column.
+    group_header_parts = []
+    group_cmidrule_parts = []
+    col = 2
+    for lbl in group_labels:
+        n_sub = n_sub_by_label[lbl]
+        group_header_parts.append(f"\\multicolumn{{{n_sub}}}{{c}}{{\\textbf{{{lbl}}}}}")
+        group_cmidrule_parts.append(f"\\cmidrule(lr){{{col}-{col + n_sub - 1}}}")
+        col += n_sub
+    group_header = " & ".join(group_header_parts)
+    group_cmidrules = " ".join(group_cmidrule_parts)
 
-    # Level 1: one group per GROUPS entry, each spanning its 3 sub-columns.
-    # Model is the first (unspanned) column.
-    group_header = " & ".join(
-        f"\\multicolumn{{{n_sub}}}{{c}}{{\\textbf{{{lbl}}}}}" for lbl in group_labels
+    # Level 2: Rank / Dice / HD95[/ Avg Error], repeated per group.
+    sub_header = " & ".join(
+        ("R & Dice & HD95 & Avg Error" if lbl in OFFICIAL_GROUP_LABELS else "R & Dice & HD95")
+        for lbl in group_labels
     )
-    group_cmidrules = " ".join(
-        f"\\cmidrule(lr){{{2 + i * n_sub}-{1 + (i + 1) * n_sub}}}" for i in range(len(group_labels))
-    )
 
-    # Level 2: Rank / Dice / HD95, repeated per group.
-    sub_header = " & ".join("R & Dice & HD95" for _ in group_labels)
-
-    colspec = "l" + "ccc" * len(group_labels)
+    colspec = "l" + "".join("cccc" if lbl in OFFICIAL_GROUP_LABELS else "ccc" for lbl in group_labels)
 
     lines = [
         r"\begin{table*}[!ht]",
@@ -363,16 +424,16 @@ def build_table(rows, region, caption, label):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    display_names = {}
+    legacy, display_names = {}, {}
     if os.path.exists(LEGACY_FILE):
-        _, display_names = brc.parse_legacy(LEGACY_FILE)
+        legacy, display_names = brc.parse_legacy(LEGACY_FILE)
 
     models, internal_models, dsnums = discover(RESULTS_DIR)
     if not dsnums:
         print("No result directories found in", RESULTS_DIR)
         return
 
-    rows = build_class_rows(models, internal_models, display_names)
+    rows = build_class_rows(models, internal_models, display_names, legacy)
     if not rows:
         print("No model has at least one complete group (BraTS18/BraTS25-pre/MB-96); nothing to write")
         return
@@ -385,7 +446,11 @@ def main():
             "are the official test splits, averaged over our three folds; MB-96 - BraTS18 chp/"
             "MB-96 - BraTS25-pre chp are the internal cohort, scored with the BraTS18-trained and "
             "BraTS25-pre-trained checkpoints respectively, also averaged over the three fold "
-            "checkpoints. "
+            "checkpoints. BraTS18/BraTS25-pre additionally show Avg Error, the mean over all "
+            "modality-presence combinations of (our reproduced Dice mean $-$ the published legacy "
+            "Dice), i.e.\\ positive means we reproduce higher than legacy; not shown for the "
+            "internal MB-96 groups, which have no legacy baseline, nor for HD95, which legacy "
+            "never recorded. "
             "Rank is by Dice, among models with data for that group. Bold marks the best model "
             "per column, underline the runner-up."
         )

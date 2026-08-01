@@ -36,9 +36,13 @@ region, modality). Without it (a bare --input CSV lacking those columns),
 only the config-level point estimate is reported, and that limitation is
 stated in analysis_report.txt.
 
-Outputs (into --output-dir): modality_marginal_contribution_main.{pdf,svg,png},
+--dataset and --metrics each accept a single value, a comma-separated list,
+or "all". Every (dataset, metric) combination gets its own
+<output-dir>/<dataset>/<metric>/ subdirectory containing
+modality_marginal_contribution_main.{pdf,svg,png},
 modality_marginal_summary.csv, modality_marginal_matched_pairs.csv,
-modality_marginal_bootstrap.csv (case-level only), analysis_report.txt.
+modality_marginal_bootstrap.csv (case-level only), and analysis_report.txt.
+Dice and HD95 are never merged into one table/figure.
 """
 
 from __future__ import annotations
@@ -77,9 +81,18 @@ DATASET_GROUPS: dict[str, dict[str, str]] = {
 }
 DEFAULT_DATASET = "MB96-BraTS25prechp"
 
+# Per-metric behavior. Dice and HD95 are never merged into one table/figure --
+# each (dataset, metric) combination gets its own output subdirectory, since
+# the two metrics have different scales, units, and improvement direction.
+METRIC_INFO: dict[str, dict] = {
+    "dice": {"column": "dice", "higher_is_better": True, "unit": "pp", "scale": 100.0},
+    "hd95": {"column": "hd95", "higher_is_better": False, "unit": "mm", "scale": 1.0},
+}
+DEFAULT_METRICS = "dice"
+
 # Dropped by default -- deprecated/duplicate model variants, not part of the
 # reported comparison. Still overridable via --exclude-models.
-DEFAULT_EXCLUDED_MODELS = "manymimosas,tinymimosa"
+DEFAULT_EXCLUDED_MODELS = "manymimosas,tinymimosa,mcpl,shaspec,mambavitakd,tinymimosaweighted,m3ae,mstkdnet,mimosa*"
 
 # Display-name casing, matched to generate_summary_tables.py's
 # display_names/FALLBACK_DISPLAY_NAMES output (see outputs/summary_table_mean
@@ -111,18 +124,26 @@ DISPLAY_NAMES: dict[str, str] = {
 LONG_REQUIRED_COLUMNS = ["dataset", "model", "region", "configuration", "dice"]
 LONG_OPTIONAL_COLUMNS = ["checkpoint", "case_id", "hd95"]
 
-CAPTION = (
-    "Matched marginal Dice contribution of each MRI modality. Each cell "
-    "reports the mean change in Dice obtained by adding the indicated "
-    "modality to an otherwise identical set of available modalities. "
-    "Contributions are averaged over all seven valid matched configuration "
-    "pairs and over the trained checkpoints. Results are shown separately "
-    "for (a) whole tumor, (b) tumor core, and (c) enhancing tumor. Positive "
-    "values indicate improved segmentation after adding the modality, while "
-    "negative values indicate reduced performance. A dot marks contributions "
-    "whose paired patient-bootstrap 95% confidence interval excludes zero. "
-    "All panels use the same model ordering and color scale."
-)
+def build_caption(metric: str) -> str:
+    metric_name = "Dice" if metric == "dice" else "HD95"
+    direction = (
+        "Positive values indicate improved segmentation after adding the "
+        "modality, while negative values indicate reduced performance."
+        if METRIC_INFO[metric]["higher_is_better"]
+        else "Negative values indicate improved segmentation (reduced HD95) "
+        "after adding the modality, while positive values indicate worse "
+        "(increased) HD95."
+    )
+    return (
+        f"Matched marginal {metric_name} contribution of each MRI modality. Each cell "
+        f"reports the mean change in {metric_name} obtained by adding the indicated "
+        "modality to an otherwise identical set of available modalities. "
+        "Contributions are averaged over all seven valid matched configuration "
+        "pairs and over the trained checkpoints. Results are shown separately "
+        f"for (a) whole tumor, (b) tumor core, and (c) enhancing tumor. {direction} "
+        "A dot marks contributions whose paired patient-bootstrap 95% confidence "
+        "interval excludes zero. All panels use the same model ordering and color scale."
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -166,11 +187,35 @@ def display_model_name(raw: str) -> str:
     return DISPLAY_NAMES.get(normalize_model_name(raw), raw.upper())
 
 
+def parse_exclude_models(spec: str) -> tuple[set[str], tuple[str, ...]]:
+    """Parses --exclude-models into (exact_names, prefixes). An entry ending
+    in "*" (e.g. "mimosa*") excludes every model whose normalized name starts
+    with that prefix (e.g. mimosa_base, mimosa_tiny, ...); other entries
+    match the normalized model name exactly."""
+    exact, prefixes = set(), []
+    for raw in spec.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        if raw.endswith("*"):
+            prefixes.append(normalize_model_name(raw[:-1]))
+        else:
+            exact.add(normalize_model_name(raw))
+    return exact, tuple(prefixes)
+
+
+def is_excluded_model(model_raw: str, exclude_models: tuple[set[str], tuple[str, ...]]) -> bool:
+    exact, prefixes = exclude_models
+    normalized = normalize_model_name(model_raw)
+    return normalized in exact or normalized.startswith(prefixes)
+
+
 def discover_model_dirs(
-    results_dir: Path, dsnum: str, exclude_models: set[str]
+    results_dir: Path, dsnum: str, exclude_models: tuple[set[str], tuple[str, ...]]
 ) -> list[tuple[str, Path]]:
     """[(display_model_name, dir_path), ...] for <model>_<dsnum> dirs directly
-    under results_dir, skipping any whose normalized name is in exclude_models."""
+    under results_dir, skipping any matched by exclude_models (see
+    parse_exclude_models)."""
     found = []
     for entry in sorted(results_dir.iterdir()):
         if not entry.is_dir():
@@ -179,7 +224,7 @@ def discover_model_dirs(
         if not m or m.group(2) != dsnum:
             continue
         model_raw = m.group(1)
-        if normalize_model_name(model_raw) in exclude_models:
+        if is_excluded_model(model_raw, exclude_models):
             continue
         found.append((model_raw, entry))
     return found
@@ -419,12 +464,17 @@ def canon_string(modalities: frozenset[str]) -> str:
     return "_".join(m for m in MODALITIES if m in modalities)
 
 
-def build_matched_pairs(df: pd.DataFrame, dataset_key: str, report: ValidationReport) -> pd.DataFrame:
+def build_matched_pairs(
+    df: pd.DataFrame, dataset_key: str, metric: str, report: ValidationReport
+) -> pd.DataFrame:
     """One row per (model, region, modality, background subset S): the
     config-level (mean over all case_id/checkpoint rows) matched marginal
-    Dice gain of adding `modality` to S. This is written straight out as
-    modality_marginal_matched_pairs.csv."""
-    config_means = df.groupby(["model", "region", "configuration_canonical"])["dice"].mean()
+    `metric` gain of adding `modality` to S. This is written straight out as
+    modality_marginal_matched_pairs.csv. For `metric="hd95"`, "gain" is still
+    with-minus-without -- a NEGATIVE value means the modality reduced HD95
+    (i.e. improved), since HD95 is a distance (lower is better), unlike Dice."""
+    column = METRIC_INFO[metric]["column"]
+    config_means = df.groupby(["model", "region", "configuration_canonical"])[column].mean()
 
     rows = []
     for (model, region), _ in df.groupby(["model", "region"]):
@@ -433,8 +483,8 @@ def build_matched_pairs(df: pd.DataFrame, dataset_key: str, report: ValidationRe
             for S in matched_subsets(modality):
                 without_str, with_str = canon_string(S), canon_string(S | {modality})
                 try:
-                    dice_without = config_means[(model, region, without_str)]
-                    dice_with = config_means[(model, region, with_str)]
+                    value_without = config_means[(model, region, without_str)]
+                    value_with = config_means[(model, region, with_str)]
                 except KeyError:
                     continue
                 n_valid += 1
@@ -447,9 +497,9 @@ def build_matched_pairs(df: pd.DataFrame, dataset_key: str, report: ValidationRe
                         "configuration_without": without_str,
                         "configuration_with": with_str,
                         "background_cardinality": len(S),
-                        "dice_without": dice_without,
-                        "dice_with": dice_with,
-                        "marginal_gain": dice_with - dice_without,
+                        f"{metric}_without": value_without,
+                        f"{metric}_with": value_with,
+                        "marginal_gain": value_with - value_without,
                     }
                 )
             if n_valid < 7:
@@ -466,14 +516,14 @@ def case_level_available(df: pd.DataFrame) -> bool:
     return df["case_id"].notna().any() and df["checkpoint"].notna().any()
 
 
-def build_group_pivot(sub: pd.DataFrame) -> pd.DataFrame | None:
-    """(case_id, checkpoint) x configuration_canonical Dice pivot for one
+def build_group_pivot(sub: pd.DataFrame, metric: str) -> pd.DataFrame | None:
+    """(case_id, checkpoint) x configuration_canonical `metric` pivot for one
     (model, region) group -- built once per group and shared across all 4
     modalities' matrices, rather than re-pivoted per modality."""
     if sub.empty:
         return None
     return sub.pivot_table(
-        index=["case_id", "checkpoint"], columns="configuration_canonical", values="dice"
+        index=["case_id", "checkpoint"], columns="configuration_canonical", values=METRIC_INFO[metric]["column"]
     )
 
 
@@ -520,21 +570,22 @@ def per_patient_pair_matrix(
 
 
 def bootstrap_ci(
-    matrix: np.ndarray, n_reps: int, rng: np.random.Generator
+    matrix: np.ndarray, n_reps: int, rng: np.random.Generator, scale: float = 100.0
 ) -> tuple[float, float, float, int]:
-    """(point_estimate, ci_lower, ci_upper, n_patients), all in Dice pp.
-    Point estimate = nanmean over patients and pairs. Each bootstrap
-    replicate resamples patient rows (with replacement, keeping every
-    pair/checkpoint value belonging to a sampled patient together), then
-    takes the same nanmean."""
+    """(point_estimate, ci_lower, ci_upper, n_patients), in the metric's
+    reporting units (`scale` converts a 0-1 Dice fraction to pp; for HD95,
+    scale=1.0 since it's already in mm). Point estimate = nanmean over
+    patients and pairs. Each bootstrap replicate resamples patient rows (with
+    replacement, keeping every pair/checkpoint value belonging to a sampled
+    patient together), then takes the same nanmean."""
     n_patients = matrix.shape[0]
-    point = np.nanmean(matrix) * 100.0
+    point = np.nanmean(matrix) * scale
     if n_patients == 0:
         return point, float("nan"), float("nan"), 0
     idx = rng.integers(0, n_patients, size=(n_reps, n_patients))
     resampled = matrix[idx]  # (n_reps, n_patients, 7)
     with np.errstate(invalid="ignore"):
-        reps = np.nanmean(resampled.reshape(n_reps, -1), axis=1) * 100.0
+        reps = np.nanmean(resampled.reshape(n_reps, -1), axis=1) * scale
     reps = reps[~np.isnan(reps)]
     if len(reps) == 0:
         return point, float("nan"), float("nan"), n_patients
@@ -553,7 +604,14 @@ def auto_worker_count() -> int:
 
 
 def _process_unit(
-    model: str, region: str, modality: str, sub: pd.DataFrame, dataset_key: str, n_reps: int, seed: int
+    model: str,
+    region: str,
+    modality: str,
+    sub: pd.DataFrame,
+    dataset_key: str,
+    metric: str,
+    n_reps: int,
+    seed: int,
 ) -> dict:
     """Worker unit: everything needed to bootstrap one (model, region,
     modality) unit, run in a separate process by compute_case_level_summary.
@@ -563,7 +621,8 @@ def _process_unit(
     the bootstrap itself) so each unit is a fully independent task and
     progress can be reported per unit rather than only once per group."""
     rng = np.random.default_rng(seed)
-    pivot = build_group_pivot(sub)
+    scale = METRIC_INFO[metric]["scale"]
+    pivot = build_group_pivot(sub, metric)
     if pivot is None:
         return {"summary_rows": [], "bootstrap_rows": [], "warnings": []}
 
@@ -572,7 +631,7 @@ def _process_unit(
         return {"summary_rows": [], "bootstrap_rows": [], "warnings": warnings}
 
     n_pairs_valid = int((~np.isnan(matrix).all(axis=0)).sum())
-    point, lo, hi, n_patients = bootstrap_ci(matrix, n_reps, rng)
+    point, lo, hi, n_patients = bootstrap_ci(matrix, n_reps, rng, scale=scale)
     summary_rows = [
         {
             "dataset": dataset_key,
@@ -589,7 +648,7 @@ def _process_unit(
     n_patients_eff = matrix.shape[0]
     idx = rng.integers(0, n_patients_eff, size=(n_reps, n_patients_eff))
     with np.errstate(invalid="ignore"):
-        reps = np.nanmean(matrix[idx].reshape(n_reps, -1), axis=1) * 100.0
+        reps = np.nanmean(matrix[idx].reshape(n_reps, -1), axis=1) * scale
     bootstrap_rows = [
         {
             "dataset": dataset_key,
@@ -607,6 +666,7 @@ def _process_unit(
 def compute_case_level_summary(
     df: pd.DataFrame,
     dataset_key: str,
+    metric: str,
     n_reps: int,
     seed: int,
     report: ValidationReport,
@@ -631,7 +691,7 @@ def compute_case_level_summary(
     seeds = np.random.SeedSequence(seed).spawn(len(units))
 
     tasks = [
-        (model, region, modality, group_subs[(model, region)], dataset_key, n_reps, s)
+        (model, region, modality, group_subs[(model, region)], dataset_key, metric, n_reps, s)
         for (model, region, modality), s in zip(units, seeds)
     ]
 
@@ -665,11 +725,12 @@ def compute_case_level_summary(
     return pd.DataFrame(summary_rows), pd.DataFrame(bootstrap_rows)
 
 
-def compute_config_level_summary(matched_pairs: pd.DataFrame, dataset_key: str) -> pd.DataFrame:
+def compute_config_level_summary(matched_pairs: pd.DataFrame, dataset_key: str, metric: str) -> pd.DataFrame:
     """Fallback summary (no case_id/checkpoint): mean_gain from config-level
     matched_pairs, no confidence interval."""
+    scale = METRIC_INFO[metric]["scale"]
     grouped = matched_pairs.groupby(["model", "region", "modality"]).agg(
-        mean_gain=("marginal_gain", lambda s: s.mean() * 100.0),
+        mean_gain=("marginal_gain", lambda s: s.mean() * scale),
         number_of_pairs=("marginal_gain", "size"),
     )
     grouped["dataset"] = dataset_key
@@ -723,6 +784,7 @@ def build_figure(
     summary: pd.DataFrame,
     ordered_models: list[str],
     output_dir: Path,
+    metric: str,
 ) -> None:
     panels = REGIONS
     panel_letters = {"WT": "a", "TC": "b", "ET": "c"}
@@ -795,7 +857,9 @@ def build_figure(
                         color=text_color, markeredgewidth=0,
                     )
 
-    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.015, label="Matched Marginal Dice Gain (pp)")
+    unit = METRIC_INFO[metric]["unit"]
+    metric_label = "Dice Gain" if metric == "dice" else "HD95 Change"
+    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.015, label=f"Matched Marginal {metric_label} ({unit})")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = output_dir / "modality_marginal_contribution_main"
@@ -811,22 +875,28 @@ def build_figure(
 def write_report(
     path: Path,
     dataset_key: str,
+    metric: str,
     df: pd.DataFrame,
     report: ValidationReport,
     case_level: bool,
     n_reps: int,
 ) -> None:
-    mean_dice_by_model = (
-        df.groupby("model")["dice"].mean().sort_values(ascending=False) * 100.0
+    column = METRIC_INFO[metric]["column"]
+    scale = METRIC_INFO[metric]["scale"]
+    unit = METRIC_INFO[metric]["unit"]
+    metric_name = "Dice" if metric == "dice" else "HD95"
+    ascending = not METRIC_INFO[metric]["higher_is_better"]
+    mean_by_model = (
+        df.groupby("model")[column].mean().sort_values(ascending=ascending) * scale
     )
     lines = [
-        f"Matched marginal modality-contribution analysis -- dataset '{dataset_key}'",
+        f"Matched marginal modality-contribution analysis -- dataset '{dataset_key}', metric '{metric_name}'",
         "=" * 72,
         "",
-        "Overall mean Dice (pp) by model, this dataset, all 15 configurations x "
+        f"Overall mean {metric_name} ({unit}) by model, this dataset, all 15 configurations x "
         "WT/TC/ET (compare against your existing aggregate benchmark table):",
     ]
-    for model, val in mean_dice_by_model.items():
+    for model, val in mean_by_model.items():
         lines.append(f"  {model:<20s} {val:6.2f}")
     lines.append("")
 
@@ -850,7 +920,7 @@ def write_report(
     lines.append("")
 
     lines.append("Suggested figure caption:")
-    lines.append(CAPTION)
+    lines.append(build_caption(metric))
     lines.append("")
 
     path.write_text("\n".join(lines))
@@ -859,6 +929,32 @@ def write_report(
 # --------------------------------------------------------------------------- #
 # main.
 # --------------------------------------------------------------------------- #
+def resolve_datasets(spec: str) -> list[str]:
+    """`spec` is a comma-separated list of DATASET_GROUPS keys, or "all"."""
+    if spec.strip().lower() == "all":
+        return sorted(DATASET_GROUPS)
+    requested = [s.strip() for s in spec.split(",") if s.strip()]
+    unknown = [s for s in requested if s not in DATASET_GROUPS]
+    if unknown:
+        raise SystemExit(
+            f"Unknown --dataset value(s) {unknown}; choose from {sorted(DATASET_GROUPS)} or 'all'"
+        )
+    return requested
+
+
+def resolve_metrics(spec: str) -> list[str]:
+    """`spec` is a comma-separated list of METRIC_INFO keys, or "all"."""
+    if spec.strip().lower() == "all":
+        return sorted(METRIC_INFO)
+    requested = [s.strip().lower() for s in spec.split(",") if s.strip()]
+    unknown = [s for s in requested if s not in METRIC_INFO]
+    if unknown:
+        raise SystemExit(
+            f"Unknown --metrics value(s) {unknown}; choose from {sorted(METRIC_INFO)} or 'all'"
+        )
+    return requested
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--input", type=Path, default=None, help="Pre-built long-format CSV (see module docstring).")
@@ -867,14 +963,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory of <model>_<dsnum> result dirs, used when --input is omitted.",
     )
     p.add_argument(
-        "--dataset", default=DEFAULT_DATASET, choices=sorted(DATASET_GROUPS),
-        help="Which (source, checkpoint) group to load / label to use (default: %(default)s).",
+        "--dataset", default=DEFAULT_DATASET,
+        help="Which (source, checkpoint) group(s) to load / label to use: one of "
+        f"{sorted(DATASET_GROUPS)}, a comma-separated list of them, or 'all' "
+        "(default: %(default)s). Each dataset gets its own <output-dir>/<dataset>/ "
+        "subdirectory; only a single value is supported together with --input.",
+    )
+    p.add_argument(
+        "--metrics", default=DEFAULT_METRICS,
+        help=f"Metric(s) to analyze: one of {sorted(METRIC_INFO)}, a comma-separated "
+        "list, or 'all' (default: %(default)s). Dice and HD95 are always kept in "
+        "separate tables/figures (never merged) -- each metric gets its own "
+        "<output-dir>/<dataset>/<metric>/ subdirectory.",
     )
     p.add_argument("--output-dir", type=Path, default=Path("outputs"), help="Directory to write outputs into.")
     p.add_argument("--bootstrap-repetitions", type=int, default=20000, help="Patient bootstrap repetitions.")
     p.add_argument(
         "--exclude-models", default=DEFAULT_EXCLUDED_MODELS,
-        help="Comma-separated model names to drop (default: %(default)s).",
+        help="Comma-separated model names to drop; an entry ending in '*' "
+        "(e.g. 'mimosa*') drops every model whose name starts with that "
+        "prefix (default: %(default)s).",
     )
     p.add_argument("--seed", type=int, default=0, help="Bootstrap RNG seed, for reproducibility.")
     p.add_argument(
@@ -884,52 +992,84 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main() -> None:
-    args = build_arg_parser().parse_args()
-    report = ValidationReport()
-    exclude_models = {normalize_model_name(m) for m in args.exclude_models.split(",") if m.strip()}
-
-    if args.input is not None:
-        df = load_input_csv(args.input, args.dataset, report)
-    else:
-        df = load_from_results_dir(args.results_dir, args.dataset, exclude_models, report)
-
-    df = prepare_dataframe(df, report)
-    check_completeness(df, report)
-    report.fail_if_errors()
-
-    ordered_models = order_models(df)
-    matched_pairs = build_matched_pairs(df, args.dataset, report)
+def run_one_metric(
+    df: pd.DataFrame,
+    dataset_key: str,
+    metric: str,
+    ordered_models: list[str],
+    output_dir: Path,
+    report: ValidationReport,
+    args: argparse.Namespace,
+) -> None:
+    """Computes and writes every output for one (dataset, metric) combination,
+    fully independent of any other metric's tables/figures."""
+    matched_pairs = build_matched_pairs(df, dataset_key, metric, report)
 
     case_level = case_level_available(df)
     if case_level:
         summary, bootstrap = compute_case_level_summary(
-            df, args.dataset, args.bootstrap_repetitions, args.seed, report, workers=args.workers
+            df, dataset_key, metric, args.bootstrap_repetitions, args.seed, report, workers=args.workers
         )
     else:
-        summary = compute_config_level_summary(matched_pairs, args.dataset)
+        summary = compute_config_level_summary(matched_pairs, dataset_key, metric)
         bootstrap = None
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = args.output_dir / "modality_marginal_summary.csv"
-    pairs_path = args.output_dir / "modality_marginal_matched_pairs.csv"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "modality_marginal_summary.csv"
+    pairs_path = output_dir / "modality_marginal_matched_pairs.csv"
     summary.to_csv(summary_path, index=False)
     matched_pairs.to_csv(pairs_path, index=False)
-    print(f"Wrote {summary_path}")
-    print(f"Wrote {pairs_path}")
+    print(f"[{dataset_key}/{metric}] Wrote {summary_path}")
+    print(f"[{dataset_key}/{metric}] Wrote {pairs_path}")
 
     if bootstrap is not None:
-        bootstrap_path = args.output_dir / "modality_marginal_bootstrap.csv"
+        bootstrap_path = output_dir / "modality_marginal_bootstrap.csv"
         bootstrap.to_csv(bootstrap_path, index=False)
-        print(f"Wrote {bootstrap_path}")
+        print(f"[{dataset_key}/{metric}] Wrote {bootstrap_path}")
 
-    build_figure(summary, ordered_models, args.output_dir)
+    build_figure(summary, ordered_models, output_dir, metric)
     for ext in ("pdf", "svg", "png"):
-        print(f"Wrote {args.output_dir / f'modality_marginal_contribution_main.{ext}'}")
+        print(f"[{dataset_key}/{metric}] Wrote {output_dir / f'modality_marginal_contribution_main.{ext}'}")
 
-    report_path = args.output_dir / "analysis_report.txt"
-    write_report(report_path, args.dataset, df, report, case_level, args.bootstrap_repetitions)
-    print(f"Wrote {report_path}")
+    report_path = output_dir / "analysis_report.txt"
+    write_report(report_path, dataset_key, metric, df, report, case_level, args.bootstrap_repetitions)
+    print(f"[{dataset_key}/{metric}] Wrote {report_path}")
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    exclude_models = parse_exclude_models(args.exclude_models)
+
+    dataset_keys = resolve_datasets(args.dataset)
+    metric_keys = resolve_metrics(args.metrics)
+
+    if args.input is not None and len(dataset_keys) > 1:
+        raise SystemExit(
+            "--input supplies a single pre-built CSV; pass exactly one --dataset "
+            "value together with --input (got multiple: "
+            f"{dataset_keys})."
+        )
+
+    for dataset_key in dataset_keys:
+        report = ValidationReport()
+
+        if args.input is not None:
+            df = load_input_csv(args.input, dataset_key, report)
+        else:
+            df = load_from_results_dir(args.results_dir, dataset_key, exclude_models, report)
+
+        df = prepare_dataframe(df, report)
+        check_completeness(df, report)
+        report.fail_if_errors()
+
+        ordered_models = order_models(df)
+        dataset_output_dir = args.output_dir / dataset_key
+
+        for metric in metric_keys:
+            run_one_metric(
+                df, dataset_key, metric, ordered_models,
+                dataset_output_dir / metric, report, args,
+            )
 
 
 if __name__ == "__main__":

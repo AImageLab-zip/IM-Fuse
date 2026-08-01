@@ -36,6 +36,11 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, "latex_tables")
 DATASETS = ["BRATS2018", "BRATS2023"]
 REGIONS = ["WT", "TC", "ET"]
 METRICS = ["Dice", "HD95"]
+# Short dataset labels for the fused MB-96 tables' captions/labels only --
+# every other caption/label in this file still spells out the full
+# "BRATS2018"/"BRATS2023" dataset name.
+DATASET_SHORT = {"BRATS2018": "BraTS18", "BRATS2023": "BraTS25-pre"}
+REGION_DISPLAY = {"WT": "Whole Tumor", "TC": "Tumor Core", "ET": "Enhancing Tumor"}
 # Column order matches build_reproduction_comparison.py's MODALITY_COLS
 # (Fl, T1, T1c, T2) -- only the display labels change here, to the BraTS2023
 # modality names: Fl->T2f, T1->T1n, T1c->T1c, T2->T2w.
@@ -56,6 +61,14 @@ EXCLUDED_MODELS = {
     "shaspec",
     "m3ae",
     "mcpl",
+    "mimosabase",
+    "mimosagargantuan",
+    "mimosahuge",
+    "mimosalarge",
+    "mimosamedium",
+    "mimosamicro",
+    "mimosasmall",
+    "mimosatiny",
 }
 
 
@@ -189,9 +202,41 @@ def cell_text(legacy, mean, std, source):
     return mean_s if mean_s is not None else "--"
 
 
-def build_table(models, dataset, region, metric, source, use_internal=False):
+def fmt_diff(v):
+    return f"{v:+.1f}" if isinstance(v, (int, float)) else "--"
+
+
+def ranked_indices(values, *, lower_better=False):
+    """(index of best, index of second-best) among non-None values, per
+    metric direction (Dice: higher is better; HD95: lower is better)."""
+    available = [(i, v) for i, v in enumerate(values) if v is not None]
+    if not available:
+        return None, None
+    available.sort(key=lambda t: t[1], reverse=not lower_better)
+    best = available[0][0]
+    second = available[1][0] if len(available) > 1 else None
+    return best, second
+
+
+def rank_wrap(text, i, best, second):
+    if text == "--":
+        return text
+    if i == best:
+        return f"\\textbf{{{text}}}"
+    if i == second:
+        return f"\\underline{{{text}}}"
+    return text
+
+
+def collect_row_records(models, dataset, region, metric, source, use_internal=False):
+    """(mkeys, row_records) for one (dataset, region, metric) table, where
+    row_records is [(name, [(text, value), ...] cells, (avg_text, avg_value),
+    diff_text), ...]. Shared by build_table (one table per region) and
+    build_mb96_table (three region blocks fused into one table)."""
+    show_error = source == "repro" and metric == "Dice" and not use_internal
+
     mkeys = None
-    rows_tex = []
+    row_records = []
     model_names = sorted(
         (name for name in models if dataset in models[name]), key=str.lower
     )
@@ -203,28 +248,65 @@ def build_table(models, dataset, region, metric, source, use_internal=False):
         by_key = {e[0]: e for e in entries}
 
         cells = []
-        legacies, means = [], []
+        legacies, means, diffs = [], [], []
         for mkey in mkeys:
             _, legacy, mean, std, imean, istd = by_key.get(
                 mkey, (mkey, None, None, None, None, None)
             )
             if use_internal:
                 legacy, mean, std = None, imean, istd
-            cells.append(cell_text(legacy, mean, std, source))
+            value = legacy if source == "legacy" else mean
+            cells.append((cell_text(legacy, mean, std, source), value))
             if isinstance(legacy, (int, float)):
                 legacies.append(legacy)
             if isinstance(mean, (int, float)):
                 means.append(mean)
+            if isinstance(legacy, (int, float)) and isinstance(mean, (int, float)):
+                diffs.append(mean - legacy)
 
         avg_legacy = sum(legacies) / len(legacies) if legacies else None
         avg_mean = sum(means) / len(means) if means else None
-        avg_cell = cell_text(avg_legacy, avg_mean, None, source)
+        avg_value = avg_legacy if source == "legacy" else avg_mean
+        avg_cell = (cell_text(avg_legacy, avg_mean, None, source), avg_value)
 
-        row = " & ".join([tex_escape(name)] + cells + [avg_cell])
-        rows_tex.append(row + r" \\")
+        diff_text = fmt_diff(sum(diffs) / len(diffs)) if show_error and diffs else (fmt_diff(None) if show_error else None)
+        row_records.append((name, cells, avg_cell, diff_text))
 
+    return mkeys, row_records
+
+
+def build_table(models, dataset, region, metric, source, use_internal=False):
+    # The new(repro)-vs-legacy error column only makes sense where both a
+    # reproduced value and a legacy reference exist for the same cell: the
+    # repro Dice table, not the legacy-only table (nothing to compare it
+    # against there), HD95 (no legacy numbers at all), or MB-96 (no legacy
+    # reference for that dataset either).
+    show_error = source == "repro" and metric == "Dice" and not use_internal
+    lower_better = metric == "HD95"
+
+    mkeys, row_records = collect_row_records(models, dataset, region, metric, source, use_internal)
     if mkeys is None:
         return ""
+
+    # Best/second-best ranked per column (each modality combo, plus Avg),
+    # across all models in this table -- bold for best, underline for
+    # runner-up. The Error column is a delta, not a score, so it's left
+    # unranked/unformatted.
+    n_cols = len(mkeys)
+    col_best_second = []
+    for c in range(n_cols):
+        col_best_second.append(ranked_indices([r[1][c][1] for r in row_records], lower_better=lower_better))
+    avg_best, avg_second = ranked_indices([r[2][1] for r in row_records], lower_better=lower_better)
+
+    rows_tex = []
+    for i, (name, cells, avg_cell, diff_text) in enumerate(row_records):
+        cell_texts = [rank_wrap(text, i, *col_best_second[c]) for c, (text, _) in enumerate(cells)]
+        avg_text = rank_wrap(avg_cell[0], i, avg_best, avg_second)
+        row_cells = [tex_escape(name)] + cell_texts + [avg_text]
+        if show_error:
+            row_cells.append(diff_text)
+        row = " & ".join(row_cells)
+        rows_tex.append(row + r" \\")
 
     header_mods = " & ".join(modality_label(k) for k in mkeys)
 
@@ -232,6 +314,8 @@ def build_table(models, dataset, region, metric, source, use_internal=False):
     # right before Avg to set it apart as the summary column.
     thin_rule = "!{\\color{gray!35}\\vrule width 0.4pt}"
     colspec = "l" + f"{thin_rule}c" * len(mkeys) + "!{\\vrule width 0.6pt}c"
+    if show_error:
+        colspec += "c"
 
     if use_internal:
         unit = "\\%" if metric == "Dice" else ""
@@ -249,6 +333,8 @@ def build_table(models, dataset, region, metric, source, use_internal=False):
             f"Reproduced {metric}\\% on the {region} region, {dataset} dataset "
             "(mean $\\pm$ std over the reproduced folds)."
         )
+        if show_error:
+            caption = caption[:-1] + ", with Error = reproduced $-$ legacy Dice\\%, averaged over the reproduced folds and modality combinations."
         label = f"tab:{dataset.lower()}_{region.lower()}_{metric.lower()}_{source}"
     else:
         caption = (
@@ -269,7 +355,9 @@ def build_table(models, dataset, region, metric, source, use_internal=False):
         r"\rowcolors{2}{white}{gray!6}",
         f"\\begin{{tabular}}{{{colspec}}}",
         r"\toprule",
-        f"\\textbf{{Model}} & {header_mods} & \\textbf{{Avg.}} \\\\",
+        f"\\textbf{{Model}} & {header_mods} & \\textbf{{Avg.}}"
+        + (r" & \textbf{Error}" if show_error else "")
+        + r" \\",
         r"\midrule",
         *rows_tex,
         r"\bottomrule",
@@ -280,6 +368,92 @@ def build_table(models, dataset, region, metric, source, use_internal=False):
         "",
     ]
     return "\n".join(lines)
+
+
+def build_mb96_table(models, dataset, metric):
+    """Fused MB-96 table for one (dataset, metric): all three regions (WT,
+    TC, ET) stacked in a single table*, with a rotated region label spanning
+    each 18-row block via \\multirow, instead of three separate tables. Only
+    used for the MB-96 (use_internal=True) section -- there's always exactly
+    one source ("repro", no legacy reference for this dataset) and no Error
+    column, so this doesn't need to handle those variants build_table does."""
+    lower_better = metric == "HD95"
+
+    region_blocks = []  # [(mkeys, row_records), ...] per region, REGIONS order
+    for region in REGIONS:
+        mkeys, row_records = collect_row_records(
+            models, dataset, region, metric, source="repro", use_internal=True
+        )
+        if mkeys is None:
+            return ""
+        region_blocks.append((mkeys, row_records))
+
+    header_mkeys = region_blocks[0][0]
+    header_mods = " & ".join(modality_label(k) for k in header_mkeys)
+
+    body = []
+    for region, (mkeys, row_records) in zip(REGIONS, region_blocks):
+        n_cols = len(mkeys)
+        col_best_second = [
+            ranked_indices([r[1][c][1] for r in row_records], lower_better=lower_better)
+            for c in range(n_cols)
+        ]
+        avg_best, avg_second = ranked_indices(
+            [r[2][1] for r in row_records], lower_better=lower_better
+        )
+
+        n_rows = len(row_records)
+        for i, (name, cells, avg_cell, _diff_text) in enumerate(row_records):
+            cell_texts = [rank_wrap(text, i, *col_best_second[c]) for c, (text, _) in enumerate(cells)]
+            avg_text = rank_wrap(avg_cell[0], i, avg_best, avg_second)
+            region_col = (
+                f"\\multirow{{-{n_rows}}}{{*}}{{\\rotatebox{{90}}{{\\textbf{{{REGION_DISPLAY[region]}}}}}}}"
+                if i == n_rows - 1
+                else ""
+            )
+            row_cells = [region_col, tex_escape(name)] + cell_texts + [avg_text]
+            body.append(" & ".join(row_cells) + r" \\")
+        if region != REGIONS[-1]:
+            body.append(r"\midrule")
+
+    dataset_short = DATASET_SHORT[dataset]
+    unit = "\\%" if metric == "Dice" else " (mm)"
+    caption = (
+        f"{metric}{unit} for WT, TC, and ET on the MB-96 dataset using "
+        f"checkpoints trained on {dataset_short} (mean $\\pm$ standard "
+        "deviation across the three split-specific checkpoints)."
+    )
+    combined_label = f"tab:mb96_{dataset_short}_{metric.lower()}_all_regions"
+    region_labels = [
+        f"\\label{{tab:mb96_{dataset_short}_{region.lower()}_{metric.lower()}}}"
+        for region in REGIONS
+    ]
+
+    colspec = "cl" + "*{" + str(len(header_mkeys)) + "}{G}" + "!{\\vrule width 0.6pt}c"
+
+    lines = [
+        r"\begin{table*}[!ht]",
+        r"\centering",
+        f"\\caption{{{caption}}}",
+        f"\\label{{{combined_label}}}",
+        *region_labels,
+        r"\resizebox{\textwidth}{!}{%",
+        r"\begingroup",
+        r"\renewcommand{\arraystretch}{1.3}",
+        r"\setlength{\tabcolsep}{4pt}",
+        r"\rowcolors{2}{white}{gray!6}",
+        f"\\begin{{tabular}}{{{colspec}}}",
+        r"\toprule",
+        r"\MissingModalityHeaderWithRegion",
+        *body,
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\endgroup",
+        r"}",
+        r"\end{table*}",
+        "",
+    ]
+    return "\n".join(lines), header_mods
 
 
 def main():
@@ -299,18 +473,29 @@ def main():
         sections.append(r"\clearpage")
 
     sections.append(r"\section*{MB-96}")
+    header_macro = None
     for dataset in DATASETS:
-        for region in REGIONS:
-            for metric in METRICS:
-                table = build_table(
-                    models, dataset, region, metric, source="repro", use_internal=True
+        for metric in METRICS:
+            result = build_mb96_table(models, dataset, metric)
+            if not result:
+                continue
+            table, header_mods = result
+            if header_macro is None:
+                header_macro = (
+                    r"\newcommand{\MissingModalityHeaderWithRegion}{"
+                    f" & \\textbf{{Model}} & {header_mods} & \\textbf{{Avg.}} \\\\"
+                    "}"
                 )
-                if table:
-                    sections.append(table)
-    sections.append(r"\clearpage")
+            sections.append(table)
+            # Each fused table is large (54 body rows) -- without a page
+            # break, LaTeX often packs it directly against the next table's
+            # \toprule with almost no gap, reading as one doubled rule.
+            sections.append(r"\clearpage")
 
     tables_path = os.path.join(OUTPUT_DIR, "tables.tex")
     with open(tables_path, "w") as f:
+        if header_macro:
+            f.write(header_macro + "\n\n")
         f.write("\n".join(sections))
 
     main_tex = r"""\documentclass[10pt]{article}
@@ -324,6 +509,7 @@ def main():
 \usepackage[table]{xcolor}
 \usepackage{tikz}
 \usepackage{lmodern}
+\newcolumntype{G}{!{\color{gray!35}\vrule width 0.4pt}c}
 \pagestyle{plain}
 \begin{document}
 \input{tables.tex}

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -54,11 +55,14 @@ def index() -> str:
 async def upload(package: UploadFile) -> str:
     job_dir = new_job_dir()
     package_path = job_dir / "upload.mimosepkg"
-    package_path.write_bytes(await package.read())
+    contents = await package.read()
+    if not contents:
+        raise HTTPException(400, f"{package.filename} was uploaded as an empty file (0 bytes).")
+    package_path.write_bytes(contents)
 
     try:
         manifest = read_manifest(package_path)
-    except (KeyError, OSError, ValueError) as exc:
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile) as exc:
         raise HTTPException(400, f"{package.filename} is not a valid .mimosepkg: {exc}") from exc
 
     preprocessing_config = manifest.get("preprocessing")

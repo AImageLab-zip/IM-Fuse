@@ -78,9 +78,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
 [tool.uv.sources]
 causal-conv1d = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl" }
 mamba-ssm = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl" }
+torch = { url = "https://github.com/homarone00/torch-pascal-builds/releases/download/v2.9.1-pascal-r2/torch-2.9.1-cp312-cp312-linux_x86_64.whl" }
 
 [tool.ruff]
 line-length = 88

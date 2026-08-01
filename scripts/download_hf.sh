@@ -4,7 +4,7 @@ set -e
 BASE=/work/phd_mimose/runs
 REPO=AImageLab-Zip/mimose_runs
 
-JOBS=${JOBS:-20}
+JOBS=${JOBS:-1}
 RETRIES=${RETRIES:-3}
 
 mkdir -p "$BASE"

@@ -110,8 +110,18 @@ PAPER_TABLE1_MODELS = {
 }
 
 
+def normalize(name: str) -> str:
+    """Lowercase and strip every non-alphanumeric character (matches
+    build_reproduction_comparison.normalize -- kept as a local copy here so
+    this module doesn't need openpyxl just for a one-line regex)."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
 def discover_flops_csvs(results_dir: str, *, filename: str = "flops.csv") -> dict[str, str]:
-    """{model_norm: path/to/<filename>} for every <model>_23/<filename> found."""
+    """{model_norm: path/to/<filename>} for every <model>_23/<filename> found.
+    model_norm is normalized (lowercase, non-alnum stripped) so it lines up
+    with the rest of the project's model keys -- e.g. a `mimosa_base_23`
+    directory yields `mimosabase`, not `mimosa_base`."""
     found = {}
     if not os.path.isdir(results_dir):
         return found
@@ -121,7 +131,7 @@ def discover_flops_csvs(results_dir: str, *, filename: str = "flops.csv") -> dic
             continue
         csv_path = os.path.join(results_dir, entry, filename)
         if os.path.isfile(csv_path):
-            found[m.group(1)] = csv_path
+            found[normalize(m.group(1))] = csv_path
     return found
 
 

@@ -58,14 +58,21 @@ EXCLUDED_DISPLAY_NAMES = {"TinyMimosa", "ManyMimosas"}
 
 
 def collect_performance_rows(
-    results_dir: str, *, allowed_models: set[str] | None = None
+    results_dir: str,
+    *,
+    allowed_models: set[str] | None = None,
+    gpu_filename: str = "flops.csv",
+    cpu_filename: str = "flops_cpu.csv",
 ) -> list[tuple[str, dict[str, float | None]]]:
     """[(display_name, {"params", "flops", "mem_gpu", "lat_gpu", "lat_cpu"}), ...],
-    one row per model_norm found in either flops.csv or flops_cpu.csv's
+    one row per model_norm found in either gpu_filename or cpu_filename's
     whole_volume scope (a model missing one side just gets None there),
-    sorted case-insensitively by display name."""
-    gpu_csvs = gft.discover_flops_csvs(results_dir, filename="flops.csv")
-    cpu_csvs = gft.discover_flops_csvs(results_dir, filename="flops_cpu.csv")
+    sorted case-insensitively by display name. gpu_filename/cpu_filename let
+    callers point at a family with different on-disk names (e.g. the
+    mimosa_[size] models' flops_gpu.csv, see
+    generate_model_comparison_table_mimosa_size.py)."""
+    gpu_csvs = gft.discover_flops_csvs(results_dir, filename=gpu_filename)
+    cpu_csvs = gft.discover_flops_csvs(results_dir, filename=cpu_filename)
 
     rows = []
     for model_norm in sorted(set(gpu_csvs) | set(cpu_csvs)):
@@ -74,7 +81,7 @@ def collect_performance_rows(
         gpu_whole = gft.load_scoped_rows(gpu_csvs[model_norm]).get("whole_volume") if model_norm in gpu_csvs else None
         cpu_whole = gft.load_scoped_rows(cpu_csvs[model_norm]).get("whole_volume") if model_norm in cpu_csvs else None
         if gpu_whole is None and cpu_whole is None:
-            print(f"{model_norm}: no whole_volume row in flops.csv or flops_cpu.csv, skipping", file=sys.stderr)
+            print(f"{model_norm}: no whole_volume row in {gpu_filename} or {cpu_filename}, skipping", file=sys.stderr)
             continue
 
         reference = gpu_whole or cpu_whole
