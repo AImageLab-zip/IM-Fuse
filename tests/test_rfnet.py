@@ -104,7 +104,7 @@ def test_packaged_rfnet_configs_use_imfuse_training_contract(config_name: str) -
     assert config["lr"] == 0.0002
     assert config["weight_decay"] == 0.0001
     assert config["num_epochs"] == 300
-    assert config["fp16"] is False
+    assert config["precision"] == "fp32"
     assert config["seed"] == 999
     assert config["crop_min_size"] == (128, 128, 128)
     assert config["custom_trainer_kwargs"]["patch_size"] == 80

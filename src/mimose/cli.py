@@ -18,6 +18,7 @@ from mimose.enums import (
     ModelKind,
     NormMode,
     OptimizerKind,
+    Precision,
     SchedulerKind,
     TransformKind,
     TrainerKind,
@@ -816,6 +817,13 @@ def preprocess_train(
         help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
         rich_help_panel="Runtime",
     ),
+    nnodes: int | None = typer.Option(
+        None,
+        "--nnodes",
+        help="Nodes to span for distributed training. Defaults to the srun allocation "
+        "(1 outside Slurm). Values > 1 require launching with srun, one task per node.",
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Run preprocessing first and then launch training using the same config."""
     console = _get_cli_display().CONSOLE
@@ -879,7 +887,8 @@ def preprocess_train(
         num_workers=8,
         distributed=distributed,
         nproc_per_node=nproc_per_node,
-        fp16=None,
+        nnodes=nnodes,
+        precision=None,
         compile=None,
         resume=False,
         seed=69,
@@ -1132,12 +1141,19 @@ def train(
         help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
         rich_help_panel="Runtime",
     ),
-    fp16: bool | None = typer.Option(
+    nnodes: int | None = typer.Option(
         None,
-        "--fp16",
-        help="Enable float16 mixed precision training on CUDA.",
+        "--nnodes",
+        help="Nodes to span for distributed training. Defaults to the srun allocation "
+        "(1 outside Slurm). Values > 1 require launching with srun, one task per node.",
         rich_help_panel="Runtime",
-        is_flag=True,
+    ),
+    precision: Precision | None = typer.Option(
+        None,
+        "--precision",
+        help="Training precision on CUDA: fp32 (default), fp16 (mixed precision + loss scaling), "
+        "or bf16 (mixed precision, no loss scaling).",
+        rich_help_panel="Runtime",
     ),
     compile: bool | None = typer.Option(
         None,
@@ -1282,7 +1298,8 @@ def train(
             num_workers=num_workers,
             distributed=distributed,
             nproc_per_node=nproc_per_node,
-            fp16=fp16,
+            nnodes=nnodes,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,
@@ -1382,6 +1399,16 @@ def test(
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
     ),
+    budget: float | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to select before evaluating (budget-conditioned "
+            "models only, e.g. ElasticUnet). Defaults to the model's own "
+            "default (widest) budget when omitted."
+        ),
+        rich_help_panel="Model",
+    ),
     split_file: Path | None = typer.Option(
         None,
         "--split-file",
@@ -1404,12 +1431,11 @@ def test(
         help="Random seed.",
         rich_help_panel="Runtime",
     ),
-    fp16: bool | None = typer.Option(
+    precision: Precision | None = typer.Option(
         None,
-        "--fp16",
-        help="Run inference under torch.autocast(dtype=float16) on CUDA.",
+        "--precision",
+        help="Run inference under torch.autocast on CUDA: fp32 (default), fp16, or bf16.",
         rich_help_panel="Runtime",
-        is_flag=True,
     ),
     dataset_type: DatasetType = typer.Option(
         None,
@@ -1461,7 +1487,7 @@ def test(
         num_workers=num_workers,
         run_suffix=run_suffix,
         seed=seed,
-        fp16=fp16,
+        precision=precision,
         dataset_type=dataset_type,
     )
     # A CLI --fold overrides the config's default `fold`.
@@ -1500,7 +1526,8 @@ def test(
         fold=fold,
         num_workers=int(merged.get("num_workers", 8)),
         seed=int(merged.get("seed", 42)),
-        fp16=bool(merged.get("fp16", False)),
+        precision=Precision(merged.get("precision", Precision.FP32)),
+        budget=budget,
     )
     typer.echo(f"Test report written to {output_file}")
     typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
@@ -1616,12 +1643,11 @@ def test_fast(
         help="Random seed.",
         rich_help_panel="Runtime",
     ),
-    fp16: bool | None = typer.Option(
+    precision: Precision | None = typer.Option(
         None,
-        "--fp16",
-        help="Run inference under torch.autocast(dtype=float16) on CUDA.",
+        "--precision",
+        help="Run inference under torch.autocast on CUDA: fp32 (default), fp16, or bf16.",
         rich_help_panel="Runtime",
-        is_flag=True,
     ),
     dataset_type: DatasetType = typer.Option(
         None,
@@ -1675,7 +1701,7 @@ def test_fast(
         num_workers=num_workers,
         run_suffix=run_suffix,
         seed=seed,
-        fp16=fp16,
+        precision=precision,
         dataset_type=dataset_type,
     )
     # A CLI --fold overrides the config's default `fold`.
@@ -1715,7 +1741,7 @@ def test_fast(
         num_workers=int(merged.get("num_workers", 8)),
         batch_size=batch_size,
         seed=int(merged.get("seed", 42)),
-        fp16=bool(merged.get("fp16", False)),
+        precision=Precision(merged.get("precision", Precision.FP32)),
     )
     typer.echo(f"Test report written to {output_file}")
     typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
@@ -2057,6 +2083,41 @@ def flops(
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
     ),
+    budget: list[float] | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to realize before profiling (budget-conditioned "
+            "models only, e.g. ElasticUnet). The supernet is replaced by the "
+            "standalone network that budget selects, so params/FLOPs/memory/"
+            "latency describe that architecture rather than the full-width "
+            "supernet. Repeatable: one report per budget."
+        ),
+        rich_help_panel="Model",
+    ),
+    budget_sweep: int | None = typer.Option(
+        None,
+        "--budget-sweep",
+        help=(
+            "Profile N log-spaced budgets across the model's whole range, for "
+            "building a dense Pareto front in one command. Mutually exclusive "
+            "with --budget."
+        ),
+        rich_help_panel="Model",
+    ),
+    checkpoint: Path | None = typer.Option(
+        None,
+        "--checkpoint",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Supernet weights to load before realizing a budget. Gate "
+            "thresholds move during training, so without this the architecture "
+            "profiled is the analytic calibration, not what was learned."
+        ),
+        rich_help_panel="Model",
+    ),
     output_path: Path | None = typer.Option(
         None,
         "--output-path",
@@ -2079,6 +2140,7 @@ def flops(
         write_flops_report,
         write_flops_summary_csv,
     )
+    from mimose.flops import budget_range_for_config, log_spaced_budgets
     from mimose.training.config import parse_kv_list
 
     console = _get_cli_display().CONSOLE
@@ -2095,6 +2157,41 @@ def flops(
             param_hint="--output-path",
         )
     parsed_model_kwargs = parse_kv_list(custom_model_kwargs)
+
+    if budget and budget_sweep is not None:
+        raise typer.BadParameter(
+            "--budget and --budget-sweep are mutually exclusive",
+            param_hint="--budget-sweep",
+        )
+    if all_configs and (budget or budget_sweep is not None):
+        raise typer.BadParameter(
+            "--budget/--budget-sweep cannot be combined with --all; profile one "
+            "budget-conditioned config at a time",
+            param_hint="--budget",
+        )
+    if checkpoint is not None and not (budget or budget_sweep is not None):
+        raise typer.BadParameter(
+            "--checkpoint only affects which architecture a budget selects; "
+            "pass --budget or --budget-sweep as well",
+            param_hint="--checkpoint",
+        )
+
+    # None means "profile the model as configured", which for a supernet is the
+    # full-width network rather than any particular subnet.
+    budgets: list[float | None] = [None]
+    if budget:
+        budgets = list(budget)
+    elif budget_sweep is not None:
+        low, high = budget_range_for_config(
+            config_path=config,
+            model_name=model,
+            custom_model_kwargs=parsed_model_kwargs,
+        )
+        budgets = list(log_spaced_budgets(low, high, budget_sweep))
+        console.print(
+            f"[dim]Sweeping {budget_sweep} budgets from {low:,.0f} to "
+            f"{high:,.0f} parameters[/dim]"
+        )
 
     with console.status(
         "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]",
@@ -2120,18 +2217,27 @@ def flops(
                     )
                 )
         else:
-            reports = [
-                (
-                    config,
-                    run_flops_analysis(
-                        config_path=config,
-                        model_name=model,
-                        custom_model_kwargs=parsed_model_kwargs,
-                        device=device,
-                        warmup=warmup,
-                    ),
+            reports = []
+            for current_budget in budgets:
+                if current_budget is not None:
+                    status.update(
+                        "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]  "
+                        f"[dim]budget {current_budget:,.0f}[/dim]"
+                    )
+                reports.append(
+                    (
+                        config,
+                        run_flops_analysis(
+                            config_path=config,
+                            model_name=model,
+                            custom_model_kwargs=parsed_model_kwargs,
+                            device=device,
+                            warmup=warmup,
+                            budget=current_budget,
+                            checkpoint=checkpoint,
+                        ),
+                    )
                 )
-            ]
 
     for config_path, report in reports:
         if config_path is not None:
@@ -2146,8 +2252,19 @@ def flops(
 
         if resolved_output_path is not None:
             device_suffix = "cpu" if report.device == "cpu" else "gpu"
+            # A multi-budget run writes one report per architecture, so the
+            # realized parameter count goes in the filename -- otherwise every
+            # budget would overwrite the previous one's report. A *single*
+            # budget keeps the plain name, so that per-budget results dirs stay
+            # discoverable by the existing flops-table scripts, which glob for
+            # flops_gpu.csv / flops.csv.
+            budget_suffix = ""
+            if report.budget is not None and len(budgets) > 1:
+                realized = report.measurements[0].params if report.measurements else 0
+                budget_suffix = f"_p{realized}"
             resolved_output_path = resolved_output_path.with_name(
-                f"{resolved_output_path.stem}_{device_suffix}{resolved_output_path.suffix}"
+                f"{resolved_output_path.stem}_{device_suffix}{budget_suffix}"
+                f"{resolved_output_path.suffix}"
             )
             write_flops_report(report, resolved_output_path)
             csv_path = resolved_output_path.with_suffix(".csv")
@@ -2156,3 +2273,179 @@ def flops(
                 f"[dim]FLOPs report written to {resolved_output_path} "
                 f"(summary: {csv_path})[/dim]"
             )
+
+
+@app.command()
+def interference(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a pareto_* YAML config (must select an elastic supernet).",
+        rich_help_panel="Config",
+    ),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        help="Preprocessed dataset directory. Overrides YAML data_dir.",
+        rich_help_panel="Input/Output",
+    ),
+    budgets: list[float] | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to probe; repeat for several. Defaults to "
+            "--n-budgets values log-spaced across the supernet's range."
+        ),
+        rich_help_panel="Budgets",
+    ),
+    n_budgets: int = typer.Option(
+        7,
+        "--n-budgets",
+        help="How many log-spaced budgets to probe when --budget is not given.",
+        rich_help_panel="Budgets",
+    ),
+    n_batches: int = typer.Option(
+        8,
+        "--n-batches",
+        help=(
+            "Batches to average over. Each costs one forward/backward per "
+            "budget; at least 2 are needed for the noise floor."
+        ),
+        rich_help_panel="Runtime",
+    ),
+    checkpoint: Path | None = typer.Option(
+        None,
+        "--checkpoint",
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Supernet weights to measure (.pth or .safetensors). Omit to measure "
+            "at initialization."
+        ),
+        rich_help_panel="Checkpointing",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Where to write the report. Defaults to <results_dir>/interference.",
+        rich_help_panel="Input/Output",
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        help="Override the config's batch size for the measurement.",
+        rich_help_panel="Runtime",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Dataloader workers.",
+        rich_help_panel="Runtime",
+    ),
+    precision: Precision | None = typer.Option(
+        None,
+        "--precision",
+        help="Numerical precision for the forward/backward passes.",
+        rich_help_panel="Runtime",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        help="Split JSON. Defaults to the config's.",
+        rich_help_panel="Input/Output",
+    ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help="Cross-validation fold.",
+        rich_help_panel="Input/Output",
+    ),
+    seed: int = typer.Option(
+        69,
+        "--seed",
+        help="Seed for batch sampling, so the measurement is reproducible.",
+        rich_help_panel="Runtime",
+    ),
+) -> None:
+    """Measure whether different parameter budgets fight over the shared weights.
+
+    Phase 5 of the Pareto-supernet plan. For every pair of budgets this reports
+    the cosine similarity of their segmentation-loss gradients, alongside two
+    controls that make the number interpretable: a per-budget noise floor (the
+    same architecture on a different batch) and the fraction of parameters the
+    two subnetworks actually share.
+    """
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    merged = workflows.build_train_merged_config(
+        config=config,
+        data_dir=data_dir,
+        art_dir=None,
+        trainer=None,
+        model=None,
+        loss=None,
+        custom_model_kwargs=None,
+        custom_loss_kwargs=None,
+        custom_trainer_kwargs=None,
+        split_file=split_file,
+        optimizer=None,
+        betas=None,
+        momentum=None,
+        nesterov=None,
+        amsgrad=None,
+        scheduler=None,
+        poly_total_iters=None,
+        poly_power=None,
+        warmuppoly_warmup_iters=None,
+        cosine_t_max=None,
+        cosine_eta_min=None,
+        step_step_size=None,
+        step_gamma=None,
+        multistep_milestones=None,
+        multistep_gamma=None,
+        plateau_mode=None,
+        plateau_factor=None,
+        plateau_patience=None,
+        transform_kind=None,
+        lr=None,
+        num_epochs=None,
+        validation_every=None,
+        batch_size=batch_size,
+        weight_decay=None,
+        num_workers=num_workers,
+        # Never relaunch under torchrun: the measurement is inherently
+        # single-process, and averaging gradients across ranks would destroy
+        # the per-budget comparison this command exists to make.
+        distributed=False,
+        nproc_per_node=None,
+        precision=precision,
+        compile=False,
+        resume=False,
+        try_resume=False,
+        seed=seed,
+        pretrain=None,
+        wandb_project=None,
+        wandb_entity=None,
+        wandb_mode="disabled",
+        wandb_run_name=None,
+        dataset_type=None,
+        push_to_hf=False,
+        hf_repo=None,
+        fold=fold,
+    )
+
+    output = workflows.run_interference_from_merged(
+        merged,
+        budgets=list(budgets) if budgets else None,
+        n_budgets=n_budgets,
+        n_batches=n_batches,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
+    )
+    console.print(f"[bold green]Interference report written to[/bold green] {output}")

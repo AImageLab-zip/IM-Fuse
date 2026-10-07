@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 from torch.optim.lr_scheduler import PolynomialLR
 
 from mimose.datasets import DatasetType, IMFuseDataset, MaskingMode
-from mimose.enums import TransformKind
+from mimose.enums import Precision, TransformKind
 from mimose.losses.config import LossConfig
 from mimose.losses.dcseg import (
     AnatomyContrastiveLoss,
@@ -43,7 +43,7 @@ class DCSegTrainer(BaseTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -117,7 +117,7 @@ class DCSegTrainer(BaseTrainer):
             validation_every=validation_every,
             batch_size=effective_batch_size,
             num_workers=effective_num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,

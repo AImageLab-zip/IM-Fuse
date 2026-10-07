@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 from mimose.datasets import IMFuseDataset, MaskingMode
-from mimose.enums import TransformKind
+from mimose.enums import Precision, TransformKind
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.models.many_mimosas import ALL_MASK_PATTERNS
@@ -49,7 +49,7 @@ class ManyMimosasKDTrainer(BaseTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -105,7 +105,7 @@ class ManyMimosasKDTrainer(BaseTrainer):
             validation_every=validation_every,
             batch_size=effective_batch_size,
             num_workers=effective_num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,

@@ -16,7 +16,7 @@ cd /leonardo/home/userexternal/ocarpent/MiMoSe
 source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
 mimose train --config mimosa_medium_18.yaml --fold 2 --run-suffix fold2 --seed 0 --try-resume
-mimose test --config mimosa_medium_18.yaml --fold 2 --run-suffix fold2 --fp16
+mimose test --config mimosa_medium_18.yaml --fold 2 --run-suffix fold2 --precision bf16
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher18.sh's singleton chain.

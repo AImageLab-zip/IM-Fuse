@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from mimose.enums import Precision
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
@@ -65,7 +66,7 @@ class MambaVitAKDTrainer(IMFuseTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -104,7 +105,7 @@ class MambaVitAKDTrainer(IMFuseTrainer):
             validation_every=validation_every,
             batch_size=batch_size,
             num_workers=num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,

@@ -80,7 +80,7 @@ validation_every: 10
 batch_size: 2
 weight_decay: 0.00003
 num_workers: 16
-fp16: false
+precision: fp32
 compile: false
 
 resume: false

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """2D Pareto plot (GPU latency vs. Dice) across every model with complete
-accuracy + efficiency data: the 18 literature baselines plus the 8
-mimosa_[size] variants, together -- the plotting counterpart to
+accuracy + efficiency data: the 18 literature baselines, the 8
+mimosa_[size] variants, and every budget of the pareto_23 supernet sweep
+(one point per budget, since each budget is a different extracted
+architecture) -- the plotting counterpart to
 generate_pareto_table.py's tab:pareto (which computes 5-objective
 dominance: Dice, HD95, GPU latency, peak GPU memory, FLOPs).
 
@@ -32,6 +34,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import generate_pareto_table as gpar  # noqa: E402
+import pareto_budgets as pbud  # noqa: E402
 
 import matplotlib
 
@@ -46,13 +49,20 @@ OUTPUT_DIR = gpar.OUTPUT_DIR
 FAMILY_STYLE = {
     "Baseline": {"marker": "s", "color": "#4C72B0"},
     "MimosaSize": {"marker": "o", "color": "#DD8452"},
+    pbud.FAMILY: {"marker": "^", "color": "#55A868"},
 }
 
 # Legend text differs from the internal family key (which mirrors
 # generate_pareto_table.py's "Baseline"/"MimosaSize" labels): on this plot
 # the literature models are "Reproduced" and the mimosa_[size] family is
 # "Baseline" (this project's own compute-scaling baseline sweep).
-LEGEND_LABEL = {"Baseline": "Reproduced", "MimosaSize": "Baseline"}
+LEGEND_LABEL = {
+    "Baseline": "Reproduced",
+    "MimosaSize": "Baseline",
+    # One triangle per budget of the supernet, not one per supernet: the
+    # points trace out what a single set of shared weights can be run at.
+    pbud.FAMILY: "MiMoSe-P (per budget)",
+}
 
 FRONTIER_COLOR = "#2B2B2B"
 GRID_COLOR = "#D8D8D8"
@@ -328,26 +338,35 @@ def style_axes(ax):
         ax.spines[side].set_color("#999999")
 
 
-def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    rows = gpar.collect_all_rows()
-    if not rows:
-        print("No model data found for either family", file=sys.stderr)
-        return
-
+def collect_points(x_key="lat_gpu", *, x_scale=1.0, expected_folds=None, groups=None):
+    """({display: (x, dice)}, {display: family}) over all three families, with
+    `x_key` (a metric key of gpar.collect_all_rows' dicts) on the x axis,
+    divided by `x_scale` (e.g. 1e12 to turn raw FLOPs into TFLOPs).
+    `expected_folds` restricts which folds Dice is averaged over -- None keeps
+    each family's own default (3 folds for the baselines and mimosa_[size],
+    fold1 for the supernet budgets, which is all that was ever run).
+    `groups` restricts which evaluations Dice averages over -- see
+    gpar.collect_all_rows."""
+    rows = gpar.collect_all_rows(expected_folds=expected_folds, groups=groups)
     points, families = {}, {}
     for display, family, m in rows:
-        if m.get("dice") is None or m.get("lat_gpu") is None:
+        if m.get("dice") is None or m.get(x_key) is None:
             continue
         if family == "MimosaSize":
             display = mb_display_name(display)
-        points[display] = (m["lat_gpu"], m["dice"])
+        elif family == pbud.FAMILY:
+            display = pbud.short_name(display)
+        points[display] = (m[x_key] / x_scale, m["dice"])
         families[display] = family
+    return points, families
 
-    if not points:
-        print("No models with both Dice and GPU latency data", file=sys.stderr)
-        return
 
+def render_pareto_plot(points, families, *, x_label, out_path):
+    """Draw the overview + zoom-inset scatter for already-collected points and
+    write it to `out_path`. Shared by this script and its fold1-only
+    latency/FLOPs counterparts (generate_pareto_plot_latency_fold1.py,
+    generate_pareto_plot_flops_fold1.py) so all three stay visually identical
+    and only differ in what goes on the x axis."""
     frontier = set(pareto_frontier(points))
     dense_names, dense_bbox = find_dense_cluster(points)
     dense_set = set(dense_names or [])
@@ -365,7 +384,7 @@ def main():
         fx, fy = zip(*frontier_pts)
         ax.plot(fx, fy, color=FRONTIER_COLOR, linestyle="--", linewidth=1.1, alpha=0.55, zorder=2)
 
-    ax.set_xlabel("Whole-volume GPU latency (s)", fontsize=15)
+    ax.set_xlabel(x_label, fontsize=15)
     ax.set_ylabel("Average Dice (%)", fontsize=15)
     ax.tick_params(axis="both", labelsize=12)
     style_axes(ax)
@@ -439,10 +458,23 @@ def main():
     ax.legend(handles=handles, loc=legend_loc, frameon=True, framealpha=0.9, fontsize=12)
 
     fig.tight_layout()
-    out_path = os.path.join(OUTPUT_DIR, "pareto_dice_vs_latency.png")
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {out_path}")
+
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    points, families = collect_points("lat_gpu")
+    if not points:
+        print("No models with both Dice and GPU latency data", file=sys.stderr)
+        return
+    render_pareto_plot(
+        points,
+        families,
+        x_label="Whole-volume GPU latency (s)",
+        out_path=os.path.join(OUTPUT_DIR, "pareto_dice_vs_latency.png"),
+    )
 
 
 if __name__ == "__main__":

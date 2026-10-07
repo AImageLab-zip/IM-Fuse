@@ -268,7 +268,7 @@ def run_testing_loop(
     fold: int | None = None,
     num_workers: int = 8,
     seed: int = 42,
-    fp16: bool = False,
+    precision: str = "fp32",
 ) -> Path:
     """Reconstruct the model from an already-`resolve_package`d `.mimosepkg`
     and run the full 15-mask Dice/HD95 sweep against `data_dir` (preprocessed
@@ -357,7 +357,9 @@ def run_testing_loop(
                     for batch in test_loader:
                         images = batch["images"].to(device, non_blocking=True)
                         target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
-                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                        amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+                        amp_enabled = precision != "fp32" and device.type == "cuda"
+                        with autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
                             output = model.predict(images, mask_tensor)
                         prediction = torch.argmax(output, dim=1)
 

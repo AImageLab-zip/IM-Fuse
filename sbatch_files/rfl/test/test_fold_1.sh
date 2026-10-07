@@ -15,6 +15,6 @@ cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
-mimose test --config rfl_23.yaml --fold 1 --run-suffix fold1 --fp16
+mimose test --config rfl_23.yaml --fold 1 --run-suffix fold1 --precision fp16
 
 

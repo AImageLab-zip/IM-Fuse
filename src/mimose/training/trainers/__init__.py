@@ -12,6 +12,7 @@ from mimose.training.trainers.many_mimosas_kd import ManyMimosasKDTrainer
 from mimose.training.trainers.mcpl import MCPLTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
 from mimose.training.trainers.mstkdnet import MSTKDTrainer
+from mimose.training.trainers.pareto import ParetoTrainer
 from mimose.training.trainers.rfl import RFLTrainer
 from mimose.training.trainers.robustseg import RobustSegTrainer
 from mimose.training.trainers.shaspec import ShaSpecTrainer
@@ -34,6 +35,7 @@ __all__ = [
     "MCPLTrainer",
     "MIFPNTrainer",
     "MSTKDTrainer",
+    "ParetoTrainer",
     "RFLTrainer",
     "RobustSegTrainer",
     "ShaSpecTrainer",

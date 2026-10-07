@@ -15,5 +15,5 @@ cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
-mimose test-fast --config unetmfi_23.yaml --fold 1 --run-suffix fold1 --fp16 --batch-size 1
+mimose test-fast --config unetmfi_23.yaml --fold 1 --run-suffix fold1 --precision fp16 --batch-size 1
 

@@ -7,6 +7,7 @@ from typing import Any
 import torch
 from torch.amp import GradScaler
 
+from mimose.enums import Precision
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
@@ -28,7 +29,7 @@ class AbstractTrainer(ABC):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -57,7 +58,7 @@ class AbstractTrainer(ABC):
         self.validation_every = int(validation_every)
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.fp16 = bool(fp16)
+        self.precision = Precision(precision)
         self.compile = bool(compile)
         self.resume_requested = bool(resume)
         self.try_resume_requested = bool(try_resume)

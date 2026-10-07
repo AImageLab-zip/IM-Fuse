@@ -183,7 +183,7 @@ def test_packaged_mambavitakd_configs_use_mambavitakd_training_contract(
     assert config["trainer"] == "mambavitakd"
     assert config["model"] == "mambavitakd"
     assert config["loss"] == "mambavitakd"
-    assert config["fp16"] is True
+    assert config["precision"] == "fp16"
     assert config["seed"] == 999
     assert config["crop_min_size"] == (128, 128, 128)
     assert config["custom_trainer_kwargs"]["patch_size"] == 80

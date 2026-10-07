@@ -51,19 +51,35 @@ OUTPUT_DIR = os.path.join(
 MODEL_SET = gft.PAPER_TABLE1_MODELS - {"tinymimosa", "manymimosas"}
 
 
-def collect_dice_hd95(model_set: set[str]) -> dict[str, dict[str, float | None]]:
+def collect_dice_hd95(
+    model_set: set[str],
+    *,
+    expected_folds: list[str] | None = None,
+    groups: list[tuple[str, str, str]] | None = None,
+) -> dict[str, dict[str, float | None]]:
     """{model_norm: {"dice": avg or None, "hd95": avg or None}}, averaged over
-    every complete GROUPS entry (see gst.GROUPS) and over WT/TC/ET."""
+    every complete GROUPS entry (see gst.GROUPS) and over WT/TC/ET.
+    `expected_folds` overrides which folds a group must have to count as
+    complete (default gst.EXPECTED_FOLDS = fold1/fold3/fold5) -- the pareto
+    budget sweep only ever ran fold1, so it passes ["fold1"] instead of being
+    dropped for incompleteness.
+
+    `groups` restricts which of gst.GROUPS are averaged over (default: all of
+    them). Averaging over "every group this model happens to have" makes rows
+    with different coverage incomparable -- a model evaluated only on
+    BraTS25-pre gets a number ~6 Dice points higher than one whose mean also
+    includes BraTS18 and MB-96, purely from which groups it has. Pass a single
+    group to put every model on the same evaluation."""
     models, internal_models, _dsnums = gst.discover(gst.RESULTS_DIR)
     out = {}
     for model_norm in model_set:
         dice_vals, hd95_vals = [], []
-        for _label, source, dsnum in gst.GROUPS:
+        for _label, source, dsnum in (groups if groups is not None else gst.GROUPS):
             source_dict = models if source == "official" else internal_models
             folds = source_dict.get(model_norm, {}).get(dsnum)
-            if not folds or not gst.is_complete(folds):
+            if not folds or not gst.is_complete(folds, expected_folds):
                 continue
-            stats = gst.aggregate(folds)
+            stats = gst.aggregate(folds, expected_folds)
             for region in gst.REGIONS:
                 dice_vals.append(stats[region]["Dice"][0])
                 hd95_vals.append(stats[region]["HD95"][0])
@@ -79,11 +95,14 @@ def build_rows(
     *,
     gpu_filename: str = "flops.csv",
     cpu_filename: str = "flops_cpu.csv",
+    expected_folds: list[str] | None = None,
+    groups: list[tuple[str, str, str]] | None = None,
 ) -> list[tuple[str, dict[str, float | None]]]:
     """[(display_name, {"dice", "hd95", "lat_gpu", "lat_cpu", "mem", "flops"}), ...],
     sorted case-insensitively by display name. gpu_filename/cpu_filename are
-    forwarded to gpt.collect_performance_rows (see its docstring)."""
-    dice_hd95 = collect_dice_hd95(model_set)
+    forwarded to gpt.collect_performance_rows (see its docstring);
+    expected_folds and groups to collect_dice_hd95."""
+    dice_hd95 = collect_dice_hd95(model_set, expected_folds=expected_folds, groups=groups)
     perf_rows = gpt.collect_performance_rows(
         gpt.RESULTS_DIR, allowed_models=model_set, gpu_filename=gpu_filename, cpu_filename=cpu_filename
     )

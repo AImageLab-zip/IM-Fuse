@@ -38,7 +38,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--extract-dir", type=Path, default=Path("/tmp/mimosepkg"))
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--fp16", action="store_true")
+    parser.add_argument(
+        "--precision", choices=("fp32", "fp16", "bf16"), default="fp32",
+        help="Inference precision on CUDA.",
+    )
     return parser.parse_args(argv)
 
 
@@ -68,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
         fold=args.fold,
         num_workers=args.num_workers,
         seed=args.seed,
-        fp16=args.fp16,
+        precision=args.precision,
     )
     print(f"Test report written to {result_path}")
     print(f"Excel summary written to {result_path.with_suffix('.xlsx')}")

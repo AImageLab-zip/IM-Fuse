@@ -9,14 +9,19 @@ from __future__ import annotations
 from mimose.models.simple_unet import SimpleUnet
 
 SIZES = {
-    "mimosa_micro":  (16, 32, 48, 64),
-    "mimosa_tiny":  (16, 32, 64, 128),
-    "mimosa_small":  (16, 32, 64, 128, 256),
-    "mimosa_medium": (24, 48, 96, 192, 384),
-    "mimosa_base":   (32, 64, 128, 256, 512),
-    "mimosa_large":  (40, 80, 160, 320, 640),
-    "mimosa_huge":   (48, 96, 192, 384, 768),
-    "mimosa_gargantuan": (64, 128, 256, 512, 1024),
+    #"mimosa_micro":  (16, 32, 48, 64),
+    #"mimosa_tiny":  (16, 32, 64, 128),
+    #"mimosa_small":  (16, 32, 64, 128, 256),
+    #"mimosa_medium": (24, 48, 96, 192, 384),
+    #"mimosa_base":   (32, 64, 128, 256, 512),
+    #"mimosa_large":  (40, 80, 160, 320, 640),
+    #"mimosa_huge":   (48, 96, 192, 384, 768),
+    #"mimosa_gargantuan": (64, 128, 256, 512, 1024),
+    #"mimosa_colossal": (64, 128, 256, 512, 768, 1280),
+    #"mimosa_titanic":(64, 128, 256, 512, 1024, 2048),
+    #"mimosa_crazy":(64, 128, 256, 512, 768, 1280, 2048),
+    "mimosa_insane":(64, 128, 256, 512, 1024, 1536, 2048),
+    "mimosa_ultimate":(64, 128, 256, 512, 1024, 2048, 4096)
 }
 
 

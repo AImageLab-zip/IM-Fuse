@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Pareto-efficiency table across every model with complete accuracy +
 efficiency data: the 18 literature baselines (see
-generate_model_comparison_table.py) plus all 8 mimosa_[size] variants (see
-generate_model_comparison_table_mimosa_size.py), together.
+generate_model_comparison_table.py), all 8 mimosa_[size] variants (see
+generate_model_comparison_table_mimosa_size.py), and every budget of the
+pareto_23 supernet sweep (see pareto_budgets.py), together.
+
+Each budget of that sweep competes as its own model: the supernet selects a
+different standalone architecture at each budget, so they dominate and are
+dominated individually, exactly like any other row. They are fold1-only,
+unlike the 3-fold baselines -- see pareto_budgets.py.
 
 Model A "dominates" model B if A is at least as good as B on every one of
 the 5 objectives below, and strictly better on at least one -- i.e. there is
@@ -35,6 +41,7 @@ import generate_model_comparison_table as gmc  # noqa: E402
 import generate_model_comparison_table_mimosa_size as gmcm  # noqa: E402
 import generate_performance_table as gpt  # noqa: E402
 import generate_summary_tables as gst  # noqa: E402
+import pareto_budgets as pbud  # noqa: E402
 
 OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "outputs", "pareto_table"
@@ -52,15 +59,44 @@ OBJECTIVES = [
 INSUFFICIENT_DATA = "insufficient data"
 
 
-def collect_all_rows() -> list[tuple[str, str, dict[str, float | None]]]:
-    """[(display_name, family, metrics_dict), ...] for both families."""
+def collect_all_rows(
+    *,
+    expected_folds: list[str] | None = None,
+    groups: list[tuple[str, str, str]] | None = None,
+) -> list[tuple[str, str, dict[str, float | None]]]:
+    """[(display_name, family, metrics_dict), ...] for both families.
+
+    `expected_folds` overrides which folds Dice/HD95 are averaged over for the
+    two multi-fold families (default None -> gst.EXPECTED_FOLDS, i.e. the
+    fold1/fold3/fold5 mean). Pass ["fold1"] for a single-fold view that is
+    directly comparable to the supernet budgets, which only ever ran fold1 and
+    therefore always use their own EXPECTED_FOLDS regardless of this.
+
+    `groups` restricts which gst.GROUPS evaluations Dice/HD95 average over,
+    for all three families (default None -> all of them). It matters here more
+    than anywhere else: the supernet budgets were only ever evaluated on
+    BraTS25-pre, so with the default their Dice is a BraTS25-pre score while
+    every other row is a mean that also includes the harder BraTS18 and MB-96
+    groups -- a ~6-point handicap that has nothing to do with the models. Pass
+    a single group to compare like for like."""
     rows = []
-    for display, m in gmc.build_rows(gmc.MODEL_SET):
+    for display, m in gmc.build_rows(
+        gmc.MODEL_SET, expected_folds=expected_folds, groups=groups
+    ):
         rows.append((display, "Baseline", m))
 
     gft.DISPLAY_NAMES = {**gft.DISPLAY_NAMES, **gmcm.FALLBACK_DISPLAY_NAMES}
-    for display, m in gmc.build_rows(gst.MIMOSA_SIZE_MODELS, gpu_filename="flops_gpu.csv"):
+    for display, m in gmc.build_rows(
+        gst.MIMOSA_SIZE_MODELS,
+        gpu_filename="flops_gpu.csv",
+        expected_folds=expected_folds,
+        groups=groups,
+    ):
         rows.append((display, "MimosaSize", m))
+
+    # One row per budget of the supernet sweep, each its own architecture.
+    for display, m in pbud.build_rows(groups=groups):
+        rows.append((display, pbud.FAMILY, m))
 
     return rows
 
@@ -177,15 +213,18 @@ def build_latex_table(
     lines = [
         r"\begin{table*}[!ht]",
         r"\centering",
-        r"\caption{Pareto efficiency across the 18 literature baselines and the "
-        r"8 mimosa\_[size] variants. Model A \emph{dominates} model B if A is "
+        r"\caption{Pareto efficiency across the 18 literature baselines, the "
+        r"8 mimosa\_[size] variants, and each budget of the pareto\_23 "
+        r"supernet sweep (MiMoSe-P, one model per budget; fold1 only, where "
+        r"the other rows are 3-fold means). Model A \emph{dominates} model B if A is "
         r"at least as good as B on every one of Dice, HD95, GPU latency, peak "
         r"GPU memory, and FLOPs, and strictly better on at least one -- i.e.\ "
         r"there is no reason to prefer B. A model is \emph{Pareto-efficient} "
         r"(\textbf{Pareto? = Yes}) iff nothing dominates it. CPU latency is "
         r"shown for reference only and excluded from the dominance test (`n/a' "
-        r"for IM-Fuse and every mimosa\_[size] model, no CPU flops run yet for "
-        r"that family). `Dominated by' lists every model that directly "
+        r"for IM-Fuse, every mimosa\_[size] model and every MiMoSe-P budget, "
+        r"no CPU flops run yet for those families). `Dominated by' lists "
+        r"every model that directly "
         r"dominates a non-efficient row.}",
         f"\\label{{{label}}}",
         r"\small",

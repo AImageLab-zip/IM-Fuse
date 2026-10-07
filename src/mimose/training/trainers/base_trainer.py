@@ -31,6 +31,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from mimose.datasets import DatasetType
+from mimose.enums import Precision
 from mimose.checkpoints import load_weights_only_checkpoint, save_weights_only_checkpoint
 from mimose.training.config import OptimizerConfig, SchedulerConfig
 from mimose.training.trainers.abstract_trainer import AbstractTrainer
@@ -72,7 +73,7 @@ class BaseTrainer(AbstractTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -99,7 +100,7 @@ class BaseTrainer(AbstractTrainer):
             validation_every=validation_every,
             batch_size=batch_size,
             num_workers=num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,
@@ -121,8 +122,9 @@ class BaseTrainer(AbstractTrainer):
         self.device = self._resolve_device()
         self.best_val_dice = getattr(self, "best_val_dice", float("-inf"))
         self._train_iterator = getattr(self, "_train_iterator", None)
-        self.amp_enabled = self.fp16 and self.device.type == "cuda"
-        self.grad_scaler = GradScaler("cuda", enabled=self.amp_enabled)
+        self.amp_enabled = self.precision != Precision.FP32 and self.device.type == "cuda"
+        self.use_grad_scaler = self.precision == Precision.FP16 and self.device.type == "cuda"
+        self.grad_scaler = GradScaler("cuda", enabled=self.use_grad_scaler)
         self.resume = self._resolve_resume_path(
             self.resume_requested or self.try_resume_requested,
             strict=self.resume_requested,
@@ -586,7 +588,7 @@ class BaseTrainer(AbstractTrainer):
         suggestions = [
             "reduce --batch-size",
             "reduce patch/crop size in the trainer or preprocessing",
-            "enable --fp16 if your model/path supports it",
+            "enable --precision fp16 or --precision bf16 if your model/path supports it",
             "use a smaller model or fewer workers if host memory pressure contributes",
         ]
         message = (
@@ -630,7 +632,7 @@ class BaseTrainer(AbstractTrainer):
             "validation_every": self.validation_every,
             "batch_size": self.batch_size,
             "num_workers": self.num_workers,
-            "fp16": self.fp16,
+            "precision": str(self.precision),
             "compile": self.compile,
             "seed": self.seed,
             "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
@@ -828,7 +830,7 @@ class BaseTrainer(AbstractTrainer):
         table.add_row("Model", f"{model_name}  [dim]({loss_name})[/dim]")
         table.add_row(
             "Runtime",
-            f"{distribution} on {self.device}  [dim]fp16={self.fp16} compile={self.compile}[/dim]",
+            f"{distribution} on {self.device}  [dim]precision={self.precision} compile={self.compile}[/dim]",
         )
         table.add_row(
             "Schedule",
@@ -951,9 +953,10 @@ class BaseTrainer(AbstractTrainer):
             nested_sampler.set_epoch(epoch)
 
     def _autocast_context(self) -> Any:
+        amp_dtype = torch.bfloat16 if self.precision == Precision.BF16 else torch.float16
         return autocast(
             device_type=self.device.type,
-            dtype=torch.float16,
+            dtype=amp_dtype,
             enabled=self.amp_enabled,
         )
 
@@ -962,13 +965,16 @@ class BaseTrainer(AbstractTrainer):
             raise RuntimeError("optimizer must be initialized before backward/step")
 
         self.optimizer.zero_grad()
-        if self.amp_enabled:
+        if self.use_grad_scaler:
             self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=12.0)
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
             return
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=12.0)
         self.optimizer.step()
 
     def _load_pretrain(self) -> None:

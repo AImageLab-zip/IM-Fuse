@@ -9,14 +9,14 @@
 #SBATCH --time=4-00:00:00
 #SBATCH -e /leonardo/home/userexternal/ocarpent/slurm/outerr/mimosa_base_23_2.err
 #SBATCH -o /leonardo/home/userexternal/ocarpent/slurm/outerr/mimosa_base_23_2.out
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --account=IscrB_MEDSYN
 
 cd /leonardo/home/userexternal/ocarpent/MiMoSe
 source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
-mimose train --config mimosa_base_23.yaml --fold 2 --run-suffix fold2 --seed 0 --try-resume --distributed
-mimose test --config mimosa_base_23.yaml --fold 2 --run-suffix fold2 --fp16
+mimose train --config mimosa_base_23.yaml --fold 2 --run-suffix fold2 --seed 0 --try-resume
+mimose test --config mimosa_base_23.yaml --fold 2 --run-suffix fold2 --precision bf16
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher23.sh's singleton chain.

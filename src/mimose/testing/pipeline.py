@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 
 from mimose.checkpoints import load_weights_only_checkpoint
 from mimose.datasets import DatasetType, IMFuseDataset
+from mimose.enums import Precision
 from mimose.models.abstract_model import AbstractModel
 from mimose.utils.seed import set_seed
 
@@ -279,7 +280,8 @@ def run_testing(
     fold: int | None = None,
     num_workers: int = 8,
     seed: int = 42,
-    fp16: bool = False,
+    precision: str | Precision = Precision.FP32,
+    budget: float | None = None,
 ) -> Path:
     if not torch.cuda.is_available():
         raise RuntimeError("Testing currently requires at least one CUDA device")
@@ -316,6 +318,13 @@ def run_testing(
         model.eval()
         if hasattr(model, "is_training"):
             model.is_training = False
+        if budget is not None:
+            if not hasattr(model, "set_budget"):
+                raise click.ClickException(
+                    f"{model_class.__name__} has no set_budget -- --budget only "
+                    "applies to budget-conditioned models (e.g. ElasticUnet)."
+                )
+            model.set_budget(budget)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.exists():
@@ -434,7 +443,9 @@ def run_testing(
                     for batch in test_loader:
                         images = batch["images"].to(device, non_blocking=True)
                         target = batch["seg"].to(device, non_blocking=True).squeeze(1).long()
-                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                        amp_dtype = torch.bfloat16 if precision == Precision.BF16 else torch.float16
+                        amp_enabled = Precision(precision) != Precision.FP32 and device.type == "cuda"
+                        with autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
                             output = model.predict(images, mask_tensor)
                         prediction = torch.argmax(output, dim=1)
 
@@ -550,7 +561,7 @@ def run_testing_fast(
     num_workers: int = 8,
     batch_size: int = 1,
     seed: int = 42,
-    fp16: bool = False,
+    precision: str | Precision = Precision.FP32,
 ) -> Path:
     """Same mask-sweep evaluation as `run_testing`, restructured for speed.
 
@@ -663,7 +674,9 @@ def run_testing_fast(
                             .expand(current_batch_size, -1)
                         )
 
-                        with autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                        amp_dtype = torch.bfloat16 if precision == Precision.BF16 else torch.float16
+                        amp_enabled = Precision(precision) != Precision.FP32 and device.type == "cuda"
+                        with autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
                             output = model.predict(images, mask_tensor)
                         prediction = torch.argmax(output, dim=1)
 

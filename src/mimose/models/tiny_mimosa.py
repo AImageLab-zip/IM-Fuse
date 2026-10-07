@@ -19,7 +19,7 @@ DEFAULT_INPUT_SHAPE = (182, 218, 182)
 
 
 class LatentMaskConditioning(nn.Module):
-    def __init__(self, modality_count: int, latent_channels: int) -> None:
+    def __init__(self, modality_count: int, latent_channels: int, bias_limit: float = 3.0) -> None:
         super().__init__()
         hidden = max(latent_channels // 2, modality_count * 2)
         self.mlp = nn.Sequential(
@@ -27,10 +27,12 @@ class LatentMaskConditioning(nn.Module):
             nn.GELU(),
             nn.Linear(hidden, latent_channels * 2),
         )
+        self.bias_limit = bias_limit
 
     def forward(self, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         conditioning = self.mlp(mask.float())
         scale, bias = conditioning.chunk(2, dim=1)
+        bias = self.bias_limit * torch.tanh(bias)
         return scale[..., None, None, None], bias[..., None, None, None]
 
 
@@ -101,7 +103,7 @@ class TinyMimosa(AbstractModel):
 
         for module in self.modules():
             if isinstance(module, (nn.Conv3d, nn.ConvTranspose3d, nn.Linear)):
-                nn.init.kaiming_normal_(module.weight)
+                nn.init.kaiming_normal_(module.weight, a=1e-2, nonlinearity="leaky_relu")
 
     def forward(
         self,

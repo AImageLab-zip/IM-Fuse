@@ -187,9 +187,13 @@ def discover(results_dir):
 # --------------------------------------------------------------------------- #
 # Completeness + aggregation.
 # --------------------------------------------------------------------------- #
-def is_complete(folds: dict) -> bool:
-    """True iff every EXPECTED_FOLDS is present and fully populated."""
-    for fold in EXPECTED_FOLDS:
+def is_complete(folds: dict, expected: list[str] | None = None) -> bool:
+    """True iff every fold in `expected` is present and fully populated.
+    `expected` defaults to EXPECTED_FOLDS; families that only ever ran a
+    subset (e.g. the fold1-only pareto budget sweep, see
+    scripts/pareto_budgets.py) pass their own list rather than being
+    reported as incomplete."""
+    for fold in expected or EXPECTED_FOLDS:
         entry = folds.get(fold)
         if not entry:
             return False
@@ -203,9 +207,13 @@ def is_complete(folds: dict) -> bool:
     return True
 
 
-def aggregate(folds: dict) -> dict:
+def aggregate(folds: dict, expected: list[str] | None = None) -> dict:
     """{region: {"Dice": (mean, std), "HD95": (mean, std)}}, averaged over the
-    15 modality combinations of the per-combination (mean, std) over folds."""
+    15 modality combinations of the per-combination (mean, std) over folds.
+    `expected` selects which folds to average (default EXPECTED_FOLDS); with a
+    single fold the std is 0 by construction, which is what a one-fold family
+    should report."""
+    expected = expected or EXPECTED_FOLDS
     out = {}
     for region in REGIONS:
         out[region] = {}
@@ -213,7 +221,7 @@ def aggregate(folds: dict) -> dict:
             key = region + suffix
             combo_means, combo_stds = [], []
             for mkey in MODALITY_KEY_ORDER:
-                vals = [folds[fold][mkey][key] for fold in EXPECTED_FOLDS]
+                vals = [folds[fold][mkey][key] for fold in expected]
                 combo_means.append(statistics.fmean(vals))
                 combo_stds.append(statistics.pstdev(vals))
             out[region][metric] = (statistics.fmean(combo_means), statistics.fmean(combo_stds))

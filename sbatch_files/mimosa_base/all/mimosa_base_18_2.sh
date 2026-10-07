@@ -3,20 +3,20 @@
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=200G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=100G
 #SBATCH --time=24:00:00
 #SBATCH -e /homes/ocarpentiero/slurm/outerr/mimosa_base_18_2.err
 #SBATCH -o /homes/ocarpentiero/slurm/outerr/mimosa_base_18_2.out
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --account=phd_mimose
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
 export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
-mimose train --config mimosa_base_18.yaml --fold 2 --run-suffix fold2 --seed 0 --try-resume --distributed
-mimose test --config mimosa_base_18.yaml --fold 2 --run-suffix fold2 --fp16
+mimose train --config mimosa_base_18.yaml --fold 2 --run-suffix fold2 --seed 0 --try-resume
+mimose test --config mimosa_base_18.yaml --fold 2 --run-suffix fold2 --precision bf16
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher18.sh's singleton chain.

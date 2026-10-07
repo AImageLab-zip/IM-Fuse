@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import statistics
 import time
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from rich.console import Console, Group
 from rich.markup import escape as _rich_escape
 from rich.table import Table
 
+from mimose.checkpoints import load_weights_only_checkpoint
 from mimose.models.config import build_model_config
 from mimose.utils.cli_overrides import CONFIGS_DIR, load_yaml_config
 
@@ -84,6 +86,11 @@ class FlopsReport:
     sample_shape: tuple[int, ...]
     patch_size: int | None
     measurements: tuple[PathMeasurement, ...]
+    #: Parameter budget this report was realized for, when profiling a
+    #: budget-conditioned model. ``None`` for ordinary models.
+    budget: float | None = None
+    #: Per-stage widths of the standalone network the budget selected.
+    realized_widths: tuple[int, ...] | None = None
 
 
 class _FlopsWrapper(nn.Module):
@@ -98,6 +105,63 @@ class _FlopsWrapper(nn.Module):
         return self.model(images, mask)
 
 
+def realize_for_budget(model: nn.Module, budget: float) -> nn.Module:
+    """Materialize the standalone network a budget-conditioned model selects.
+
+    This is the difference between measuring an architecture and measuring the
+    supernet that contains it.  Setting a budget only *masks* channels: the
+    forward pass still computes at full width and multiplies the unselected
+    channels by zero, so parameters, FLOPs, peak memory and latency all come
+    out as the widest model's numbers no matter which budget is set.  Only the
+    extracted network has the resource profile the Pareto plots need.
+    """
+    if not hasattr(model, "extract_for_budget"):
+        raise ValueError(
+            f"{type(model).__name__} is not budget-conditioned; --budget only "
+            "applies to models exposing extract_for_budget (e.g. ElasticUnet)"
+        )
+    model.set_budget(budget)
+    return model.extract_for_budget(budget)
+
+
+def budget_range_for_config(
+    *,
+    config_path: Path | None,
+    model_name: str | None,
+    custom_model_kwargs: dict[str, Any] | None,
+) -> tuple[float, float]:
+    """The budget range a config's model can express.
+
+    The model is instantiated rather than derived from ``features_per_stage``
+    so that an explicit ``budget_min``/``budget_max`` in ``custom_model_kwargs``
+    is honoured instead of silently recomputed.
+    """
+    yaml_config = load_yaml_config(config_path)
+    model_config = build_model_config(
+        model_kind=resolve_model_name(yaml_config, model_name),
+        model_kwargs=merge_model_kwargs(yaml_config, custom_model_kwargs),
+    )
+    model = model_config.model_class(**model_config.kwargs)
+    gates = getattr(model, "gates", None)
+    if gates is None:
+        raise ValueError(
+            f"{model_config.model_class.__name__} is not budget-conditioned; "
+            "--budget-sweep only applies to models such as ElasticUnet"
+        )
+    return float(gates.budget_min), float(gates.budget_max)
+
+
+def log_spaced_budgets(budget_min: float, budget_max: float, count: int) -> list[float]:
+    """``count`` budgets spaced evenly in log space, endpoints included."""
+    if count < 1:
+        raise ValueError(f"count must be positive, got {count}")
+    if count == 1:
+        return [budget_max]
+    log_min, log_max = math.log(budget_min), math.log(budget_max)
+    step = (log_max - log_min) / (count - 1)
+    return [math.exp(log_min + step * i) for i in range(count)]
+
+
 def run_flops_analysis(
     *,
     config_path: Path | None,
@@ -105,6 +169,8 @@ def run_flops_analysis(
     custom_model_kwargs: dict[str, Any] | None,
     device: str = "auto",
     warmup: int = 0,
+    budget: float | None = None,
+    checkpoint: Path | None = None,
 ) -> FlopsReport:
     yaml_config = load_yaml_config(config_path)
     resolved_model_name = resolve_model_name(yaml_config, model_name)
@@ -118,6 +184,28 @@ def run_flops_analysis(
     model.eval()
     if hasattr(model, "is_training"):
         model.is_training = False
+
+    if checkpoint is not None:
+        # Gate thresholds move during training, so which architecture a budget
+        # selects before and after training are different networks. Profiling
+        # the freshly-built model would measure the analytic calibration rather
+        # than what was actually learned.
+        load_weights_only_checkpoint(
+            model, checkpoint, device=torch_device, strict=False
+        )
+
+    realized_widths: tuple[int, ...] | None = None
+    if budget is not None:
+        if hasattr(model, "current_widths"):
+            model.set_budget(budget)
+            realized_widths = tuple(model.current_widths())
+        # Replace the supernet with the standalone network *before* the input
+        # shape is probed and parameters are counted, so everything downstream
+        # describes the realized architecture.
+        model = realize_for_budget(model, budget).to(torch_device)
+        model.eval()
+        if hasattr(model, "is_training"):
+            model.is_training = False
 
     sample_path, dummy_images = load_dummy_brain()
     dummy_images = dummy_images.to(device=torch_device, dtype=torch.float32)
@@ -208,12 +296,14 @@ def run_flops_analysis(
 
     return FlopsReport(
         model_name=resolved_model_name,
-        model_class_name=model_config.model_class.__name__,
+        model_class_name=type(model).__name__,
         device=str(torch_device),
         sample_path=str(sample_path),
         sample_shape=tuple(dummy_images.shape),
         patch_size=patch_size,
         measurements=tuple(measurements),
+        budget=budget,
+        realized_widths=realized_widths,
     )
 
 
@@ -747,6 +837,10 @@ def write_flops_summary_csv(report: FlopsReport, output_path: Path) -> None:
                 "mean_latency_seconds",
                 "latency_std_across_modalities_seconds",
                 "mean_latency_std_seconds",
+                # Appended last so existing csv.DictReader consumers that
+                # predate budget-conditioned models keep working unchanged.
+                "budget",
+                "realized_widths",
             ]
         )
         for path in report.measurements:
@@ -791,6 +885,10 @@ def write_flops_summary_csv(report: FlopsReport, output_path: Path) -> None:
                     mean_latency,
                     latency_std_across_modalities,
                     mean_latency_std,
+                    "" if report.budget is None else report.budget,
+                    ""
+                    if report.realized_widths is None
+                    else " ".join(str(w) for w in report.realized_widths),
                 ]
             )
 
