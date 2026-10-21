@@ -49,6 +49,8 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -67,18 +69,18 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.006
+lr: 0.0002
 num_epochs: 300
 validation_every: 10
-batch_size: 6
+batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
-fp16: true
+precision: fp32
 compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 fold: 1
 wandb_project: MiMoSe

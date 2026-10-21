@@ -16,7 +16,7 @@ cd /leonardo/home/userexternal/ocarpent/MiMoSe
 source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
 mimose train --config manymimosaskd_23.yaml --fold 5 --run-suffix fold5 --seed 0 --try-resume
-mimose test --config manymimosaskd_23.yaml --fold 5 --run-suffix fold5 --fp16 --model manymimosas
+mimose test --config manymimosaskd_23.yaml --fold 5 --run-suffix fold5 --precision fp16 --model manymimosas
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher23.sh's singleton chain.

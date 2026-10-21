@@ -4,9 +4,11 @@ import torch
 import typer
 
 from mimose.flops import (
-    all_modalities_mask,
+    MODALITY_COMBINATIONS,
     center_crop_or_pad_volume,
     merge_model_kwargs,
+    modality_label,
+    modality_mask,
     prepare_measurement_inputs,
     resolve_2023_config_paths,
     resolve_model_name,
@@ -75,16 +77,25 @@ def test_validate_flops_selection_rejects_all_with_single_target() -> None:
         raise AssertionError("expected BadParameter")
 
 
-def test_all_modalities_mask_is_boolean_and_enabled() -> None:
-    mask = all_modalities_mask(
-        batch_size=2,
-        num_modalities=4,
-        device=torch.device("cpu"),
-    )
+def test_modality_combinations_cover_all_15_non_empty_subsets() -> None:
+    assert len(MODALITY_COMBINATIONS) == 15
+    assert len(set(MODALITY_COMBINATIONS)) == 15
+    assert all(any(combo) for combo in MODALITY_COMBINATIONS)
+
+
+def test_modality_mask_matches_combination_and_batch_size() -> None:
+    combo = (True, False, True, False)
+
+    mask = modality_mask(combo, batch_size=3, device=torch.device("cpu"))
 
     assert mask.dtype is torch.bool
-    assert mask.shape == (2, 4)
-    assert torch.equal(mask, torch.ones(2, 4, dtype=torch.bool))
+    assert mask.shape == (3, 4)
+    assert torch.equal(mask, torch.tensor(combo).unsqueeze(0).expand(3, -1))
+
+
+def test_modality_label_joins_present_modality_names() -> None:
+    assert modality_label((True, False, True, False)) == "t1c+t2f"
+    assert modality_label((True, True, True, True)) == "t1c+t1n+t2f+t2w"
 
 
 def test_center_crop_or_pad_volume_crops_and_pads_spatial_dims() -> None:
@@ -111,10 +122,8 @@ def test_prepare_measurement_inputs_reports_forward_and_predict_when_patched() -
     assert [item.name for item in prepared] == ["forward", "predict"]
     assert prepared[0].input_shape == (1, 4, 8, 8, 8)
     assert prepared[1].input_shape == (1, 4, 10, 12, 14)
-    assert prepared[0].mask is not None
-    assert prepared[1].mask is not None
-    assert torch.all(prepared[0].mask)
-    assert torch.all(prepared[1].mask)
+    assert prepared[0].images is not None
+    assert prepared[1].images is not None
 
 
 def test_prepare_measurement_inputs_skips_predict_without_patch_size() -> None:
@@ -129,5 +138,4 @@ def test_prepare_measurement_inputs_skips_predict_without_patch_size() -> None:
     assert [item.name for item in prepared] == ["forward", "predict"]
     assert prepared[0].input_shape == (1, 4, 10, 12, 14)
     assert prepared[1].images is None
-    assert prepared[1].mask is None
     assert "skipped" in prepared[1].note

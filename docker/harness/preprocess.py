@@ -83,7 +83,7 @@ def preprocess_raw_cases(
         )
 
     from mimose.preprocessing.config import build_clamp_config, build_crop_config, build_norm_config
-    from mimose.preprocessing.pipeline import preprocess_case
+    from mimose.preprocessing.pipeline import DEFAULT_MODAL_SUFFIXES, preprocess_case
 
     crop_config = build_crop_config(
         preprocessing_config["crop_mode"],
@@ -125,7 +125,9 @@ def preprocess_raw_cases(
     processed: list[str] = []
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         futures = {
-            executor.submit(preprocess_case, file, output_dir, crop_config, clamp_config, norm_config): file["name"]
+            executor.submit(
+                preprocess_case, file, output_dir, crop_config, clamp_config, norm_config, DEFAULT_MODAL_SUFFIXES
+            ): file["name"]
             for file in input_files
         }
         with Progress(

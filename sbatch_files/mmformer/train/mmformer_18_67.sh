@@ -14,5 +14,6 @@
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
 mimose train --config mmformer_18.yaml --run-suffix seed67 --seed 67 --try-resume

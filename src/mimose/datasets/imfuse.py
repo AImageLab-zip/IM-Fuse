@@ -38,8 +38,8 @@ class IMFuseDataset(BaseDataset):
         split: list[dict[str, Any]],
         sample_transform: Callable[[torch.Tensor, torch.Tensor], tuple[Any, Any]] | None = None,
         image_transforms: Callable[[torch.Tensor], Any] | None = None,
-        target_transforms: Callable[[torch.Tensor], Any] | None = None
-
+        target_transforms: Callable[[torch.Tensor], Any] | None = None,
+        mask_sampling: str = "subset_uniform",
     ) -> None:
         super().__init__(
             root=root,
@@ -49,6 +49,7 @@ class IMFuseDataset(BaseDataset):
             sample_transform=sample_transform,
             image_transforms=image_transforms,
             target_transforms=target_transforms,
+            mask_sampling=mask_sampling,
         )
 
     def build_sample(self, sample: dict[str, Any]) -> dict[str, Any]:

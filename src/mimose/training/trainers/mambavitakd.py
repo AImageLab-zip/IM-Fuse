@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from mimose.enums import Precision
 from mimose.losses.config import LossConfig
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
@@ -65,7 +66,7 @@ class MambaVitAKDTrainer(IMFuseTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -104,7 +105,7 @@ class MambaVitAKDTrainer(IMFuseTrainer):
             validation_every=validation_every,
             batch_size=batch_size,
             num_workers=num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,
@@ -135,15 +136,27 @@ class MambaVitAKDTrainer(IMFuseTrainer):
             param for name, param in target_model.named_parameters()
             if not name.startswith("teacher.")
         ]
+        optimizer_kwargs: dict[str, Any] = {
+            "lr": self.optimizer_config.lr,
+            "weight_decay": self.optimizer_config.weight_decay,
+        }
+        if self.optimizer_config.betas is not None:
+            optimizer_kwargs["betas"] = self.optimizer_config.betas
+        if self.optimizer_config.amsgrad is not None:
+            optimizer_kwargs["amsgrad"] = self.optimizer_config.amsgrad
         self.optimizer = self.optimizer_config.optim_class(
             [
                 {"params": other_params},
                 {"params": teacher_params, "lr": self.teacher_lr},
             ],
-            lr=self.optimizer_config.lr,
-            weight_decay=self.optimizer_config.weight_decay,
+            **optimizer_kwargs,
         )
         return self.optimizer
+
+    def _configured_lrs(self) -> list[float]:
+        if self.optimizer is not None and len(self.optimizer.param_groups) == 2 and self.teacher_lr is not None:
+            return [self.optimizer_config.lr, self.teacher_lr]
+        return [self.optimizer_config.lr] * len(self.optimizer.param_groups)
 
     def _build_scheduler(self, optimizer: torch.optim.Optimizer | None = None) -> Any | None:
         if self.scheduler_config is None or self.teacher_pretrain_epochs == 0:
@@ -194,8 +207,12 @@ class MambaVitAKDTrainer(IMFuseTrainer):
             if model is not None:
                 model.teacher.requires_grad_(False)
                 model.teacher.eval()
+                model.teacher_frozen = True
 
             if self.scheduler_config is not None:
+                # The phase-1 poly schedule ends at lr 0 and PolynomialLR is chainable, so a rebuilt
+                # scheduler would keep the student at lr 0; restart from the configured LRs.
+                self._reset_param_group_lrs(self._configured_lrs())
                 remaining_epochs = self.num_epochs - self.teacher_pretrain_epochs
                 previous = {}
                 for duration_key in ("total_iters", "T_max"):
@@ -204,6 +221,9 @@ class MambaVitAKDTrainer(IMFuseTrainer):
                         self.scheduler_config.kwargs[duration_key] = remaining_epochs
                 self._build_scheduler(self.optimizer)
                 self.scheduler_config.kwargs.update(previous)
+                # Resuming mid-distillation: replay the phase-2 schedule up to the current epoch.
+                for _ in range(epoch - self.teacher_pretrain_epochs):
+                    self.scheduler.step()
 
         if self.is_main_process:
             phase_name = "student distillation" if entering_distillation else "teacher pretrain"
@@ -220,6 +240,9 @@ class MambaVitAKDTrainer(IMFuseTrainer):
 
         self._apply_training_stage(epoch)
         self.model.train()
+        model = self._model_for_state()
+        if model is not None and getattr(model, "teacher_frozen", False):
+            model.teacher.eval()
         in_teacher_pretrain = bool(self._in_teacher_pretrain)
         if not in_teacher_pretrain:
             self._set_aux_training_flag(True)
@@ -300,21 +323,7 @@ class MambaVitAKDTrainer(IMFuseTrainer):
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
         with self._autocast_context():
             target = self._seg_to_one_hot(seg)
-            try:
-                outputs = self.model(images, mask)
-            except RuntimeError as exc:
-                paired_transform = None
-                if self.transform_manager is not None:
-                    paired_transform = getattr(self.transform_manager, "train_transforms", {}).get("paired")
-                raise RuntimeError(
-                    "Training batch/model shape mismatch.\n"
-                    f"batch_images_shape={tuple(images.shape)}\n"
-                    f"batch_seg_shape={tuple(seg.shape)}\n"
-                    f"transform_manager={type(self.transform_manager).__name__ if self.transform_manager is not None else 'None'}\n"
-                    f"paired_transform={type(paired_transform).__name__ if paired_transform is not None else 'None'}\n"
-                    f"paired_crop_size={getattr(paired_transform, 'crop_size', None)}\n"
-                    f"paired_tile_shape={getattr(paired_transform, 'tile_shape', None)}"
-                ) from exc
+            outputs = self.model(images, mask)
 
             # region_fusion_start_epoch counts epochs since the distillation
             # phase started, not since epoch 0 globally -- see class docstring.

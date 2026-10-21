@@ -13,5 +13,6 @@ ReHyDIL/outputs
 src/mimose/data/configs
 *claude*
 .*
+!.env.example
 test_to_redo.txt
 outputs/

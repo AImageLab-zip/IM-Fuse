@@ -127,9 +127,9 @@ class M3AE(AbstractModel):
     def __init__(self, num_cls: int = 4) -> None:
         super().__init__()
         self.num_cls = num_cls
-        self.limage = nn.Parameter(
-            torch.randn(1, num_modals, input_patch_size, input_patch_size, input_patch_size) * 0.02
-        )
+        # Upstream's model-inversion template is a full-volume randn (std 1) parameter sliced at each
+        # crop location; this port keeps one 128^3 template shared by every crop/window.
+        self.limage = nn.Parameter(torch.randn(1, num_modals, input_patch_size, input_patch_size, input_patch_size))
         self.unet = UNet3D(in_channels=num_modals)
         self.seg_layer = nn.Conv3d(init_channels, num_cls, kernel_size=1)
         self.softmax = nn.Softmax(dim=1)
@@ -144,22 +144,25 @@ class M3AE(AbstractModel):
         self.ds_up4 = nn.Upsample(scale_factor=4, mode="trilinear", align_corners=True)
         self.ds_out3 = nn.Conv3d(init_channels * 2, num_cls, kernel_size=1)
         self.ds_up3 = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=True)
-
-        for module in self.modules():
-            if isinstance(module, nn.Conv3d):
-                nn.init.kaiming_normal_(module.weight)
+        # No custom init: upstream UNet3D_g uses PyTorch defaults. Kaiming here saturates the
+        # pre-activation residual trunk (logit std ~38 at init).
 
     def _forward_trunk(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         if x.size(1) != num_modals:
             raise RuntimeError(f"M3AE expects {num_modals} input modalities, got {x.size(1)}")
-        if mask.ndim != 2 or mask.size(1) != num_modals:
+        voxel_gate = mask.ndim == 5
+        if voxel_gate:
+            if mask.shape[1] != num_modals or mask.shape[-3:] != x.shape[-3:]:
+                raise RuntimeError(f"M3AE expects a voxel gate shaped like x, got {tuple(mask.shape)}")
+        elif mask.ndim != 2 or mask.size(1) != num_modals:
             raise RuntimeError(f"M3AE expects mask shape [B, {num_modals}], got {tuple(mask.shape)}")
         if x.shape[-3:] != self.limage.shape[-3:]:
             raise RuntimeError(
                 f"M3AE requires spatial dimensions of exactly {tuple(self.limage.shape[-3:])}, got {tuple(x.shape[-3:])}"
             )
 
-        gate = mask.view(-1, num_modals, 1, 1, 1).to(x.dtype)
+        # A [B, M, D, H, W] gate is the MAE pretraining patch mask; a [B, M] mask drops whole modalities.
+        gate = mask.to(x.dtype) if voxel_gate else mask.view(-1, num_modals, 1, 1, 1).to(x.dtype)
         x = x * gate + self.limage * (1 - gate)
         return self.unet(x)  # (u2, u3, u4)
 

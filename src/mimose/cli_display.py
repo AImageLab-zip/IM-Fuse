@@ -23,17 +23,22 @@ def prompt_path(prompt: str, *, default: str = "") -> str:
     ).strip()
 
 
-def prompt_zip_file(*, label: str, prompt: str, default_dir: Path | None = None) -> Path:
+def prompt_zip_file(
+    *, label: str, prompt: str, default_dir: Path | None = None, optional: bool = False
+) -> Path | None:
     import zipfile
 
     while True:
         raw_value = pt_prompt(
-            f"{prompt}: ",
+            f"{prompt}{' (leave empty to skip)' if optional else ''}: ",
             completer=PATH_COMPLETER,
             complete_while_typing=True,
             default=f"{default_dir}/" if default_dir is not None else "",
         ).strip()
         if not raw_value:
+            if optional:
+                CONSOLE.print(f"[dim]Skipping {label} -- not provided.[/dim]")
+                return None
             CONSOLE.print(
                 Panel(
                     f"[bold red]{label}[/bold red] is required.",

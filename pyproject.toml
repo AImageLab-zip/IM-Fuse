@@ -14,13 +14,17 @@ authors = [
   { name = "Kevin Marchesini", email = "kevin.marchesini@unimore.it" },
   { name = "Vittorio Pipoli", email = "vittorio.pipoli@unimore.it" },
   { name = "Alessia Saporita", email = "alessia.saporita@unimore.it" },
-  { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" },
-  { name = "Costantino Grana", email = "costantino.grana@unimore.it" }
+  { name = "Costantino Grana", email = "costantino.grana@unimore.it" },
+    { name = "Federico Bolelli", email = "federico.bolelli@unimore.it" }
 ]
 dependencies = [
     "causal-conv1d>=1.4.0",
     "mamba-ssm",
     "dynamic-network-architectures>=0.4.3",
+    "fastapi>=0.128.0",
+    "python-dotenv>=1.2.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.40.0",
     "h5py>=3.16.0",
     "huggingface_hub>=0.34.0",
     "matplotlib>=3.10.9",
@@ -74,9 +78,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
 [tool.uv.sources]
 causal-conv1d = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl" }
 mamba-ssm = { url = "https://github.com/AImageLab-zip/MiMoSe/releases/download/wheels-cu128-py312-v1/mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl" }
+torch = { url = "https://github.com/homarone00/torch-pascal-builds/releases/download/v2.9.1-pascal-r2/torch-2.9.1-cp312-cp312-linux_x86_64.whl" }
 
 [tool.ruff]
 line-length = 88
@@ -97,3 +105,4 @@ dev = [
 [project.scripts]
 mimose = "mimose.cli:app"
 mimose-gui = "mimose.gui:launch"
+mimose-runner = "runner.app:main"

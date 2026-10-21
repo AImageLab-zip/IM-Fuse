@@ -13,9 +13,10 @@
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
 mimose train --config a2fseg_23.yaml --fold 1 --run-suffix fold1 --seed 0 --try-resume
-mimose test --config a2fseg_23.yaml --fold 1 --run-suffix fold1 --fp16
+mimose test --config a2fseg_23.yaml --fold 1 --run-suffix fold1 --precision fp16
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher23.sh's singleton chain.

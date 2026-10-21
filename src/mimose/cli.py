@@ -18,6 +18,7 @@ from mimose.enums import (
     ModelKind,
     NormMode,
     OptimizerKind,
+    Precision,
     SchedulerKind,
     TransformKind,
     TrainerKind,
@@ -359,23 +360,60 @@ def setup() -> None:
         gli_pre_zip = prompt_zip_file(
             label="BraTS2025-GLI-pre ZIP",
             prompt="Path to BraTS2025-GLI-pre ZIP",
+            optional=True,
         )
-        
-        candidate_post = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-TrainingData.zip' 
-        post_dir = candidate_post if candidate_post.exists() else gli_pre_zip.parent
+
+        pre_dir = gli_pre_zip.parent if gli_pre_zip is not None else None
+        candidate_post = pre_dir / "BraTS2024-BraTS-GLI-TrainingData.zip" if pre_dir else None
+        post_dir = candidate_post if candidate_post and candidate_post.exists() else pre_dir
         gli_post_zip = prompt_zip_file(
             label="BraTS2024-GLI-post ZIP",
             prompt="Path to BraTS2024-GLI-post ZIP",
             default_dir=post_dir,
+            optional=True,
         )
-            
-        candidate_post_extra = gli_pre_zip.parent/'BraTS2024-BraTS-GLI-AdditionalTrainingData.zip' 
-        post_extra_dir = candidate_post_extra if candidate_post_extra.exists() else gli_pre_zip.parent
+
+        candidate_post_extra = (
+            pre_dir / "BraTS2024-BraTS-GLI-AdditionalTrainingData.zip" if pre_dir else None
+        )
+        post_extra_dir = (
+            candidate_post_extra if candidate_post_extra and candidate_post_extra.exists() else pre_dir
+        )
         gli_post_extra_zip = prompt_zip_file(
             label="BraTS2024-GLI-post-additional-data ZIP",
             prompt="Path to BraTS2024-GLI-post-additional-data ZIP",
             default_dir=post_extra_dir,
+            optional=True,
         )
+
+        provided_zips = {
+            "BraTS2025-GLI-pre": gli_pre_zip,
+            "BraTS2024-GLI-post": gli_post_zip,
+            "BraTS2024-GLI-post-additional-data": gli_post_extra_zip,
+        }
+        skipped = [name for name, path in provided_zips.items() if path is None]
+        if skipped:
+            console.print(
+                Panel(
+                    "The following archives were not provided and will be skipped:\n"
+                    + "\n".join(f"  - {name}" for name in skipped)
+                    + "\n\nOnly the provided archives will be unpacked; "
+                    "re-run `mimose setup` later to add the rest.",
+                    title="[bold yellow]Partial ZIP Set[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+        if all(path is None for path in provided_zips.values()):
+            console.print(
+                Panel(
+                    "No BraTS ZIP archives were provided; skipping the unpack step entirely.",
+                    title="[bold yellow]Nothing to Unpack[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+            want_unpack = False
 
     current_brats_data_dir = Path(current["brats_data_dir"]) if current.get("brats_data_dir") else None
 
@@ -443,9 +481,12 @@ def setup() -> None:
     table.add_column(style="bold cyan", no_wrap=True)
     table.add_column(style="white")
     if want_unpack:
-        table.add_row("BraTS2025-GLI-pre ZIP", str(gli_pre_zip))
-        table.add_row("BraTS2024-GLI-post ZIP", str(gli_post_zip))
-        table.add_row("BraTS2024-GLI-post-additional-data ZIP", str(gli_post_extra_zip))
+        table.add_row("BraTS2025-GLI-pre ZIP", str(gli_pre_zip) if gli_pre_zip else "[dim]skipped[/dim]")
+        table.add_row("BraTS2024-GLI-post ZIP", str(gli_post_zip) if gli_post_zip else "[dim]skipped[/dim]")
+        table.add_row(
+            "BraTS2024-GLI-post-additional-data ZIP",
+            str(gli_post_extra_zip) if gli_post_extra_zip else "[dim]skipped[/dim]",
+        )
     table.add_row("Data Root", str(data_root))
     table.add_row("Unpacked Data", str(brats_data_dir))
     table.add_row("Preprocessed Data Root", str(preprocessed_root_dir))
@@ -505,7 +546,7 @@ def setup() -> None:
         )
 
         brats_data_dir.mkdir(parents=True, exist_ok=True)
-        zip_files = [gli_pre_zip, gli_post_zip, gli_post_extra_zip]
+        zip_files = [z for z in (gli_pre_zip, gli_post_zip, gli_post_extra_zip) if z is not None]
         totals = [cli_setup.zip_member_count(z) for z in zip_files]
         queue: mp.Queue = mp.Queue()
 
@@ -776,6 +817,13 @@ def preprocess_train(
         help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
         rich_help_panel="Runtime",
     ),
+    nnodes: int | None = typer.Option(
+        None,
+        "--nnodes",
+        help="Nodes to span for distributed training. Defaults to the srun allocation "
+        "(1 outside Slurm). Values > 1 require launching with srun, one task per node.",
+        rich_help_panel="Runtime",
+    ),
 ) -> None:
     """Run preprocessing first and then launch training using the same config."""
     console = _get_cli_display().CONSOLE
@@ -839,7 +887,8 @@ def preprocess_train(
         num_workers=8,
         distributed=distributed,
         nproc_per_node=nproc_per_node,
-        fp16=None,
+        nnodes=nnodes,
+        precision=None,
         compile=None,
         resume=False,
         seed=69,
@@ -1065,7 +1114,7 @@ def train(
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
-        help="Mini-batch size.",
+        help="Mini-batch size, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Training",
     ),
     weight_decay: float | None = typer.Option(
@@ -1077,7 +1126,7 @@ def train(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers.",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     distributed: bool | None = typer.Option(
@@ -1092,12 +1141,19 @@ def train(
         help="Processes to launch per node for distributed training. Defaults to the number of visible CUDA devices.",
         rich_help_panel="Runtime",
     ),
-    fp16: bool | None = typer.Option(
+    nnodes: int | None = typer.Option(
         None,
-        "--fp16",
-        help="Enable float16 mixed precision training on CUDA.",
+        "--nnodes",
+        help="Nodes to span for distributed training. Defaults to the srun allocation "
+        "(1 outside Slurm). Values > 1 require launching with srun, one task per node.",
         rich_help_panel="Runtime",
-        is_flag=True,
+    ),
+    precision: Precision | None = typer.Option(
+        None,
+        "--precision",
+        help="Training precision on CUDA: fp32 (default), fp16 (mixed precision + loss scaling), "
+        "or bf16 (mixed precision, no loss scaling).",
+        rich_help_panel="Runtime",
     ),
     compile: bool | None = typer.Option(
         None,
@@ -1242,7 +1298,8 @@ def train(
             num_workers=num_workers,
             distributed=distributed,
             nproc_per_node=nproc_per_node,
-            fp16=fp16,
+            nnodes=nnodes,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,
@@ -1342,6 +1399,16 @@ def test(
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
     ),
+    budget: float | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to select before evaluating (budget-conditioned "
+            "models only, e.g. ElasticUnet). Defaults to the model's own "
+            "default (widest) budget when omitted."
+        ),
+        rich_help_panel="Model",
+    ),
     split_file: Path | None = typer.Option(
         None,
         "--split-file",
@@ -1355,7 +1422,7 @@ def test(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers.",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1364,12 +1431,11 @@ def test(
         help="Random seed.",
         rich_help_panel="Runtime",
     ),
-    fp16: bool | None = typer.Option(
+    precision: Precision | None = typer.Option(
         None,
-        "--fp16",
-        help="Run inference under torch.autocast(dtype=float16) on CUDA.",
+        "--precision",
+        help="Run inference under torch.autocast on CUDA: fp32 (default), fp16, or bf16.",
         rich_help_panel="Runtime",
-        is_flag=True,
     ),
     dataset_type: DatasetType = typer.Option(
         None,
@@ -1421,7 +1487,7 @@ def test(
         num_workers=num_workers,
         run_suffix=run_suffix,
         seed=seed,
-        fp16=fp16,
+        precision=precision,
         dataset_type=dataset_type,
     )
     # A CLI --fold overrides the config's default `fold`.
@@ -1460,7 +1526,222 @@ def test(
         fold=fold,
         num_workers=int(merged.get("num_workers", 8)),
         seed=int(merged.get("seed", 42)),
-        fp16=bool(merged.get("fp16", False)),
+        precision=Precision(merged.get("precision", Precision.FP32)),
+        budget=budget,
+    )
+    typer.echo(f"Test report written to {output_file}")
+    typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
+    typer.echo(
+        f"Per-subject scores written to "
+        f"{output_file.with_name(f'{output_file.stem}_per_subject.csv')}"
+    )
+
+
+@app.command("test-fast")
+def test_fast(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a YAML config file.",
+        rich_help_panel="Config",
+    ),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        file_okay=False,
+        dir_okay=True,
+        exists=True,
+        readable=True,
+        help="Directory containing the preprocessed test data.",
+        rich_help_panel="Input/Output",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help="Text file where mask-sweep test results will be written.",
+        rich_help_panel="Input/Output",
+    ),
+    art_dir: Path | None = typer.Option(
+        None,
+        "--art-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Artifact directory used to cache online checkpoints.",
+        rich_help_panel="Input/Output",
+    ),
+    checkpoint_path: Path | None = typer.Option(
+        None,
+        "--checkpoint-path",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
+        readable=True,
+        help="Path to a weights-only .safetensors checkpoint to evaluate.",
+        rich_help_panel="Checkpointing",
+    ),
+    online: bool = typer.Option(
+        False,
+        "--online",
+        help="Download the checkpoint from Hugging Face into art_dir/checkpoints and reuse it if already cached.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_repo: str | None = typer.Option(
+        None,
+        "--hf-repo",
+        help="Hugging Face model repo id used when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    hf_run_name: str | None = typer.Option(
+        None,
+        "--hf-run-name",
+        help="Run-name subdirectory inside the Hugging Face repo used when --online is enabled.",
+        rich_help_panel="Checkpointing",
+    ),
+    model: ModelKind | None = typer.Option(
+        None,
+        "--model",
+        help="Model implementation or preset to use.",
+        rich_help_panel="Model",
+    ),
+    custom_model_kwargs: list[str] | None = typer.Option(
+        None,
+        "--custom-model-kwargs",
+        help="Additional model kwargs in key=value form.",
+        rich_help_panel="Model",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=split_shell_complete,
+        help="Split file path. Relative paths are resolved under mimose/data/splits.",
+        rich_help_panel="Data Pipeline",
+        show_default="split.json",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Number of dataloader workers, per rank (multiplied by world size under --distributed).",
+        rich_help_panel="Runtime",
+    ),
+    batch_size: int = typer.Option(
+        1,
+        "--batch-size",
+        help="Number of subjects to run through the model together per mask, "
+        "instead of one at a time.",
+        rich_help_panel="Runtime",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Random seed.",
+        rich_help_panel="Runtime",
+    ),
+    precision: Precision | None = typer.Option(
+        None,
+        "--precision",
+        help="Run inference under torch.autocast on CUDA: fp32 (default), fp16, or bf16.",
+        rich_help_panel="Runtime",
+    ),
+    dataset_type: DatasetType = typer.Option(
+        None,
+        "--dataset-type",
+        help="Dataset split to use. One of: brats18, brats23, brats25, internal",
+        rich_help_panel="Input/Output",
+    ),
+    run_suffix: str | None = typer.Option(
+        None,
+        "--run-suffix",
+        help=(
+            "Suffix appended to art_dir, hf_run_name, and output_path (e.g. a "
+            "seed) so this matches the same suffixed run produced by "
+            "`mimose train --run-suffix` and keeps repeated test reports separate."
+        ),
+        rich_help_panel="Runtime",
+    ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help=(
+            "Cross-validation fold to test on. When set and no --split-file is given, "
+            "the fold-nested splits_5fold.json is used and this fold's test set is selected."
+        ),
+        rich_help_panel="Data Pipeline",
+    ),
+) -> None:
+    """Run mask-sweep testing like `test`, but load each subject once and reuse
+    it across all 15 masks (instead of once per mask), batching `--batch-size`
+    subjects per forward pass."""
+    from mimose.models.config import (
+        ModelKind as TestingModelKind,
+        build_model_config,
+    )
+    from mimose.testing import run_testing_fast
+    from mimose.training.config import parse_kv_list
+
+    yaml_config = load_yaml_config(config)
+    merged = merge_cli_overrides(
+        yaml_config,
+        data_dir=data_dir,
+        output_path=output_path,
+        art_dir=art_dir,
+        checkpoint_path=checkpoint_path,
+        online=online,
+        hf_repo=hf_repo,
+        hf_run_name=hf_run_name,
+        model=model,
+        custom_model_kwargs=parse_kv_list(custom_model_kwargs) if custom_model_kwargs else None,
+        split_file=split_file,
+        num_workers=num_workers,
+        run_suffix=run_suffix,
+        seed=seed,
+        precision=precision,
+        dataset_type=dataset_type,
+    )
+    # A CLI --fold overrides the config's default `fold`.
+    if fold is None and merged.get("fold") is not None:
+        fold = int(merged["fold"])
+    split_file_value = merged.get("split_file")
+    if split_file_value is None and fold is not None:
+        from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
+
+        split_file_value = KFOLD_SPLIT_FILENAME
+    resolved_split_file = resolve_split_path(split_file_value)
+    merged["split_file"] = str(resolved_split_file)
+    _require_values(
+        merged,
+        "data_dir",
+        "output_path",
+        "dataset_type",
+    )
+    apply_run_suffix(merged)
+    resolved_checkpoint_path = _resolve_test_checkpoint(merged)
+    merged["checkpoint_path"] = str(resolved_checkpoint_path)
+
+    model_kind = TestingModelKind(merged.get("model", TestingModelKind.IMFUSE))
+    model_config = build_model_config(
+        model_kind=model_kind,
+        model_kwargs=merged.get("custom_model_kwargs"),
+    )
+    output_file = run_testing_fast(
+        data_dir=Path(merged["data_dir"]),
+        output_path=Path(merged["output_path"]),
+        checkpoint_path=resolved_checkpoint_path,
+        dataset_type=DatasetType(merged["dataset_type"]),
+        model_class=model_config.model_class,
+        model_kwargs=model_config.kwargs,
+        split_file=resolved_split_file,
+        fold=fold,
+        num_workers=int(merged.get("num_workers", 8)),
+        batch_size=batch_size,
+        seed=int(merged.get("seed", 42)),
+        precision=Precision(merged.get("precision", Precision.FP32)),
     )
     typer.echo(f"Test report written to {output_file}")
     typer.echo(f"Excel summary written to {output_file.with_suffix('.xlsx')}")
@@ -1526,7 +1807,7 @@ def push(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers used while rebuilding the trainer.",
+        help="Number of dataloader workers used while rebuilding the trainer, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1566,8 +1847,8 @@ def push(
         False,
         "--all-folds",
         help=(
-            "Push every cross-validation fold run for this config (folds 1, 3, 5, matching "
-            "allsbatcher18.sh/allsbatcher23.sh), then push fold 1's checkpoint a second "
+            "Push every cross-validation fold run for this config (folds 1-5), then push "
+            "fold 1's checkpoint a second "
             "time without a suffix so it's available as the default checkpoint for "
             "--online testing. Incompatible with --run-suffix and --checkpoint-path."
         ),
@@ -1700,7 +1981,7 @@ def export(
     num_workers: int = typer.Option(
         8,
         "--num-workers",
-        help="Number of dataloader workers used while rebuilding the trainer.",
+        help="Number of dataloader workers used while rebuilding the trainer, per rank (multiplied by world size under --distributed).",
         rich_help_panel="Runtime",
     ),
     seed: int = typer.Option(
@@ -1784,6 +2065,12 @@ def flops(
         help="Device to use for profiling: auto, cpu, or cuda.",
         rich_help_panel="Runtime",
     ),
+    warmup: int = typer.Option(
+        0,
+        "--warmup",
+        help="Number of untracked warmup runs before timing latency.",
+        rich_help_panel="Runtime",
+    ),
     all_configs: bool = typer.Option(
         False,
         "--all",
@@ -1796,6 +2083,53 @@ def flops(
         help="Additional model kwargs in key=value form.",
         rich_help_panel="Model",
     ),
+    budget: list[float] | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to realize before profiling (budget-conditioned "
+            "models only, e.g. ElasticUnet). The supernet is replaced by the "
+            "standalone network that budget selects, so params/FLOPs/memory/"
+            "latency describe that architecture rather than the full-width "
+            "supernet. Repeatable: one report per budget."
+        ),
+        rich_help_panel="Model",
+    ),
+    budget_sweep: int | None = typer.Option(
+        None,
+        "--budget-sweep",
+        help=(
+            "Profile N log-spaced budgets across the model's whole range, for "
+            "building a dense Pareto front in one command. Mutually exclusive "
+            "with --budget."
+        ),
+        rich_help_panel="Model",
+    ),
+    checkpoint: Path | None = typer.Option(
+        None,
+        "--checkpoint",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Supernet weights to load before realizing a budget. Gate "
+            "thresholds move during training, so without this the architecture "
+            "profiled is the analytic calibration, not what was learned."
+        ),
+        rich_help_panel="Model",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Text file where the FLOPs report will be written. Defaults to "
+            "<results_dir>/flops.txt using --config's results_dir. Cannot be "
+            "combined with --all, since each config there gets its own report."
+        ),
+        rich_help_panel="Input/Output",
+    ),
 ) -> None:
     """Profile model FLOPs from a model name or config."""
     from mimose.flops import (
@@ -1803,7 +2137,10 @@ def flops(
         resolve_2023_config_paths,
         run_flops_analysis,
         validate_flops_selection,
+        write_flops_report,
+        write_flops_summary_csv,
     )
+    from mimose.flops import budget_range_for_config, log_spaced_budgets
     from mimose.training.config import parse_kv_list
 
     console = _get_cli_display().CONSOLE
@@ -1813,7 +2150,48 @@ def flops(
         config_path=config,
         model_name=model,
     )
+    if all_configs and output_path is not None:
+        raise typer.BadParameter(
+            "--output-path cannot be combined with --all; each config's own "
+            "results_dir is used instead",
+            param_hint="--output-path",
+        )
     parsed_model_kwargs = parse_kv_list(custom_model_kwargs)
+
+    if budget and budget_sweep is not None:
+        raise typer.BadParameter(
+            "--budget and --budget-sweep are mutually exclusive",
+            param_hint="--budget-sweep",
+        )
+    if all_configs and (budget or budget_sweep is not None):
+        raise typer.BadParameter(
+            "--budget/--budget-sweep cannot be combined with --all; profile one "
+            "budget-conditioned config at a time",
+            param_hint="--budget",
+        )
+    if checkpoint is not None and not (budget or budget_sweep is not None):
+        raise typer.BadParameter(
+            "--checkpoint only affects which architecture a budget selects; "
+            "pass --budget or --budget-sweep as well",
+            param_hint="--checkpoint",
+        )
+
+    # None means "profile the model as configured", which for a supernet is the
+    # full-width network rather than any particular subnet.
+    budgets: list[float | None] = [None]
+    if budget:
+        budgets = list(budget)
+    elif budget_sweep is not None:
+        low, high = budget_range_for_config(
+            config_path=config,
+            model_name=model,
+            custom_model_kwargs=parsed_model_kwargs,
+        )
+        budgets = list(log_spaced_budgets(low, high, budget_sweep))
+        console.print(
+            f"[dim]Sweeping {budget_sweep} budgets from {low:,.0f} to "
+            f"{high:,.0f} parameters[/dim]"
+        )
 
     with console.status(
         "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]",
@@ -1834,23 +2212,240 @@ def flops(
                             model_name=None,
                             custom_model_kwargs=parsed_model_kwargs,
                             device=device,
+                            warmup=warmup,
                         ),
                     )
                 )
         else:
-            reports = [
-                (
-                    config,
-                    run_flops_analysis(
-                        config_path=config,
-                        model_name=model,
-                        custom_model_kwargs=parsed_model_kwargs,
-                        device=device,
-                    ),
+            reports = []
+            for current_budget in budgets:
+                if current_budget is not None:
+                    status.update(
+                        "[bold cyan]Profiling MiMoSe FLOPs[/bold cyan]  "
+                        f"[dim]budget {current_budget:,.0f}[/dim]"
+                    )
+                reports.append(
+                    (
+                        config,
+                        run_flops_analysis(
+                            config_path=config,
+                            model_name=model,
+                            custom_model_kwargs=parsed_model_kwargs,
+                            device=device,
+                            warmup=warmup,
+                            budget=current_budget,
+                            checkpoint=checkpoint,
+                        ),
+                    )
                 )
-            ]
 
     for config_path, report in reports:
         if config_path is not None:
             console.print(f"[bold]Config:[/bold] {config_path}")
         console.print(build_flops_table(report))
+
+        resolved_output_path = output_path
+        if resolved_output_path is None and config_path is not None:
+            results_dir = load_yaml_config(config_path).get("results_dir")
+            if results_dir:
+                resolved_output_path = Path(results_dir) / "flops.txt"
+
+        if resolved_output_path is not None:
+            device_suffix = "cpu" if report.device == "cpu" else "gpu"
+            # A multi-budget run writes one report per architecture, so the
+            # realized parameter count goes in the filename -- otherwise every
+            # budget would overwrite the previous one's report. A *single*
+            # budget keeps the plain name, so that per-budget results dirs stay
+            # discoverable by the existing flops-table scripts, which glob for
+            # flops_gpu.csv / flops.csv.
+            budget_suffix = ""
+            if report.budget is not None and len(budgets) > 1:
+                realized = report.measurements[0].params if report.measurements else 0
+                budget_suffix = f"_p{realized}"
+            resolved_output_path = resolved_output_path.with_name(
+                f"{resolved_output_path.stem}_{device_suffix}{budget_suffix}"
+                f"{resolved_output_path.suffix}"
+            )
+            write_flops_report(report, resolved_output_path)
+            csv_path = resolved_output_path.with_suffix(".csv")
+            write_flops_summary_csv(report, csv_path)
+            console.print(
+                f"[dim]FLOPs report written to {resolved_output_path} "
+                f"(summary: {csv_path})[/dim]"
+            )
+
+
+@app.command()
+def interference(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        file_okay=True,
+        dir_okay=False,
+        shell_complete=config_shell_complete,
+        help="Path to a pareto_* YAML config (must select an elastic supernet).",
+        rich_help_panel="Config",
+    ),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        help="Preprocessed dataset directory. Overrides YAML data_dir.",
+        rich_help_panel="Input/Output",
+    ),
+    budgets: list[float] | None = typer.Option(
+        None,
+        "--budget",
+        help=(
+            "Parameter budget to probe; repeat for several. Defaults to "
+            "--n-budgets values log-spaced across the supernet's range."
+        ),
+        rich_help_panel="Budgets",
+    ),
+    n_budgets: int = typer.Option(
+        7,
+        "--n-budgets",
+        help="How many log-spaced budgets to probe when --budget is not given.",
+        rich_help_panel="Budgets",
+    ),
+    n_batches: int = typer.Option(
+        8,
+        "--n-batches",
+        help=(
+            "Batches to average over. Each costs one forward/backward per "
+            "budget; at least 2 are needed for the noise floor."
+        ),
+        rich_help_panel="Runtime",
+    ),
+    checkpoint: Path | None = typer.Option(
+        None,
+        "--checkpoint",
+        file_okay=True,
+        dir_okay=False,
+        help=(
+            "Supernet weights to measure (.pth or .safetensors). Omit to measure "
+            "at initialization."
+        ),
+        rich_help_panel="Checkpointing",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Where to write the report. Defaults to <results_dir>/interference.",
+        rich_help_panel="Input/Output",
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        help="Override the config's batch size for the measurement.",
+        rich_help_panel="Runtime",
+    ),
+    num_workers: int = typer.Option(
+        8,
+        "--num-workers",
+        help="Dataloader workers.",
+        rich_help_panel="Runtime",
+    ),
+    precision: Precision | None = typer.Option(
+        None,
+        "--precision",
+        help="Numerical precision for the forward/backward passes.",
+        rich_help_panel="Runtime",
+    ),
+    split_file: Path | None = typer.Option(
+        None,
+        "--split-file",
+        help="Split JSON. Defaults to the config's.",
+        rich_help_panel="Input/Output",
+    ),
+    fold: int | None = typer.Option(
+        None,
+        "--fold",
+        help="Cross-validation fold.",
+        rich_help_panel="Input/Output",
+    ),
+    seed: int = typer.Option(
+        69,
+        "--seed",
+        help="Seed for batch sampling, so the measurement is reproducible.",
+        rich_help_panel="Runtime",
+    ),
+) -> None:
+    """Measure whether different parameter budgets fight over the shared weights.
+
+    Phase 5 of the Pareto-supernet plan. For every pair of budgets this reports
+    the cosine similarity of their segmentation-loss gradients, alongside two
+    controls that make the number interpretable: a per-budget noise floor (the
+    same architecture on a different batch) and the fraction of parameters the
+    two subnetworks actually share.
+    """
+    console = _get_cli_display().CONSOLE
+    workflows = _get_cli_workflows()
+
+    merged = workflows.build_train_merged_config(
+        config=config,
+        data_dir=data_dir,
+        art_dir=None,
+        trainer=None,
+        model=None,
+        loss=None,
+        custom_model_kwargs=None,
+        custom_loss_kwargs=None,
+        custom_trainer_kwargs=None,
+        split_file=split_file,
+        optimizer=None,
+        betas=None,
+        momentum=None,
+        nesterov=None,
+        amsgrad=None,
+        scheduler=None,
+        poly_total_iters=None,
+        poly_power=None,
+        warmuppoly_warmup_iters=None,
+        cosine_t_max=None,
+        cosine_eta_min=None,
+        step_step_size=None,
+        step_gamma=None,
+        multistep_milestones=None,
+        multistep_gamma=None,
+        plateau_mode=None,
+        plateau_factor=None,
+        plateau_patience=None,
+        transform_kind=None,
+        lr=None,
+        num_epochs=None,
+        validation_every=None,
+        batch_size=batch_size,
+        weight_decay=None,
+        num_workers=num_workers,
+        # Never relaunch under torchrun: the measurement is inherently
+        # single-process, and averaging gradients across ranks would destroy
+        # the per-budget comparison this command exists to make.
+        distributed=False,
+        nproc_per_node=None,
+        precision=precision,
+        compile=False,
+        resume=False,
+        try_resume=False,
+        seed=seed,
+        pretrain=None,
+        wandb_project=None,
+        wandb_entity=None,
+        wandb_mode="disabled",
+        wandb_run_name=None,
+        dataset_type=None,
+        push_to_hf=False,
+        hf_repo=None,
+        fold=fold,
+    )
+
+    output = workflows.run_interference_from_merged(
+        merged,
+        budgets=list(budgets) if budgets else None,
+        n_budgets=n_budgets,
+        n_batches=n_batches,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
+    )
+    console.print(f"[bold green]Interference report written to[/bold green] {output}")

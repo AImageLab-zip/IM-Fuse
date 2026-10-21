@@ -244,16 +244,20 @@ class MambaVitAKDLoss:
         if include_fuse:
             student_total = student_total + (self.fuse_weight * fuse["total"])
 
-        teacher_fuse = (
-            self._branch_loss(fuse_pred_t, target) if include_fuse else {"total": zero}
-        )
-        teacher_sep = self._multi_branch_loss(sep_preds_t, target)
-        teacher_prm = self._multi_branch_loss(prm_preds_t, target)
-        teacher_total = (
-            self.prm_weight * teacher_prm["total"]
-            + self.sep_weight * teacher_sep["total"]
-            + (self.fuse_weight * teacher_fuse["total"] if include_fuse else zero)
-        )
+        if sep_preds_t:
+            teacher_fuse = (
+                self._branch_loss(fuse_pred_t, target) if include_fuse else {"total": zero}
+            )
+            teacher_sep = self._multi_branch_loss(sep_preds_t, target)
+            teacher_prm = self._multi_branch_loss(prm_preds_t, target)
+            teacher_total = (
+                self.prm_weight * teacher_prm["total"]
+                + self.sep_weight * teacher_sep["total"]
+                + (self.fuse_weight * teacher_fuse["total"] if include_fuse else zero)
+            )
+        else:
+            # Frozen teacher (run without its per-modality decoders): nothing left to train on it.
+            teacher_total = zero
 
         kd_loss = softmax_kl_loss(
             logits / self.temperature, logits_t.detach() / self.temperature

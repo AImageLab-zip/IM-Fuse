@@ -144,7 +144,7 @@ def test_packaged_shaspec_configs_use_shaspec_training_contract(config_name: str
     assert config["model"] == "shaspec"
     assert config["loss"] == "shaspec"
     assert config["custom_trainer_kwargs"]["patch_size"] == 80
-    assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
+    assert config["custom_trainer_kwargs"]["transform_kind"] == "shaspec"
     assert config["scheduler"] == "poly"
     assert config["optimizer"] == "sgd"
     assert config["nesterov"] is True

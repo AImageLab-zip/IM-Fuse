@@ -31,6 +31,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from mimose.datasets import DatasetType
+from mimose.enums import Precision
 from mimose.checkpoints import load_weights_only_checkpoint, save_weights_only_checkpoint
 from mimose.training.config import OptimizerConfig, SchedulerConfig
 from mimose.training.trainers.abstract_trainer import AbstractTrainer
@@ -51,6 +52,8 @@ CONSOLE = Console()
 # would make the penalty (and therefore average HD95) inconsistent. Mirrors
 # mimose.testing.pipeline.BRATS_HD95_PENALTY.
 BRATS_FULL_VOLUME_SHAPE = (182, 218, 182)
+DEFAULT_GRAD_CLIP_NORM = 12.0
+MAX_CONSECUTIVE_NONFINITE_STEPS = 20
 BRATS_HD95_PENALTY = float(np.sqrt(sum(dim**2 for dim in BRATS_FULL_VOLUME_SHAPE)))
 
 
@@ -72,7 +75,7 @@ class BaseTrainer(AbstractTrainer):
         validation_every: int = 1,
         batch_size: int | None = None,
         num_workers: int | None = None,
-        fp16: bool = False,
+        precision: str | Precision = Precision.FP32,
         compile: bool = False,
         resume: bool = False,
         try_resume: bool = False,
@@ -99,7 +102,7 @@ class BaseTrainer(AbstractTrainer):
             validation_every=validation_every,
             batch_size=batch_size,
             num_workers=num_workers,
-            fp16=fp16,
+            precision=precision,
             compile=compile,
             resume=resume,
             try_resume=try_resume,
@@ -121,8 +124,15 @@ class BaseTrainer(AbstractTrainer):
         self.device = self._resolve_device()
         self.best_val_dice = getattr(self, "best_val_dice", float("-inf"))
         self._train_iterator = getattr(self, "_train_iterator", None)
-        self.amp_enabled = self.fp16 and self.device.type == "cuda"
-        self.grad_scaler = GradScaler("cuda", enabled=self.amp_enabled)
+        shared_kwargs = self.custom_trainer_kwargs or {}
+        clip = shared_kwargs.get("grad_clip_norm", DEFAULT_GRAD_CLIP_NORM)
+        self.grad_clip_norm = None if clip is None else float(clip)
+        self.skip_nonfinite_loss = bool(shared_kwargs.get("skip_nonfinite_loss", False))
+        self.nonfinite_steps_skipped = 0
+        self._consecutive_nonfinite_steps = 0
+        self.amp_enabled = self.precision != Precision.FP32 and self.device.type == "cuda"
+        self.use_grad_scaler = self.precision == Precision.FP16 and self.device.type == "cuda"
+        self.grad_scaler = GradScaler("cuda", enabled=self.use_grad_scaler)
         self.resume = self._resolve_resume_path(
             self.resume_requested or self.try_resume_requested,
             strict=self.resume_requested,
@@ -545,7 +555,7 @@ class BaseTrainer(AbstractTrainer):
             wandb_init_kwargs["entity"] = self.wandb_entity
         if self.resume is not None and run_id is not None:
             wandb_init_kwargs["id"] = run_id
-            wandb_init_kwargs["resume"] = "must"
+            wandb_init_kwargs["resume"] = "allow"
 
         try:
             self.wandb_run = wandb.init(
@@ -586,7 +596,7 @@ class BaseTrainer(AbstractTrainer):
         suggestions = [
             "reduce --batch-size",
             "reduce patch/crop size in the trainer or preprocessing",
-            "enable --fp16 if your model/path supports it",
+            "enable --precision fp16 or --precision bf16 if your model/path supports it",
             "use a smaller model or fewer workers if host memory pressure contributes",
         ]
         message = (
@@ -619,6 +629,8 @@ class BaseTrainer(AbstractTrainer):
         current_lr = self._current_lr()
         if current_lr is not None:
             payload["lr"] = current_lr
+        if self.skip_nonfinite_loss:
+            payload["train/nonfinite_steps_skipped"] = self.nonfinite_steps_skipped
 
         self.wandb_run.log(payload)
 
@@ -630,7 +642,7 @@ class BaseTrainer(AbstractTrainer):
             "validation_every": self.validation_every,
             "batch_size": self.batch_size,
             "num_workers": self.num_workers,
-            "fp16": self.fp16,
+            "precision": str(self.precision),
             "compile": self.compile,
             "seed": self.seed,
             "custom_trainer_kwargs": dict(self.custom_trainer_kwargs),
@@ -828,7 +840,7 @@ class BaseTrainer(AbstractTrainer):
         table.add_row("Model", f"{model_name}  [dim]({loss_name})[/dim]")
         table.add_row(
             "Runtime",
-            f"{distribution} on {self.device}  [dim]fp16={self.fp16} compile={self.compile}[/dim]",
+            f"{distribution} on {self.device}  [dim]precision={self.precision} compile={self.compile}[/dim]",
         )
         table.add_row(
             "Schedule",
@@ -836,7 +848,15 @@ class BaseTrainer(AbstractTrainer):
             f"validate every {self.validation_every}[/dim]",
         )
         table.add_row("Batch", f"per-rank {per_rank_batch}  [dim]global {global_batch}[/dim]")
-        table.add_row("Workers", str(self.num_workers))
+        per_rank_workers = self.num_workers if self.num_workers is not None else "?"
+        global_workers = (
+            self.num_workers * self.world_size
+            if self.num_workers is not None
+            else "?"
+        )
+        table.add_row(
+            "Workers", f"per-rank {per_rank_workers}  [dim]global {global_workers}[/dim]"
+        )
         table.add_row("Resume", resume_text)
         table.add_row("Seed", str(self.seed) if self.seed is not None else "none")
         table.add_row("W&B", wandb_text)
@@ -943,9 +963,10 @@ class BaseTrainer(AbstractTrainer):
             nested_sampler.set_epoch(epoch)
 
     def _autocast_context(self) -> Any:
+        amp_dtype = torch.bfloat16 if self.precision == Precision.BF16 else torch.float16
         return autocast(
             device_type=self.device.type,
-            dtype=torch.float16,
+            dtype=amp_dtype,
             enabled=self.amp_enabled,
         )
 
@@ -954,14 +975,63 @@ class BaseTrainer(AbstractTrainer):
             raise RuntimeError("optimizer must be initialized before backward/step")
 
         self.optimizer.zero_grad()
-        if self.amp_enabled:
+        if self.skip_nonfinite_loss and not bool(torch.isfinite(loss.detach()).all()):
+            self._record_nonfinite_step()
+            return
+
+        if self.use_grad_scaler:
             self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.unscale_(self.optimizer)
+            self._clip_gradients()
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
+            self._consecutive_nonfinite_steps = 0
             return
 
         loss.backward()
+        self._clip_gradients()
+        if self.skip_nonfinite_loss and not self._gradients_finite():
+            self.optimizer.zero_grad()
+            self._record_nonfinite_step()
+            return
         self.optimizer.step()
+        self._consecutive_nonfinite_steps = 0
+
+    def _clip_gradients(self) -> None:
+        if self.grad_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
+
+    def _gradients_finite(self) -> bool:
+        return all(
+            bool(torch.isfinite(p.grad).all())
+            for p in self.model.parameters()
+            if p.grad is not None
+        )
+
+    def _record_nonfinite_step(self) -> None:
+        self.nonfinite_steps_skipped += 1
+        self._consecutive_nonfinite_steps += 1
+        if self._consecutive_nonfinite_steps >= MAX_CONSECUTIVE_NONFINITE_STEPS:
+            raise RuntimeError(
+                f"{self._consecutive_nonfinite_steps} consecutive non-finite losses/gradients; aborting"
+            )
+
+    def _reset_param_group_lrs(self, lrs: list[float] | None = None) -> None:
+        """Restore each param group's lr (and initial_lr) before rebuilding a scheduler at a phase switch.
+
+        Chainable torch schedulers start from the current group['lr'], so rebuilding one after a
+        schedule decayed to 0 would otherwise keep training at lr 0.
+        """
+        if self.optimizer is None:
+            raise RuntimeError("optimizer must be initialized before resetting learning rates")
+        groups = self.optimizer.param_groups
+        if lrs is None:
+            lrs = [group.get("initial_lr", group["lr"]) for group in groups]
+        if len(lrs) != len(groups):
+            raise ValueError(f"expected {len(groups)} learning rates, got {len(lrs)}")
+        for group, lr in zip(groups, lrs):
+            group["lr"] = float(lr)
+            group["initial_lr"] = float(lr)
 
     def _load_pretrain(self) -> None:
         if self.pretrain is None:

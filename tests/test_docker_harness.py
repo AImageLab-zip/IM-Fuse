@@ -151,9 +151,9 @@ print(tuple(output.shape))
     assert completed.stdout.strip() == "(1, 4, 16, 16, 16)"
 
 
-def test_run_module_wires_resolved_package_into_run_testing(monkeypatch, tmp_path: Path) -> None:
+def test_run_module_wires_resolved_package_into_testing_loop(monkeypatch, tmp_path: Path) -> None:
     import harness.run as harness_run
-    import mimose.testing as testing_mod
+    import harness.testing_loop as testing_loop_mod
 
     fake_resolved = {
         "manifest": {"mimose_version": "0.0.2", "model_class": "pkg.Model", "run_suffix": "fold1"},
@@ -166,11 +166,11 @@ def test_run_module_wires_resolved_package_into_run_testing(monkeypatch, tmp_pat
 
     captured: dict[str, object] = {}
 
-    def fake_run_testing(**kwargs):
+    def fake_run_testing_loop(**kwargs):
         captured.update(kwargs)
         return kwargs["output_path"]
 
-    monkeypatch.setattr(testing_mod, "run_testing", fake_run_testing)
+    monkeypatch.setattr(testing_loop_mod, "run_testing_loop", fake_run_testing_loop)
 
     output_dir = tmp_path / "output"
     harness_run.main(

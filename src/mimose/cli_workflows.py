@@ -19,6 +19,7 @@ from mimose.enums import (
     ModelKind,
     NormMode,
     OptimizerKind,
+    Precision,
     SchedulerKind,
     TransformKind,
     TrainerKind,
@@ -216,7 +217,7 @@ def build_train_merged_config(
     num_workers: int,
     distributed: bool | None,
     nproc_per_node: int | None,
-    fp16: bool | None,
+    precision: Precision | None,
     compile: bool | None,
     resume: bool,
     try_resume: bool,
@@ -231,6 +232,7 @@ def build_train_merged_config(
     run_suffix: str | None = None,
     fold: int | None = None,
     wandb_entity: str | None = None,
+    nnodes: int | None = None,
 ) -> dict[str, object]:
     from mimose.training.config import parse_kv_list
     from mimose.utils.cli_overrides import KFOLD_SPLIT_FILENAME
@@ -292,7 +294,8 @@ def build_train_merged_config(
         num_workers=num_workers,
         distributed=distributed,
         nproc_per_node=nproc_per_node,
-        fp16=fp16,
+        nnodes=nnodes,
+        precision=precision,
         compile=compile,
         resume=resume,
         try_resume=try_resume,
@@ -396,7 +399,7 @@ def build_push_merged_config(
         num_workers=num_workers,
         distributed=False,
         nproc_per_node=None,
-        fp16=None,
+        precision=None,
         compile=None,
         resume=False,
         try_resume=False,
@@ -438,12 +441,119 @@ def maybe_relaunch_distributed(merged: dict[str, object]) -> None:
             "--nproc-per-node must be > 0",
             param_hint="--nproc-per-node",
         )
-    relaunch_with_torchrun(resolved_nproc_per_node)
+
+    resolved_nnodes = merged.get("nnodes")
+    if resolved_nnodes is not None:
+        resolved_nnodes = int(resolved_nnodes)
+        if resolved_nnodes <= 0:
+            raise typer.BadParameter(
+                "--nnodes must be > 0",
+                param_hint="--nnodes",
+            )
+    relaunch_with_torchrun(resolved_nproc_per_node, resolved_nnodes)
 
 
 def run_train_from_merged(merged: dict[str, object]) -> None:
     trainer_instance = _build_trainer_instance_from_merged(merged)
     trainer_instance.fit()
+
+
+def run_interference_from_merged(
+    merged: dict[str, object],
+    *,
+    budgets: list[float] | None,
+    n_budgets: int,
+    n_batches: int,
+    checkpoint: Path | None,
+    output_dir: Path | None,
+) -> Path:
+    """Phase 5: measure pairwise gradient agreement between budgets.
+
+    Reuses the training pipeline wholesale -- the same model, loss, transforms
+    and data loader -- so the gradients measured here are the gradients the
+    supernet would actually be trained on.
+    """
+    import math
+
+    from mimose.nas.interference import measure_gradient_interference
+    from mimose.nas.report import write_interference_report
+
+    console = Console()
+    trainer_instance = _build_trainer_instance_from_merged(merged)
+    model = trainer_instance._model_for_state()
+
+    if not hasattr(model, "gates"):
+        raise typer.BadParameter(
+            "gradient interference requires an elastic supernet; got "
+            f"{type(model).__name__}. Use a pareto_* config.",
+            param_hint="--config",
+        )
+
+    if checkpoint is not None:
+        _load_interference_checkpoint(trainer_instance, checkpoint, console)
+
+    if budgets:
+        resolved_budgets = sorted(float(b) for b in budgets)
+    else:
+        # Log-spaced across the supernet's own range: sampling linearly would
+        # cluster every probe at the wide end.
+        low = math.log(float(model.gates.budget_min))
+        high = math.log(float(model.gates.budget_max))
+        resolved_budgets = [
+            math.exp(low + (high - low) * index / (n_budgets - 1))
+            for index in range(n_budgets)
+        ]
+
+    console.print(
+        f"[bold cyan]Gradient interference[/bold cyan]  "
+        f"{len(resolved_budgets)} budgets x {n_batches} batches"
+    )
+
+    with console.status("[bold cyan]Measuring gradients[/bold cyan]") as status:
+
+        def _progress(done: int, total: int) -> None:
+            status.update(
+                f"[bold cyan]Measuring gradients[/bold cyan]  batch {done}/{total}"
+            )
+
+        result = measure_gradient_interference(
+            trainer_instance,
+            resolved_budgets,
+            n_batches=n_batches,
+            progress_callback=_progress,
+        )
+
+    resolved_output = (
+        Path(output_dir)
+        if output_dir is not None
+        else Path(str(merged.get("results_dir", "."))) / "interference"
+    )
+    return write_interference_report(result, resolved_output, console=console)
+
+
+def _load_interference_checkpoint(
+    trainer_instance: object,
+    checkpoint: Path,
+    console: Console,
+) -> None:
+    """Load supernet weights for the measurement, from either checkpoint format."""
+    from mimose.checkpoints import load_weights_only_checkpoint
+
+    path = Path(checkpoint)
+    if not path.is_file():
+        raise typer.BadParameter(
+            f"checkpoint not found: {path}", param_hint="--checkpoint"
+        )
+
+    if path.suffix == ".safetensors":
+        load_weights_only_checkpoint(
+            trainer_instance._model_for_state(),
+            path,
+            device=trainer_instance.device,
+        )
+    else:
+        trainer_instance.load_checkpoint(path)
+    console.print(f"[green]Loaded weights from[/green] {path}")
 
 
 def _resolve_push_checkpoint_path(merged: dict[str, object]) -> Path:
@@ -519,7 +629,7 @@ def build_export_merged_config(
         num_workers=num_workers,
         distributed=False,
         nproc_per_node=None,
-        fp16=None,
+        precision=None,
         compile=None,
         resume=False,
         try_resume=False,
@@ -600,8 +710,8 @@ def run_export_from_merged(merged: dict[str, object]) -> Path:
     )
 
 
-# Cross-validation folds trained by allsbatcher18.sh / allsbatcher23.sh for every model.
-PUSH_ALL_FOLDS: tuple[int, ...] = (1, 3, 5)
+# All five cross-validation folds; folds 2/4 were trained separately from allsbatcher18.sh / allsbatcher23.sh.
+PUSH_ALL_FOLDS: tuple[int, ...] = (1, 2, 3, 4, 5)
 
 # Fold whose checkpoint is re-uploaded a second time under the run's unsuffixed name, so
 # testers (e.g. `mimose test --online` with no --run-suffix) can grab a default checkpoint.
@@ -679,6 +789,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         build_model_config,
     )
     from mimose.training.trainers import (
+        AdaMMTrainer,
         DCSegTrainer,
         IMFuseTrainer,
         IMS2TransTrainer,
@@ -691,6 +802,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         MCPLTrainer,
         MIFPNTrainer,
         MSTKDTrainer,
+        NAPSCAFTrainer,
+        ParetoTrainer,
         RFLTrainer,
         RobustSegTrainer,
         ShaSpecTrainer,
@@ -727,6 +840,9 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MANYMIMOSASKD: ManyMimosasKDTrainer,
         TrainerKind.MCPL: MCPLTrainer,
         TrainerKind.MAMBAVITAKD: MambaVitAKDTrainer,
+        TrainerKind.PARETO: ParetoTrainer,
+        TrainerKind.ADAMM: AdaMMTrainer,
+        TrainerKind.NAPSCAF: NAPSCAFTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -753,6 +869,9 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MANYMIMOSASKD: TrainingModelKind.MANYMIMOSASKD,
         TrainerKind.MCPL: TrainingModelKind.MCPL,
         TrainerKind.MAMBAVITAKD: TrainingModelKind.MAMBAVITAKD,
+        TrainerKind.PARETO: TrainingModelKind.ELASTICUNET,
+        TrainerKind.ADAMM: TrainingModelKind.ADAMM,
+        TrainerKind.NAPSCAF: TrainingModelKind.NAPSCAF,
     }
     default_loss_map = {
         TrainerKind.UHVED: "uhved",
@@ -770,6 +889,9 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MANYMIMOSASKD: "manymimosaskd",
         TrainerKind.MCPL: "mcpl",
         TrainerKind.MAMBAVITAKD: "mambavitakd",
+        TrainerKind.PARETO: "tinymimosa",
+        TrainerKind.ADAMM: "adamm",
+        TrainerKind.NAPSCAF: "napscaf",
     }
     default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)
     default_loss = default_loss_map.get(trainer_kind, "imfuse")
@@ -858,7 +980,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         validation_every=int(_merged_value(merged, "validation_every", 1)),
         batch_size=int(merged.get("batch_size", 1)),
         num_workers=int(merged.get("num_workers", 8)),
-        fp16=bool(merged.get("fp16", False)),
+        precision=Precision(merged.get("precision", Precision.FP32)),
         compile=bool(merged.get("compile", False)),
         resume=bool(merged.get("resume", False)),
         try_resume=bool(merged.get("try_resume", False)),

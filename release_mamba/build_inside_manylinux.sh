@@ -20,23 +20,67 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 python -c "import torch; print('torch', torch.__version__)"
+
+# `uv venv` doesn't install pip into the venv (not even the module), so a bare
+# `pip` on PATH would silently fall through to whatever pip the container
+# image provides globally -- a different Python/torch/toolchain entirely
+# (this is why earlier builds produced a cp311 wheel despite this venv being
+# 3.12, and pulled in a mismatched glibc). Bootstrap pip here and call it only
+# via `python -m pip` below so every build step unambiguously uses this venv.
+python -m ensurepip
 # packaging/setuptools/wheel already come with torch's env; ninja speeds up the
 # build and is a pure PyPI package (unlike torch, PyPI itself is reachable here).
-pip install --quiet ninja setuptools wheel
+python -m pip install --quiet ninja setuptools wheel
 
 CUDA_HOME="$(ls -d /usr/local/cuda-12.8 2>/dev/null || ls -d /usr/local/cuda)"
 export CUDA_HOME
 export PATH="${CUDA_HOME}/bin:${PATH}"
-export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+# srun/pyxis forwards the submitting shell's environment into the container
+# unsanitized. On this cluster that shell's LD_LIBRARY_PATH includes the host's
+# own glibc (/usr/lib/x86_64-linux-gnu, newer than manylinux_2_28's baseline);
+# ld consults LD_LIBRARY_PATH as a link-time search fallback too, so leaving it
+# in place lets the extensions link against host glibc symbols (e.g. GLIBC_2.32)
+# and fail the manylinux_2_28 check below. Start clean instead of appending.
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64"
+unset LIBRARY_PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH
 
 echo "Using CUDA_HOME=${CUDA_HOME}"
 nvcc --version
+echo "gcc: $(command -v gcc) ($(gcc -dumpversion))"
+echo "g++: $(command -v g++) ($(g++ -dumpversion))"
+echo "ld:  $(command -v ld) ($(ld --version | { head -1 || true; }))"
+ldd --version | { head -1 || true; }
 
 # Compile the __libc_single_threaded shim (see glibc_compat_shim.c) with the
-# same compiler that will link the extensions, and feed it in via LDFLAGS -
-# distutils/setuptools append $LDFLAGS to the final link command, so this
-# gets pulled into both packages' .so files without patching their setup.py.
+# same compiler that will link the extensions.
 gcc -c -fPIC -o glibc_compat_shim.o glibc_compat_shim.c
+
+# torch's cpp_extension builds these packages via ninja (installed above),
+# which constructs its own link command and does NOT reliably forward the
+# shell's $LDFLAGS the way plain distutils/setuptools does -- so the shim
+# object above was silently dropped from the final link despite LDFLAGS.
+# CC/CXX, on the other hand, are read by both the ninja and distutils build
+# paths (they need it just to know what compiler to invoke at all), so wrap
+# the real compilers to unconditionally append the shim object to every
+# invocation instead. Passing an extra .o file to a compile-only (`-c`)
+# invocation is harmless (gcc just warns it's unused), so this is safe to
+# apply blindly to every compile *and* link call.
+REAL_CC="$(command -v gcc)"
+REAL_CXX="$(command -v g++)"
+WRAPPER_DIR="${PWD}/cc_wrappers"
+mkdir -p "${WRAPPER_DIR}"
+cat > "${WRAPPER_DIR}/cc" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_CC}" "\$@" "${PWD}/glibc_compat_shim.o"
+EOF
+cat > "${WRAPPER_DIR}/cxx" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_CXX}" "\$@" "${PWD}/glibc_compat_shim.o"
+EOF
+chmod +x "${WRAPPER_DIR}/cc" "${WRAPPER_DIR}/cxx"
+export CC="${WRAPPER_DIR}/cc"
+export CXX="${WRAPPER_DIR}/cxx"
+# Keep LDFLAGS too, in case any step does honor it -- harmless either way.
 export LDFLAGS="${PWD}/glibc_compat_shim.o ${LDFLAGS:-}"
 
 WHEELHOUSE="wheelhouse"
@@ -54,8 +98,8 @@ for f in "${CAUSAL_SDIST}" "${MAMBA_SDIST}"; do
     fi
 done
 
-pip wheel "${CAUSAL_SDIST}" --no-build-isolation --no-deps -w "${WHEELHOUSE}"
-pip wheel "${MAMBA_SDIST}" --no-build-isolation --no-deps -w "${WHEELHOUSE}"
+python -m pip wheel "${CAUSAL_SDIST}" --no-build-isolation --no-deps -w "${WHEELHOUSE}"
+python -m pip wheel "${MAMBA_SDIST}" --no-build-isolation --no-deps -w "${WHEELHOUSE}"
 
 echo
 echo "Built wheels:"
@@ -70,6 +114,8 @@ for whl in "${WHEELHOUSE}"/causal_conv1d-*.whl "${WHEELHOUSE}"/mamba_ssm-*.whl; 
     find "${tmpdir}" -name '*.so' -print0 | while IFS= read -r -d '' so; do
         echo "-- ${so}"
         objdump -T "${so}" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -3
+        echo "   symbols pulling in glibc > 2.28:"
+        objdump -T "${so}" 2>/dev/null | grep -E 'GLIBC_2\.(29|3[0-9])' | awk '{print "   " $NF}' | sort -u
     done
     if objdump -T $(find "${tmpdir}" -name '*.so') 2>/dev/null | grep -oE 'GLIBC_2\.(29|3[0-9])' >/dev/null; then
         echo "!! ${whl} still references glibc > 2.28"

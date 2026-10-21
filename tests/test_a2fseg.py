@@ -118,7 +118,7 @@ def test_packaged_a2fseg_configs_use_imfuse_training_contract(config_name: str) 
     assert config["loss"] == "imfuse"
     assert config["lr"] == 0.01
     assert config["num_epochs"] == 300
-    assert config["fp16"] is True
+    assert config["precision"] == "fp16"
     assert config["seed"] == 999
     assert config["crop_min_size"] == (128, 128, 128)
     assert config["custom_trainer_kwargs"]["patch_size"] == 80

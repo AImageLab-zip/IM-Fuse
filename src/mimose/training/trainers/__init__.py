@@ -1,4 +1,5 @@
 from mimose.training.trainers.abstract_trainer import AbstractTrainer
+from mimose.training.trainers.adamm import AdaMMTrainer
 from mimose.training.trainers.base_trainer import BaseTrainer
 from mimose.training.trainers.dcseg import DCSegTrainer
 from mimose.training.trainers.imfuse import IMFuseTrainer
@@ -12,6 +13,8 @@ from mimose.training.trainers.many_mimosas_kd import ManyMimosasKDTrainer
 from mimose.training.trainers.mcpl import MCPLTrainer
 from mimose.training.trainers.mifpn import MIFPNTrainer
 from mimose.training.trainers.mstkdnet import MSTKDTrainer
+from mimose.training.trainers.napscaf import NAPSCAFTrainer
+from mimose.training.trainers.pareto import ParetoTrainer
 from mimose.training.trainers.rfl import RFLTrainer
 from mimose.training.trainers.robustseg import RobustSegTrainer
 from mimose.training.trainers.shaspec import ShaSpecTrainer
@@ -21,6 +24,7 @@ from mimose.training.trainers.uhved import UHVEDTrainer
 
 __all__ = [
     "AbstractTrainer",
+    "AdaMMTrainer",
     "BaseTrainer",
     "DCSegTrainer",
     "IMFuseTrainer",
@@ -34,6 +38,8 @@ __all__ = [
     "MCPLTrainer",
     "MIFPNTrainer",
     "MSTKDTrainer",
+    "NAPSCAFTrainer",
+    "ParetoTrainer",
     "RFLTrainer",
     "RobustSegTrainer",
     "ShaSpecTrainer",

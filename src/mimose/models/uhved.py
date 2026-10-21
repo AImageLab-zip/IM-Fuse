@@ -17,15 +17,14 @@ DATASET_MODALITY_ORDER = (1, 0, 3, 2)
 
 
 def initialize_weights(model: nn.Module) -> None:
-    for name, param in model.named_parameters():
-        if "weight" in name:
-            torch.nn.init.trunc_normal_(
-                param,
-                mean=0.0,
-                std=(2.0 / _prod(param.shape[:-1])) ** 0.5,
-            )
-        elif "bias" in name:
-            nn.init.zeros_(param)
+    """NiftyNet ``he_normal`` for convolutions (truncated normal, std sqrt(2 / fan_in) with
+    fan_in = in_channels * prod(kernel)); norm layers keep gamma = 1 and beta = 0."""
+    for module in model.modules():
+        if isinstance(module, (nn.Conv3d, nn.ConvTranspose3d, nn.Linear)):
+            fan_in = _prod(module.weight.shape[1:])
+            torch.nn.init.trunc_normal_(module.weight, mean=0.0, std=(2.0 / fan_in) ** 0.5)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
 
 def _prod(shape: torch.Size) -> float:
@@ -228,9 +227,12 @@ class UHVED(AbstractModel):
         Segmentation". MICCAI 2015.
     """
 
-    def __init__(self, num_cls: int = 4) -> None:
+    def __init__(self, num_cls: int = 4, test_time_samples: int = 0) -> None:
         super().__init__()
         self.num_cls = num_cls
+        # 0 decodes the posterior mean; N > 0 averages N decoded posterior samples (the paper uses 10,
+        # the released code decodes a single sample).
+        self.test_time_samples = int(test_time_samples)
 
         self.t1_encoder = ConvEncoder()
         self.t1ce_encoder = ConvEncoder()
@@ -288,20 +290,17 @@ class UHVED(AbstractModel):
             for i in range(len(t1_param))
         ]
 
-        is_inference = not self.is_training
-        skip_flow = [
-            self.approximate_sampler(
-                level["mu"],
-                level["logvar"],
-                self.mod_img,
-                mask,
-                is_inference=is_inference,
-            )
-            for level in post_param
-        ]
-
         if not self.is_training:
-            return self.seg_decoder(skip_flow, use_softmax=True)
+            if self.test_time_samples <= 0:
+                skip_flow = self._sample_skips(post_param, mask, use_mean=True)
+                return self.seg_decoder(skip_flow, use_softmax=True)
+            prediction = None
+            for _ in range(self.test_time_samples):
+                sample_pred = self.seg_decoder(self._sample_skips(post_param, mask, use_mean=False), use_softmax=True)
+                prediction = sample_pred if prediction is None else prediction + sample_pred
+            return prediction / self.test_time_samples
+
+        skip_flow = self._sample_skips(post_param, mask, use_mean=False)
 
         outputs = {
             "T1": self.t1_decoder(skip_flow),
@@ -312,6 +311,14 @@ class UHVED(AbstractModel):
             "images": images,
         }
         return outputs, post_param
+
+    def _sample_skips(
+        self, post_param: list[dict[str, dict[str, torch.Tensor]]], mask: torch.Tensor, *, use_mean: bool
+    ) -> list[torch.Tensor]:
+        return [
+            self.approximate_sampler(level["mu"], level["logvar"], self.mod_img, mask, is_inference=use_mean)
+            for level in post_param
+        ]
 
     def predict(self, images: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         was_training = self.is_training

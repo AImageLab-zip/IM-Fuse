@@ -74,6 +74,7 @@ def test_build_export_package_writes_manifest_config_weights_and_pyz(tmp_path: P
         assert "mimose/models/abstract_model.py" in pyz_names
         assert "mimose/cli.py" in pyz_names
         assert not any("__pycache__" in name for name in pyz_names)
+        assert not any(name.startswith("mimose/testing/") for name in pyz_names)
 
 
 def test_exported_pyz_is_self_contained_and_predict_works(tmp_path: Path) -> None:
@@ -127,6 +128,50 @@ print(tuple(output.shape))
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "(1, 4, 16, 16, 16)"
+
+
+def test_exported_pyz_does_not_bundle_testing_loop(tmp_path: Path) -> None:
+    """`mimose.testing` (the mask-sweep/Dice/HD95 scoring loop) must never
+    ship inside a `.mimosepkg` -- see `docker/harness/testing_loop.py` for
+    the harness-local copy that runs outside the package instead."""
+    model = _build_test_model()
+    checkpoint_path = tmp_path / "final_weights_only.safetensors"
+    save_weights_only_checkpoint(model, checkpoint_path)
+    output_path = tmp_path / "tinymimosa.mimosepkg"
+    build_export_package(model, checkpoint_path, output_path)
+
+    with zipfile.ZipFile(output_path) as zf:
+        pyz_bytes = zf.read("code/mimose.pyz")
+
+    pyz_path = tmp_path / "mimose.pyz"
+    pyz_path.write_bytes(pyz_bytes)
+
+    script = f"""
+import sys
+
+repo_src = {str(Path(__file__).resolve().parents[1] / "src")!r}
+sys.path = [p for p in sys.path if p != repo_src]
+sys.path.insert(0, {str(pyz_path)!r})
+
+import mimose
+assert mimose.__file__.startswith({str(pyz_path)!r}), mimose.__file__
+
+try:
+    import mimose.testing  # noqa: F401
+except ModuleNotFoundError:
+    print("OK")
+else:
+    print("UNEXPECTEDLY IMPORTABLE")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "OK"
 
 
 def _write_export_config(path: Path, *, data_dir: Path) -> None:

@@ -7,6 +7,7 @@ from mimose.training.transforms.imfuse import (
     IMFuseTransformManager,
     TinyMimosaTransformManager,
 )
+from mimose.training.transforms.shaspec import ShaSpecTransformManager
 
 
 def _resolve_int_tuple(
@@ -50,6 +51,9 @@ def build_transform_manager(
             ),
         )
 
+    if resolved_kind == TransformKind.SHASPEC:
+        return ShaSpecTransformManager(crop_size=crop_size or (80, 80, 80))
+
     raise ValueError(f"Unsupported transform kind: {kind}")
 
 
@@ -57,6 +61,7 @@ __all__ = [
     "TransformManager",
     "IMFuseTransformManager",
     "TinyMimosaTransformManager",
+    "ShaSpecTransformManager",
     "TransformKind",
     "build_transform_manager",
 ]

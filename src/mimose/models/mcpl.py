@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,13 +71,25 @@ class ConvBN(nn.Module):
         act: str | None = None,
         conv_type: str = "3d",
         norm_init: float = 1.0,
+        padding: int = 0,
+        groups: int = 1,
+        conv_init: str = "he_normal",
     ) -> None:
         super().__init__()
         conv_cls = nn.Conv1d if conv_type == "1d" else nn.Conv3d
-        self.conv = conv_cls(in_channels, out_channels, kernel_size=kernel_size, bias=bias)
+        self.conv = conv_cls(
+            in_channels, out_channels, kernel_size=kernel_size, padding=padding, groups=groups, bias=bias
+        )
         self.norm = get_norm(norm, out_channels)
         self.act = get_activation(act)
-        trunc_normal_(self.conv.weight, std=0.02)
+        if conv_init == "he_normal":
+            trunc_normal_(self.conv.weight, std=math.sqrt(2.0 / in_channels))
+        elif conv_init == "xavier_uniform":
+            nn.init.xavier_uniform_(self.conv.weight)
+        elif conv_init == "trunc_normal":
+            trunc_normal_(self.conv.weight, std=0.02)
+        else:
+            raise ValueError(f"Unknown conv_init {conv_init!r}")
         if bias:
             nn.init.zeros_(self.conv.bias)
         if norm is not None:
@@ -120,7 +134,15 @@ class KMaXPredictor(nn.Module):
     def __init__(self, in_channel_pixel: int, nums_q: int) -> None:
         super().__init__()
         self._pixel_space_head_conv0bnact = ConvBN(
-            in_channel_pixel, in_channel_pixel, kernel_size=1, bias=False, norm="bn", act="gelu"
+            in_channel_pixel,
+            in_channel_pixel,
+            kernel_size=5,
+            padding=2,
+            groups=in_channel_pixel,
+            bias=False,
+            norm="bn",
+            act="gelu",
+            conv_init="xavier_uniform",
         )
         self._pixel_space_head_conv1bnact = ConvBN(in_channel_pixel, 256, kernel_size=1, bias=False, norm="bn", act="gelu")
         self._pixel_space_head_last_convbn = ConvBN(256, 128, kernel_size=1, bias=True, norm="bn", act=None)
@@ -329,16 +351,29 @@ class MCPL(AbstractModel):
     ``BaseTrainer``'s shared evaluation utilities.
     """
 
-    def __init__(self, num_cls: int = 4, cc_modalities: int = 4, layers: int = 6) -> None:
+    def __init__(
+        self,
+        num_cls: int = 4,
+        cc_modalities: int = 4,
+        layers: int = 6,
+        learnable_filler: bool = False,
+        logit_scale: float = 1.0,
+    ) -> None:
         super().__init__()
         self.num_cls = num_cls
+        # Upstream fills missing modalities with a frozen all-zero `limage` (Unet_kmaxT.py:425).
+        self.learnable_filler = learnable_filler
+        # Multiplier on the [-1, 1] voxel-prototype cosines before the softmax (1.0 = upstream scale).
+        self.logit_scale = float(logit_scale)
         self.cc_modalities = cc_modalities
         self.cc_classes = num_cls
         self.nums_q = cc_modalities * num_cls
 
-        self.limage = nn.Parameter(
-            torch.randn(1, num_modals, input_patch_size, input_patch_size, input_patch_size) * 0.02
-        )
+        filler_shape = (1, num_modals, input_patch_size, input_patch_size, input_patch_size)
+        if learnable_filler:
+            self.limage = nn.Parameter(torch.randn(*filler_shape) * 0.02)
+        else:
+            self.limage = nn.Parameter(torch.zeros(*filler_shape), requires_grad=False)
 
         # Encoder (legacy UNet3D_g.make_encoder): strided convs for
         # downsampling (not maxpool), unlike M3AE's UNet3D.
@@ -369,8 +404,8 @@ class MCPL(AbstractModel):
         self._128_32 = ConvBN(bottleneck_channels, 32, kernel_size=1, bias=False, norm="1b", act="gelu", conv_type="1d")
         self._128_64 = ConvBN(bottleneck_channels, 64, kernel_size=1, bias=False, norm="1b", act="gelu", conv_type="1d")
 
-        # Decoder (legacy UNet3D_g.make_decoder): additive skips from the
-        # *original* encoder features (c3/c2/c1), not the kMaX-refined path.
+        # Decoder (legacy UNet3D_g.make_decoder): starts from the kMaX-refined
+        # pixel feature, with additive skips from the encoder features (c3/c2/c1).
         self.up4conva = nn.Conv3d(channels * 8, channels * 4, kernel_size=1)
         self.up4 = nn.Upsample(scale_factor=2)
         self.up4convb = BasicBlock(channels * 4)
@@ -414,7 +449,7 @@ class MCPL(AbstractModel):
 
         return c1, c2, c3, c4d
 
-    def _kmax_bottleneck(self, content: torch.Tensor) -> torch.Tensor:
+    def _kmax_bottleneck(self, content: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Runs the kMaX transformer stack over the bottleneck, returning the
         refined query (prototype) features, shape ``[B, 128, nums_q]``."""
         batch_size = content.size(0)
@@ -422,27 +457,33 @@ class MCPL(AbstractModel):
         prediction_result = content
         for layer in self._kmax_transformer_layers:
             cluster_centers, prediction_result = layer(prediction_result, cluster_centers)
-        return cluster_centers
+        return cluster_centers, prediction_result
 
     def _forward_trunk(
         self, x: torch.Tensor, mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if x.size(1) != num_modals:
             raise RuntimeError(f"MCPL expects {num_modals} input modalities, got {x.size(1)}")
-        if mask.ndim != 2 or mask.size(1) != num_modals:
+        voxel_gate = mask.ndim == 5
+        if voxel_gate:
+            if mask.shape[1] != num_modals or mask.shape[-3:] != x.shape[-3:]:
+                raise RuntimeError(f"MCPL expects a voxel gate shaped like x, got {tuple(mask.shape)}")
+        elif mask.ndim != 2 or mask.size(1) != num_modals:
             raise RuntimeError(f"MCPL expects mask shape [B, {num_modals}], got {tuple(mask.shape)}")
         if x.shape[-3:] != self.limage.shape[-3:]:
             raise RuntimeError(
                 f"MCPL requires spatial dimensions of exactly {tuple(self.limage.shape[-3:])}, got {tuple(x.shape[-3:])}"
             )
 
-        gate = mask.view(-1, num_modals, 1, 1, 1).to(x.dtype)
+        # A [B, M, D, H, W] gate is the MAE pretraining patch mask; a [B, M] mask drops whole modalities.
+        gate = mask.to(x.dtype) if voxel_gate else mask.view(-1, num_modals, 1, 1, 1).to(x.dtype)
         x = x * gate + self.limage * (1 - gate)
 
         c1, c2, c3, c4d = self._encode(x)
-        cluster_centers = self._kmax_bottleneck(c4d)
+        cluster_centers, pixel_feature = self._kmax_bottleneck(c4d)
 
-        u4 = self.up4(self.up4conva(c4d))
+        # Upstream decodes from the last kMaX pixel feature (Unet_kmaxT.py:274, "c4d->prediction_result").
+        u4 = self.up4(self.up4conva(pixel_feature))
         u4 = self.up4convb(u4 + c3)
 
         u3 = self.up3(self.up3conva(u4))
@@ -461,7 +502,7 @@ class MCPL(AbstractModel):
             F.normalize(cc_class, p=2, dim=1).transpose(1, 2),
             F.normalize(u2, p=2, dim=1),
         )
-        return self.softmax(logits)
+        return self.softmax(logits * self.logit_scale)
 
     def _deep_supervision_from_prototypes(
         self, cluster_centers: torch.Tensor, u4: torch.Tensor, u3: torch.Tensor
@@ -517,7 +558,11 @@ class MCPL(AbstractModel):
 
         if mode == "segment_train":
             out4_logits, out3_logits = self._deep_supervision_from_prototypes(cluster_centers, u4, u3)
-            seg_outputs = [uout, self.softmax(out3_logits), self.softmax(out4_logits)]
+            seg_outputs = [
+                uout,
+                self.softmax(out3_logits * self.logit_scale),
+                self.softmax(out4_logits * self.logit_scale),
+            ]
             return seg_outputs, out4_logits, cluster_centers
 
         return uout

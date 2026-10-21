@@ -47,6 +47,9 @@ class TrainerKind(StrEnum):
     MANYMIMOSASKD = "manymimosaskd"
     MCPL = "mcpl"
     MAMBAVITAKD = "mambavitakd"
+    PARETO = "pareto"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class ModelKind(StrEnum):
@@ -56,6 +59,8 @@ class ModelKind(StrEnum):
     RFNET = "rfnet"
     A2FSEG = "a2fseg"
     TINYMIMOSA = "tinymimosa"
+    SIMPLEUNET = "simpleunet"
+    ELASTICUNET = "elasticunet"
     MANYMIMOSAS = "manymimosas"
     MANYMIMOSASKD = "manymimosaskd"
     UHVED = "uhved"
@@ -76,11 +81,14 @@ class ModelKind(StrEnum):
     INOUTFUSION = "inoutfusion"
     MAMBAVITAKD = "mambavitakd"
     MCPL = "mcpl"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
     TINYMIMOSA = "tinymimosa"
+    SHASPEC = "shaspec"
 
 
 class OptimizerKind(StrEnum):
@@ -117,6 +125,8 @@ class LossKind(StrEnum):
     MAMBAVITAKD = "mambavitakd"
     MANYMIMOSASKD = "manymimosaskd"
     MCPL = "mcpl"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class MaskingMode(StrEnum):
@@ -124,3 +134,9 @@ class MaskingMode(StrEnum):
     VALIDATION = "validation"
     TEST = "test"
     FULL = "full"
+
+
+class Precision(StrEnum):
+    FP32 = "fp32"
+    FP16 = "fp16"
+    BF16 = "bf16"

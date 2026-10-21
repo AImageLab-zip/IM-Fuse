@@ -52,12 +52,17 @@ custom_model_kwargs:
 custom_loss_kwargs:
   weight_mispath: 0.6
   weight_content: 0.2
+  # GSM is commented out in upstream train.py; 1e11 is the weight used in our legacy/ run.
   weight_gsm: 100000000000.0
   unetr_weight: 0.2
   evd_weight: 100000000.0
   slkd_temperature: 7.0
   consistency_max_weight: 10.0
   consistency_rampup_epochs: 20.0
+  per_sample_statistics: true
+  # Upstream trains on 160x192x128 crops; 1.875 rescales the H*W normaliser of the
+  # style/GSM terms from our 128^3 crops to that geometry.
+  style_size_scale: 1.875
 
 custom_trainer_kwargs:
   iter_per_epoch: null
@@ -66,14 +71,17 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
 momentum: 0.9
 
-scheduler: poly
+scheduler: warmuppoly
 poly_total_iters: 250
 poly_power: 0.9
+warmuppoly_warmup_iters: 10
 cosine_t_max: null
 cosine_eta_min: null
 step_step_size: null
@@ -84,18 +92,18 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0006
+lr: 0.0002
 num_epochs: 250
 validation_every: 10
-batch_size: 6
+batch_size: 2
 weight_decay: 0.00001
 num_workers: 8
-fp16: false
+precision: fp32
 compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 fold: 1
 wandb_project: MiMoSe

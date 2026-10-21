@@ -212,13 +212,15 @@ def test_packaged_mcpl_configs_use_mcpl_training_contract(config_name: str) -> N
     assert config["custom_trainer_kwargs"]["modal_contrast_weight"] == 0.01
 
 
-def _new_mcpl_trainer_stub(*, pretrain_epochs: int, num_epochs: int = 10) -> MCPLTrainer:
+def _new_mcpl_trainer_stub(
+    *, pretrain_epochs: int, num_epochs: int = 10, learnable_filler: bool = True
+) -> MCPLTrainer:
     """Constructs a bare, uninitialized ``MCPLTrainer`` (bypassing
     ``BaseTrainer.__init__``, which needs real datasets/dataloaders) with
     just the attributes ``_apply_training_stage``/``_build_optimizer``
     touch, so the stage-switch logic can be unit tested in isolation."""
     trainer = MCPLTrainer.__new__(MCPLTrainer)
-    trainer.model = MCPL(num_cls=4, layers=1)
+    trainer.model = MCPL(num_cls=4, layers=1, learnable_filler=learnable_filler)
     trainer.pretrain_epochs = pretrain_epochs
     trainer.limage_lr = 0.005
     trainer.num_epochs = num_epochs

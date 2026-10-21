@@ -9,8 +9,19 @@ import torch.nn.functional as F
 from mimose.losses.config import KwargField, nonneg_float, positive_float, positive_int
 
 
-def _dice_loss(prediction: torch.Tensor, target: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-    """Legacy MST-KDNet per-channel soft dice, flattened over the whole batch+volume."""
+def _dice_loss(
+    prediction: torch.Tensor, target: torch.Tensor, eps: float = 1e-7, per_sample: bool = False
+) -> torch.Tensor:
+    """Legacy MST-KDNet per-channel soft dice, flattened over the whole batch+volume.
+
+    Legacy trains at batch 1, so ``per_sample=True`` (Dice per sample, then batch mean) is the
+    faithful form for larger batches."""
+    if per_sample:
+        prediction = prediction.contiguous().flatten(1)
+        target = target.contiguous().flatten(1)
+        intersection = (prediction * target).sum(dim=1)
+        denom = prediction.pow(2).sum(dim=1) + target.pow(2).sum(dim=1) + eps
+        return (1.0 - (2.0 * intersection / denom)).mean()
     prediction = prediction.contiguous().view(-1)
     target = target.contiguous().view(-1)
     intersection = (prediction * target).sum()
@@ -18,47 +29,77 @@ def _dice_loss(prediction: torch.Tensor, target: torch.Tensor, eps: float = 1e-7
     return 1.0 - (2.0 * intersection / denom)
 
 
-def _gram_matrix(x: torch.Tensor) -> torch.Tensor:
+def _gram_matrix(x: torch.Tensor, per_sample: bool = False) -> torch.Tensor:
     batch, channels, height, width, depth = x.size()
+    if per_sample:
+        features = x.reshape(batch, channels, height * width * depth)
+        return torch.bmm(features, features.transpose(1, 2)).div(channels * height * width * depth)
     features = x.view(batch * channels, height * width * depth)
     gram = torch.mm(features, features.t())
     return gram.div(batch * channels * height * width * depth)
 
 
-def _mix_matrix(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+def _mix_matrix(x: torch.Tensor, y: torch.Tensor, per_sample: bool = False) -> torch.Tensor:
     batch, channels, height, width, depth = x.size()
+    if per_sample:
+        x = x.reshape(batch, channels, height * width * depth)
+        y = y.reshape(batch, channels, height * width * depth)
+        return torch.bmm(x, y.transpose(1, 2)).div(channels * height * width * depth)
     x = x.view(batch * channels, height * width * depth)
     y = y.view(batch * channels, height * width * depth)
     mix = torch.mm(x, y.t())
     return mix.div(batch * channels * height * width * depth)
 
 
-def style_loss(style_full: torch.Tensor, style_missing: torch.Tensor) -> torch.Tensor:
-    gram_full = _gram_matrix(style_full)
-    gram_missing = _gram_matrix(style_missing)
+def _matrix_mismatch(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Sum of squared differences; per-sample ([B, C, C]) matrices are averaged over the batch."""
+    squared = torch.square(a - b)
+    if squared.ndim == 3:
+        return squared.sum(dim=(1, 2)).mean()
+    return torch.sum(squared)
+
+
+def style_loss(
+    style_full: torch.Tensor,
+    style_missing: torch.Tensor,
+    *,
+    per_sample: bool = False,
+    size_scale: float = 1.0,
+) -> torch.Tensor:
+    """``size_scale`` rescales the H*W normaliser, e.g. to the value it takes at upstream's
+    160x192x128 input when training on smaller crops."""
+    gram_full = _gram_matrix(style_full, per_sample)
+    gram_missing = _gram_matrix(style_missing, per_sample)
     channels = style_full.size(1)
-    size = style_full.size(2) * style_full.size(3)
-    loss = torch.sum(torch.square(gram_full - gram_missing)) / (4.0 * (channels**2) * (size**2))
+    size = style_full.size(2) * style_full.size(3) * size_scale
+    loss = _matrix_mismatch(gram_full, gram_missing) / (4.0 * (channels**2) * (size**2))
     return loss * 1e-4
 
 
 def global_style_match_loss(
     global_style_full: list[torch.Tensor],
     global_style_missing: list[torch.Tensor],
+    *,
+    per_sample: bool = False,
+    size_scale: float = 1.0,
 ) -> torch.Tensor:
     """Legacy's cyclic (i, i-1) pairwise cross-correlation match over the
     3-element [c3d, style, c4d] "Global_style" lists."""
-    mix_full = [_mix_matrix(global_style_full[i], global_style_full[i - 1]) for i in range(len(global_style_full))]
+    mix_full = [
+        _mix_matrix(global_style_full[i], global_style_full[i - 1], per_sample)
+        for i in range(len(global_style_full))
+    ]
     mix_missing = [
-        _mix_matrix(global_style_missing[i], global_style_missing[i - 1]) for i in range(len(global_style_missing))
+        _mix_matrix(global_style_missing[i], global_style_missing[i - 1], per_sample)
+        for i in range(len(global_style_missing))
     ]
 
     channels = global_style_full[0].size(1)
-    size = global_style_full[0].size(2) * global_style_full[0].size(3)
+    size = global_style_full[0].size(2) * global_style_full[0].size(3) * size_scale
 
     loss = global_style_full[0].new_tensor(0.0)
     for mix_f, mix_m in zip(mix_full, mix_missing):
-        loss = loss + torch.sum(torch.square(mix_f - mix_m)) / (4.0 * (channels**2) * (size**2))
+        loss = loss + _matrix_mismatch(mix_f, mix_m) / (4.0 * (channels**2) * (size**2))
     return loss * 1e-4
 
 
@@ -137,6 +178,7 @@ class MSTKDNetLoss:
         "slkd_temperature": positive_float(),
         "consistency_max_weight": nonneg_float(),
         "consistency_rampup_epochs": positive_float(),
+        "style_size_scale": positive_float(),
     }
 
     def __init__(
@@ -152,6 +194,8 @@ class MSTKDNetLoss:
         slkd_temperature: float = 7.0,
         consistency_max_weight: float = 10.0,
         consistency_rampup_epochs: float = 20.0,
+        per_sample_statistics: bool = False,
+        style_size_scale: float = 1.0,
     ) -> None:
         resolved_num_classes = (
             int(num_classes)
@@ -167,11 +211,16 @@ class MSTKDNetLoss:
         self.slkd_temperature = float(slkd_temperature)
         self.consistency_max_weight = float(consistency_max_weight)
         self.consistency_rampup_epochs = float(consistency_rampup_epochs)
+        # Legacy runs at batch 1: per-sample Dice/Gram statistics keep that meaning at batch > 1.
+        self.per_sample_statistics = bool(per_sample_statistics)
+        self.style_size_scale = float(style_size_scale)
 
     def segmentation_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         loss = output.new_tensor(0.0)
         for class_index in range(self.num_classes):
-            loss = loss + _dice_loss(output[:, class_index], target[:, class_index])
+            loss = loss + _dice_loss(
+                output[:, class_index], target[:, class_index], per_sample=self.per_sample_statistics
+            )
         return loss
 
     def _consistency_weight(self, epoch: int) -> float:
@@ -191,13 +240,21 @@ class MSTKDNetLoss:
         loss_miss_dc = uout_s.new_tensor(0.0)
         consistency = uout_s.new_tensor(0.0)
         for class_index in range(self.num_classes):
-            loss_dc = loss_dc + _dice_loss(uout_t[:, class_index], target[:, class_index])
-            loss_miss_dc = loss_miss_dc + _dice_loss(uout_s[:, class_index], target[:, class_index])
+            loss_dc = loss_dc + _dice_loss(
+                uout_t[:, class_index], target[:, class_index], per_sample=self.per_sample_statistics
+            )
+            loss_miss_dc = loss_miss_dc + _dice_loss(
+                uout_s[:, class_index], target[:, class_index], per_sample=self.per_sample_statistics
+            )
             consistency = consistency + F.mse_loss(uout_t[:, class_index], uout_s[:, class_index], reduction="mean")
 
         content = F.mse_loss(content_t, content_s, reduction="mean")
-        style = style_loss(style_t, style_s)
-        gsm = global_style_match_loss(gstyle_t, gstyle_s)
+        style = style_loss(
+            style_t, style_s, per_sample=self.per_sample_statistics, size_scale=self.style_size_scale
+        )
+        gsm = global_style_match_loss(
+            gstyle_t, gstyle_s, per_sample=self.per_sample_statistics, size_scale=self.style_size_scale
+        )
         unetr = unetr_feature_loss(unetr_fs_t, unetr_fs_s)
         evd = extreme_value_distillation_loss(weights_t, weights_s)
         slkd = logit_stand_kd_loss(logit_t, logit_s, self.slkd_temperature)

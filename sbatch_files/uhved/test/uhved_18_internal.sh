@@ -13,6 +13,7 @@
 
 cd /homes/ocarpentiero/MiMoSe
 source /homes/ocarpentiero/MiMoSe/.venv/bin/activate
+export WANDB_CACHE_DIR=/work/phd_mimose/.wandb-cache
 
 # Tests the brats18-trained uhved checkpoints (folds 1/3/5) against
 # the internal dataset, reusing each checkpoint's own art_dir/run_suffix

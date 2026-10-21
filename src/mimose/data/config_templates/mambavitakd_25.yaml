@@ -19,7 +19,8 @@
 # submodule (see src/mimose/models/mambavitakd.py) and pretrained *within the
 # same run*, via the dedicated MambaVitAKDTrainer (trainer: mambavitakd):
 # epochs [0, teacher_pretrain_fraction * num_epochs) train only the teacher
-# on full modalities (direct fuse+sep+prm segmentation loss, its own
+# on random modality subsets like upstream train_RFNet.py (direct
+# fuse+sep+prm segmentation loss, its own
 # teacher_lr), then the teacher is frozen and the student/distillation phase
 # (KD + prototype + attention losses against the now-fixed teacher,
 # region_fusion_start_epoch counted from the start of *this* phase) runs for
@@ -28,14 +29,11 @@
 # (see MambaVitAKDTrainer's docstring for the full rationale).
 # teacher_pretrain_fraction (like LCKDTrainer's warmup_fraction) is a
 # proportion of num_epochs rather than an absolute epoch count, so the split
-# stays proportional if num_epochs is overridden. teacher_lr=0.006 matches
-# this codebase's own standalone RFNet recipe (rfnet_18.yaml), since the
-# teacher is architecturally identical and the global lr=0.00001 below
-# (tuned for distillation fine-tuning) is far too low to train an
-# RFNet-scale network from scratch.
+# stays proportional if num_epochs is overridden. Upstream trains both the
+# teacher and the student at lr 1e-4 with batch 1; lr and teacher_lr below are
+# that value scaled linearly to batch 2. Training is fp32 as upstream.
 #
-# Like RFNet/A2FSeg/IMFuse in this codebase, this port uses the codebase's
-# 80^3 patch size instead of legacy's 96^3, and reuses the IMFuseTrainer
+# This port uses legacy's 96^3 patch size, and reuses the IMFuseTrainer
 # training contract for the distillation phase (region_fusion_start_epoch
 # curriculum included) since the student/teacher fuse+sep+prm segmentation
 # losses match that contract's shape; the KD/prototype/attention terms are
@@ -73,6 +71,9 @@ loss: mambavitakd
 
 custom_model_kwargs:
   num_cls: 5
+  patch_size: 96
+  trainable_attention_gate: false
+  teacher_random_masks: true
 
 custom_loss_kwargs:
   num_classes: null
@@ -90,13 +91,15 @@ custom_loss_kwargs:
 custom_trainer_kwargs:
   iter_per_epoch: null
   teacher_pretrain_fraction: 0.2308  # 300 / 1300
-  teacher_lr: 0.006
-  region_fusion_start_epoch: 60
-  patch_size: 80
+  teacher_lr: 0.0002
+  region_fusion_start_epoch: 200
+  patch_size: 96
   debug: false
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -115,18 +118,18 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0012
+lr: 0.0002
 num_epochs: 1300
 validation_every: 10
-batch_size: 8
+batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
-fp16: true
+precision: fp32
 compile: false
 
 resume: false
 pretrain: null
-seed: 999
+seed: 0
 
 wandb_project: SegmentationMM
 wandb_entity: null

@@ -9,32 +9,31 @@ from mimose.losses.config import KwargField, positive_int, unit_interval_float
 from mimose.losses.imfuse import dice_loss, softmax_weighted_loss
 
 
-def _pairwise_cosine_contrastive(prototypes: torch.Tensor, temperature: float) -> torch.Tensor:
-    """Matches legacy MCPL's ``memory_Loss.forward_class_cos`` /
-    ``forward_modal_cos`` (legacy/MCPL/loss/dice.py:157-223): an InfoNCE-style
-    contrastive term over pairs of prototype vectors drawn from the model's
-    own learned (modality x class) prototype table (``_cluster_centers``),
-    independent of any batch data.
+def _upstream_group_cos(h_i: torch.Tensor, h_j: torch.Tensor, temperature: float) -> torch.Tensor:
+    """Literal port of legacy MCPL ``memory_Loss.forward_class_cos`` / ``forward_modal_cos``
+    (legacy/MCPL/loss/dice.py:157-223). ``h_i``/``h_j``: ``[Q, G]`` prototype columns of two groups.
 
-    ``prototypes``: ``[Q, num_groups]`` (e.g. ``cc_classes`` columns of
-    ``Q``-dim vectors when pulling classes apart, or ``cc_modalities`` columns
-    when pulling modalities apart). Each pair of columns is pushed apart
-    relative to all other columns via a softmax-cosine-similarity contrast.
+    Positives are pairs of columns *within* one group; negatives are all columns of the *other*
+    group. The upstream accumulation sits after the inner ``j`` loop, so only the last ``j`` per
+    ``i`` contributes (and the last ``i`` re-adds the previous pair); that quirk is kept on purpose.
     """
-    num_groups = prototypes.shape[1]
-    loss = prototypes.new_tensor(0.0)
-    pair_count = 0
-    for i in range(num_groups):
-        for j in range(i + 1, num_groups):
-            positive = torch.exp(torch.cosine_similarity(prototypes[:, i], prototypes[:, j], dim=0) / temperature)
-            negative = prototypes.new_tensor(0.0)
-            for k in range(num_groups):
-                negative = negative + torch.exp(
-                    torch.cosine_similarity(prototypes[:, i], prototypes[:, k], dim=0) / temperature
-                )
-            loss = loss - torch.log(positive / negative)
-            pair_count += 1
-    return loss / max(pair_count, 1)
+    num = h_i.shape[1]
+    loss = h_i.new_tensor(0.0)
+    count = 0
+    for anchor, other in ((h_i, h_j), (h_j, h_i)):
+        positive = negative = None
+        for i in range(num):
+            for j in range(i + 1, num):
+                positive = torch.exp(torch.cosine_similarity(anchor[:, i], anchor[:, j], dim=0) / temperature)
+                negative = h_i.new_tensor(0.0)
+                for k in range(num):
+                    negative = negative + torch.exp(
+                        torch.cosine_similarity(anchor[:, i], other[:, k], dim=0) / temperature
+                    )
+                count += 1
+            if positive is not None:
+                loss = loss - torch.log(positive / negative)
+    return loss / max(count, 1)
 
 
 def class_contrastive_loss(
@@ -44,13 +43,16 @@ def class_contrastive_loss(
     cc_classes: int,
     temperature: float = 0.5,
 ) -> torch.Tensor:
-    """Pulls the per-class prototype directions apart across modalities,
-    matching legacy MCPL's ``forward_class_cos`` (used during fine-tuning)."""
+    """Fine-tuning class contrast (legacy/MCPL/train.py:288-298): for each class pair (c1, c2),
+    the modalities of c1 are positives of each other and the modalities of c2 are negatives."""
     prototypes = cluster_centers_weight.view(-1, cc_modalities, cc_classes)
     loss = prototypes.new_tensor(0.0)
-    for modal_index in range(cc_modalities):
-        loss = loss + _pairwise_cosine_contrastive(prototypes[:, modal_index, :], temperature)
-    return loss / cc_modalities
+    pairs = 0
+    for c1 in range(cc_classes):
+        for c2 in range(c1 + 1, cc_classes):
+            loss = loss + _upstream_group_cos(prototypes[:, :, c1], prototypes[:, :, c2], temperature)
+            pairs += 1
+    return loss / max(pairs, 1)
 
 
 def modal_contrastive_loss(
@@ -60,13 +62,16 @@ def modal_contrastive_loss(
     cc_classes: int,
     temperature: float = 0.5,
 ) -> torch.Tensor:
-    """Pulls the per-modality prototype directions apart across classes,
-    matching legacy MCPL's ``forward_modal_cos`` (used during pretraining)."""
+    """Pretraining modality contrast (legacy/MCPL/pretrain.py:178-187): for each modality pair
+    (m1, m2), the classes of m1 are positives of each other and the classes of m2 are negatives."""
     prototypes = cluster_centers_weight.view(-1, cc_modalities, cc_classes)
     loss = prototypes.new_tensor(0.0)
-    for class_index in range(cc_classes):
-        loss = loss + _pairwise_cosine_contrastive(prototypes[:, :, class_index], temperature)
-    return loss / cc_classes
+    pairs = 0
+    for m1 in range(cc_modalities):
+        for m2 in range(m1 + 1, cc_modalities):
+            loss = loss + _upstream_group_cos(prototypes[:, m1, :], prototypes[:, m2, :], temperature)
+            pairs += 1
+    return loss / max(pairs, 1)
 
 
 def mcpl_reconstruction_loss(

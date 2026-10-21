@@ -22,6 +22,7 @@ import glob
 import os
 import re
 import statistics
+import sys
 from collections import defaultdict
 
 import openpyxl
@@ -55,6 +56,13 @@ DATASETS = {"18": "BRATS2018", "23": "BRATS2023"}
 # Every model/dataset combination is expected to have these folds tested,
 # per the sbatch_files/<model>/all layout.
 EXPECTED_FOLDS = ["fold1", "fold3", "fold5"]
+# The official BraTS test runs now cover all five folds (folds 2/4 come from
+# HF, see scripts/download_hf_runs_results.sh); the internal-dataset runs only
+# ever covered EXPECTED_FOLDS.
+OFFICIAL_EXPECTED_FOLDS = ["fold1", "fold2", "fold3", "fold4", "fold5"]
+
+# v1 and v2 runs of the same model share one results dir; see is_stale_v1.
+RUNS_DIR = "/work/phd_mimose/runs"
 
 # Config templates are the source of truth for which models exist for a
 # given dataset (one `<model>_<dsnum>.yaml` per model/dataset combination).
@@ -228,6 +236,29 @@ def fold_label(filename):
     return f"fold{m.group(1)}" if m else filename
 
 
+def is_stale_v1(result_path, model_raw, dsnum):
+    """True if a v2 run exists for this model/dataset/fold but `result_path`
+    was not produced by it. v1 and v2 runs share one results dir, so a result
+    only counts as v2 if it is newer than the v2 run's final weights; with no
+    final weights yet (v2 still training) every result for that fold is v1."""
+    fold = re.search(r"fold(\d+)", os.path.basename(result_path)).group(1)
+    run_dir = os.path.join(RUNS_DIR, f"{model_raw}{dsnum}_v2_fold{fold}")
+    if not os.path.isdir(run_dir):
+        return False
+    weights = os.path.join(run_dir, "checkpoints", "final_weights_only.safetensors")
+    if not os.path.isfile(weights) or os.path.getsize(weights) == 0:
+        return True
+    return os.path.getmtime(result_path) < os.path.getmtime(weights)
+
+
+def drop_stale_v1(results_dir, model_raw, dsnum, *file_lists):
+    """Remove (in place) every v1 result superseded by a v2 run, reporting each on stderr."""
+    for files in file_lists:
+        for ff in [f for f in files if is_stale_v1(f, model_raw, dsnum)]:
+            print(f"skipping v1 result superseded by a v2 run: {os.path.relpath(ff, results_dir)}", file=sys.stderr)
+            files.remove(ff)
+
+
 def discover(results_dir):
     """Scan results_dir for <model>_<dsnum> directories with per-fold workbooks.
 
@@ -260,6 +291,7 @@ def discover(results_dir):
             glob.glob(os.path.join(full, "results_internal_fold*.xlsx")),
             key=lambda p: int(re.search(r"fold(\d+)", p).group(1)),
         )
+        drop_stale_v1(results_dir, model_raw, dsnum, fold_files, internal_fold_files)
         if fold_files:
             folds = {}
             for ff in fold_files:
@@ -477,14 +509,14 @@ def completion_report(models):
     report = {}
     for dsnum, dataset in DATASETS.items():
         expected = expected_models(dsnum)
-        total = len(expected) * len(EXPECTED_FOLDS)
+        total = len(expected) * len(OFFICIAL_EXPECTED_FOLDS)
         found = 0
         missing = []
         for model_norm in expected:
             folds = models.get(model_norm, {}).get(dataset, {})
-            have = sorted(set(folds.keys()) & set(EXPECTED_FOLDS))
+            have = sorted(set(folds.keys()) & set(OFFICIAL_EXPECTED_FOLDS))
             found += len(have)
-            for fold in EXPECTED_FOLDS:
+            for fold in OFFICIAL_EXPECTED_FOLDS:
                 if fold not in have:
                     missing.append((model_norm, fold))
         report[dsnum] = {"expected": expected, "found": found, "total": total, "missing": missing}
@@ -495,7 +527,7 @@ def write_summary_sheet(wb, report, display_names, models):
     ws = wb.create_sheet(title="Summary", index=0)
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 28
-    for col in "BCDE":
+    for col in "BCDEF":
         ws.column_dimensions[col].width = 12
 
     row = 1
@@ -509,7 +541,7 @@ def write_summary_sheet(wb, report, display_names, models):
         ws.cell(row=row, column=2, value=f"{info['found']}/{info['total']} ({pct:.1f}%)").font = BOLD
         row += 2
 
-        headers = ["Model"] + EXPECTED_FOLDS
+        headers = ["Model"] + OFFICIAL_EXPECTED_FOLDS
         for c, h in enumerate(headers, start=1):
             cell = ws.cell(row=row, column=c, value=h)
             cell.font, cell.fill, cell.border = WHITE, HEADER_FILL, BORDER
@@ -519,7 +551,7 @@ def write_summary_sheet(wb, report, display_names, models):
             display = display_names.get(model_norm, model_norm)
             folds = models.get(model_norm, {}).get(dataset, {})
             ws.cell(row=row, column=1, value=display).border = BORDER
-            for c, fold in enumerate(EXPECTED_FOLDS, start=2):
+            for c, fold in enumerate(OFFICIAL_EXPECTED_FOLDS, start=2):
                 present = fold in folds
                 cell = ws.cell(row=row, column=c, value="x" if present else "")
                 cell.alignment, cell.border = CENTER, BORDER

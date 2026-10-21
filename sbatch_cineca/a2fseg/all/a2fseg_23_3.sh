@@ -16,7 +16,7 @@ cd /leonardo/home/userexternal/ocarpent/MiMoSe
 source /leonardo/home/userexternal/ocarpent/MiMoSe/.venv/bin/activate
 
 mimose train --config a2fseg_23.yaml --fold 3 --run-suffix fold3 --seed 0 --try-resume
-mimose test --config a2fseg_23.yaml --fold 3 --run-suffix fold3 --fp16
+mimose test --config a2fseg_23.yaml --fold 3 --run-suffix fold3 --precision fp16
 
 # Training completed (we reached the test), so cancel the remaining queued
 # resume submissions of this same job from allsbatcher23.sh's singleton chain.

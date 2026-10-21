@@ -37,18 +37,22 @@ class RobustSegLoss:
         num_classes: int | None = None,
         num_cls: int | None = None,
         log_clamp_min: float = 0.005,
+        per_sample_dice: bool = False,
     ) -> None:
         resolved_num_classes = (
             int(num_classes) if num_classes is not None else int(num_cls) if num_cls is not None else 4
         )
         self.num_classes = resolved_num_classes
         self.log_clamp_min = float(log_clamp_min)
+        # Originals train at batch 1; with larger batches a batch-pooled Dice lets easy samples
+        # (T1c present) dominate the subsets without T1c.
+        self.per_sample_dice = bool(per_sample_dice)
 
     def segmentation_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return self.softmax_weighted_loss(output, target) + self.dice_loss(output, target)
 
     def dice_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        return dice_loss(output, target, num_cls=self.num_classes, eps=1e-7)
+        return dice_loss(output, target, num_cls=self.num_classes, eps=1e-7, per_sample=self.per_sample_dice)
 
     def softmax_weighted_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return softmax_weighted_loss(output, target, num_cls=self.num_classes, log_clamp_min=self.log_clamp_min)

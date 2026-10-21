@@ -18,7 +18,7 @@ def dice_loss(
     prediction: torch.Tensor,
     target: torch.Tensor,
     *,
-    eps: float = 1e-7,
+    eps: float = 1e-3,
 ) -> torch.Tensor:
     if prediction.ndim != 5 or target.ndim != 5:
         raise ValueError("dice_loss expects 5D tensors shaped [B, C, H, W, D]")
@@ -41,7 +41,7 @@ def tversky_loss(
     *,
     alpha: float = 0.3,
     beta: float = 0.7,
-    eps: float = 1e-7,
+    eps: float = 1e-3,
 ) -> torch.Tensor:
     """Tversky loss (Salehi et al., 2017): generalizes Dice with independent
     false-positive (``alpha``) and false-negative (``beta``) weights. Setting
@@ -63,6 +63,39 @@ def tversky_loss(
     return 1.0 - tversky.mean()
 
 
+def soft_target_loss(
+    prediction: torch.Tensor,
+    teacher: torch.Tensor,
+    *,
+    dice_weight: float = 1.0,
+    ce_weight: float = 1.0,
+    eps: float = 1e-3,
+) -> torch.Tensor:
+    """Loss against a *soft* target distribution, for inplace distillation.
+
+    ``TinyMimosaLoss._compute_metrics`` cannot be reused with a soft target: its
+    cross-entropy does ``target.argmax(dim=1)`` and feeds ``nll_loss``, which
+    hardens the teacher back into one-hot labels and throws away exactly the
+    information distillation exists to transfer.  The Dice term generalizes to
+    soft targets unchanged, so only the cross-entropy needs replacing -- here by
+    the full soft cross-entropy ``-sum_c t_c log s_c``.
+
+    Both arguments are probabilities, not logits: TinyMimosa applies its own
+    softmax, which is why the task loss logs its input rather than calling
+    ``log_softmax``.  No temperature is applied; the teacher and student share an
+    architecture family and a task, so the usual reason for softening (a teacher
+    that is over-confident relative to the student's capacity) is much weaker
+    here, and a temperature would need re-tuning against the Dice term anyway.
+    """
+    if prediction.ndim != 5 or teacher.ndim != 5:
+        raise ValueError("soft_target_loss expects 5D tensors shaped [B, C, H, W, D]")
+
+    log_prediction = torch.log(prediction.float().clamp_min(eps))
+    cross_entropy = -(teacher.float() * log_prediction).sum(dim=1).mean()
+    dice = dice_loss(prediction, teacher, eps=eps)
+    return (ce_weight * cross_entropy) + (dice_weight * dice)
+
+
 class TinyMimosaLoss:
     KWARG_SPEC: ClassVar[dict[str, KwargField]] = {
         "dice_weight": nonneg_float(),
@@ -75,7 +108,7 @@ class TinyMimosaLoss:
         *,
         dice_weight: float = 1.0,
         ce_weight: float = 1.0,
-        eps: float = 1e-7,
+        eps: float = 1e-3,
         num_classes
     ) -> None:
         self.dice_weight = float(dice_weight)
@@ -147,7 +180,7 @@ class TinyMimosaWeightedLoss(TinyMimosaLoss):
         *,
         dice_weight: float = 1.0,
         ce_weight: float = 1.0,
-        eps: float = 1e-7,
+        eps: float = 1e-3,
         log_clamp_min: float = 0.005,
         tversky_alpha: float = 0.3,
         tversky_beta: float = 0.7,
@@ -192,4 +225,9 @@ class TinyMimosaWeightedLoss(TinyMimosaLoss):
         }
 
 
-__all__ = ["TinyMimosaLoss", "TinyMimosaWeightedLoss", "dice_loss"]
+__all__ = [
+    "TinyMimosaLoss",
+    "TinyMimosaWeightedLoss",
+    "dice_loss",
+    "soft_target_loss",
+]
