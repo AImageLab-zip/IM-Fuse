@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from mimose.enums import TransformKind
 from mimose.losses.config import build_loss_config
-from mimose.losses.m3ae import M3AELoss, m3ae_reconstruction_loss
+from mimose.losses.m3ae import M3AELoss, legacy_region_loss, m3ae_reconstruction_loss
 from mimose.models.config import build_model_config
 from mimose.models.m3ae import M3AE, input_patch_size
 from mimose.training.config import OptimizerConfig, SchedulerConfig
@@ -202,9 +202,51 @@ def test_packaged_m3ae_configs_use_m3ae_training_contract(config_name: str) -> N
     assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
     assert config["scheduler"] == "cosine"
     assert config["optimizer"] == "adam"
-    assert config["custom_trainer_kwargs"]["pretrain_fraction"] == 0.15
+    assert round(config["custom_trainer_kwargs"]["pretrain_fraction"] * config["num_epochs"]) == 600
+    assert config["num_epochs"] - 600 == 300
+    assert config["cosine_t_max"] == 600
+    assert config["custom_trainer_kwargs"]["pretrain_weight_decay"] == 0.0
     assert config["custom_trainer_kwargs"]["limage_lr"] == 0.005
     assert config["custom_trainer_kwargs"]["limage_reg_weight"] == 0.005
+    assert config["custom_loss_kwargs"]["formulation"] == "legacy_region"
+
+
+def test_m3ae_loss_rejects_unknown_formulation() -> None:
+    with pytest.raises(ValueError):
+        M3AELoss(num_classes=4, formulation="sigmoid")
+
+
+def test_m3ae_legacy_region_loss_matches_edice_on_regions() -> None:
+    torch.manual_seed(2)
+    output = torch.softmax(torch.randn(2, 4, 8, 8, 8), dim=1)
+    target = _random_target(batch=2, num_classes=4, size=8)
+
+    metrics = M3AELoss(num_classes=4, formulation="legacy_region").training_loss(output, target)
+
+    def region(t: torch.Tensor, classes: tuple[int, ...]) -> torch.Tensor:
+        return sum(t[:, c] for c in classes)
+
+    dice, bce = 0.0, 0.0
+    for classes in ((3,), (1, 3), (1, 2, 3)):
+        pred, tgt = region(output, classes), region(target, classes)
+        dice += 1 - (2 * (pred * tgt).sum() + 1) / (pred.pow(2).sum() + tgt.pow(2).sum() + 1)
+        bce += torch.nn.BCELoss()(pred, tgt)
+    assert torch.allclose(metrics["dice"], 0.7 * dice / 3, atol=1e-6)
+    assert torch.allclose(metrics["cross"], 0.3 * bce / 3, atol=1e-6)
+    assert torch.allclose(metrics["loss"], metrics["dice"] + metrics["cross"])
+
+
+def test_m3ae_legacy_region_loss_has_gradient_when_predicting_all_background() -> None:
+    # The collapse seen with the softmax formulation: near one-hot background
+    # predictions. The region loss must still push the tumour logits up.
+    logits = torch.full((1, 4, 8, 8, 8), -12.0)
+    logits[:, 0] = 12.0
+    logits.requires_grad_(True)
+    target = _random_target(batch=1, num_classes=4, size=8)
+
+    legacy_region_loss(torch.softmax(logits, dim=1), target)["loss"].backward()
+
+    assert logits.grad[:, 1:].abs().sum() > 0
 
 
 def test_m3ae_reconstruction_loss_combines_mse_and_smoothness() -> None:
@@ -234,6 +276,7 @@ def _new_m3ae_trainer_stub(*, pretrain_epochs: int, num_epochs: int = 10) -> M3A
     trainer.limage_reg_weight = 0.005
     trainer.num_epochs = num_epochs
     trainer._in_pretrain = None
+    trainer.pretrain_weight_decay = None
     trainer.optimizer_config = OptimizerConfig(optim_class=torch.optim.Adam, lr=1e-3, weight_decay=1e-5)
     trainer.scheduler_config = SchedulerConfig(scheduler_class=CosineAnnealingLR, kwargs={"T_max": num_epochs, "eta_min": 0.0})
     trainer.optimizer = trainer._build_optimizer()
@@ -281,6 +324,17 @@ def test_m3ae_apply_training_stage_restarts_scheduler_entering_finetune() -> Non
     # T_max after the rebuild, so logging/checkpointing still reflects the
     # configured value rather than the transient "remaining epochs" figure.
     assert trainer.scheduler_config.kwargs["T_max"] == 10
+
+
+def test_m3ae_apply_training_stage_switches_pretrain_weight_decay() -> None:
+    trainer = _new_m3ae_trainer_stub(pretrain_epochs=3, num_epochs=10)
+    trainer.pretrain_weight_decay = 0.0
+
+    trainer._apply_training_stage(0)
+    assert all(group["weight_decay"] == 0.0 for group in trainer.optimizer.param_groups)
+
+    trainer._apply_training_stage(3)
+    assert all(group["weight_decay"] == 1e-5 for group in trainer.optimizer.param_groups)
 
 
 def test_m3ae_build_optimizer_uses_single_group_when_pretrain_disabled() -> None:

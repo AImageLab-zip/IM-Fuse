@@ -160,4 +160,4 @@ def test_packaged_uhved_configs_use_imfuse_training_contract(config_name: str) -
     assert config["loss"] == "uhved"
     assert config["custom_trainer_kwargs"]["patch_size"] == 112
     assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
-    assert config["scheduler"] == "plateau"
+    assert config["scheduler"] == "step"

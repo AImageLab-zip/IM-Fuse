@@ -490,16 +490,15 @@ class MambaVitAKD(AbstractModel):
     - Legacy's student decoder architecture (encoders + region-aware-fusion
       ``Decoder_fuse`` + shared ``Decoder_sep``) is *exactly* RFNet's
       architecture (see ``rfnet.py``), reused verbatim here as ``_Branch``.
-      Legacy additionally builds a Mamba (``mamba_ssm``) encoder over the
-      concatenation of present modalities every forward call, but its
-      output (``m_x1..m_x4``) is never actually consumed by the decoder --
-      dead code left over from an unfinished integration (confirmed by
-      reading ``model_mamba_modalitys.py::Model.forward``: the Mamba
-      encoder's outputs are computed and then simply discarded). This port
-      drops that dead computation entirely rather than reimplementing an
-      unused branch, and also skips porting the unused ``Encoder0``
-      (ViT/UNETR) submodules and the fully dead ``SS3D.py`` scan
-      implementations for the same reason.
+      Upstream (xixiaa009/MambaVit-AKD @ e85fa89) additionally stacks the
+      output of a SegMamba encoder as a fifth "modality", but that encoder
+      is rebuilt with fresh random weights inside every ``forward`` call
+      (never registered or optimised), and the released code does not run
+      (NameError in ``segMamba.py``, undefined ``model_baseline.Model``,
+      4-modality hard-coding in ``layers.py``); its ViT ``Encoder0`` modules
+      are built but unused. This port therefore drops the Mamba and ViT
+      branches: what remains is the trainable part of the method, RFNet plus
+      the three distillation terms.
     - The "teacher" is architecturally identical to the student (also
       ``_Branch``, i.e. RFNet), always run on the full 4-modality input.
       Legacy pretrains this teacher in a wholly separate training run
@@ -523,8 +522,20 @@ class MambaVitAKD(AbstractModel):
       ``model`` (the Mamba/student model), never ``teacher_model``.
     """
 
-    def __init__(self, num_cls: int = 4) -> None:
+    def __init__(
+        self,
+        num_cls: int = 4,
+        patch_size: int = input_patch_size,
+        trainable_attention_gate: bool = False,
+        teacher_random_masks: bool = True,
+    ) -> None:
         super().__init__()
+        self.patch_size = int(patch_size)
+        # Upstream train_RFNet.py pretrains the teacher on random modality subsets, not the full set.
+        self.teacher_random_masks = teacher_random_masks
+        # Set by the trainer once distillation starts: the teacher then runs under no_grad without
+        # its per-modality decoders (upstream loads it frozen from a separate run).
+        self.teacher_frozen = False
         self.student = _Branch(num_cls=num_cls)
         self.teacher = _Branch(num_cls=num_cls)
         # Channel-attention gate used by the attention-distillation loss term
@@ -533,6 +544,9 @@ class MambaVitAKD(AbstractModel):
         # input channel count is ``basic_dims`` -- the fused decoder feature
         # ("de_x1") both branches emit.
         self.channel_attention = ChannelAttention(in_channels=basic_dims)
+        # Upstream builds a fresh random gate on every call, so it is never trained; a trainable
+        # shared gate could shrink the attention loss by pushing itself toward 0.
+        self.channel_attention.requires_grad_(trainable_attention_gate)
         self.is_training = False
 
     def forward(
@@ -554,15 +568,19 @@ class MambaVitAKD(AbstractModel):
         x, mask = self._remap_input_order(x, mask)
 
         if mode == "teacher_pretrain":
-            full_mask = torch.ones_like(mask)
-            return self.teacher(x, full_mask, with_sep=True)
+            teacher_mask = mask if self.teacher_random_masks else torch.ones_like(mask)
+            return self.teacher(x, teacher_mask, with_sep=True)
 
         student_out = self.student(x, mask, with_sep=self.is_training)
         if not self.is_training:
             return student_out[0]
 
         full_mask = torch.ones_like(mask)
-        teacher_out = self.teacher(x, full_mask, with_sep=True)
+        if self.teacher_frozen:
+            with torch.no_grad():
+                teacher_out = self.teacher(x, full_mask, with_sep=False)
+        else:
+            teacher_out = self.teacher(x, full_mask, with_sep=True)
 
         feature, feature_t = student_out[3], teacher_out[3]
         attn_loss = nn.functional.mse_loss(
@@ -576,18 +594,18 @@ class MambaVitAKD(AbstractModel):
     ) -> torch.Tensor:
         """Shared 50%-overlap sliding-window inference loop used by both
         ``predict`` (student) and ``predict_teacher`` -- ``patch_fn`` maps one
-        ``input_patch_size``-sized crop to its softmax prediction."""
+        ``patch_size``-sized crop to its softmax prediction."""
         _, _, height, width, depth = images.shape
         if (height, width, depth) == (
-            input_patch_size,
-            input_patch_size,
-            input_patch_size,
+            self.patch_size,
+            self.patch_size,
+            self.patch_size,
         ):
             return patch_fn(images)
 
-        h_starts = self._window_starts(height)
-        w_starts = self._window_starts(width)
-        d_starts = self._window_starts(depth)
+        h_starts = self._window_starts(height, self.patch_size)
+        w_starts = self._window_starts(width, self.patch_size)
+        d_starts = self._window_starts(depth, self.patch_size)
         prediction = torch.zeros(
             images.size(0),
             self.student.decoder_fuse.seg_layer.out_channels,
@@ -606,24 +624,24 @@ class MambaVitAKD(AbstractModel):
                     patch = images[
                         :,
                         :,
-                        h : h + input_patch_size,
-                        w : w + input_patch_size,
-                        d : d + input_patch_size,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
                     ]
                     patch_pred = patch_fn(patch)
                     prediction[
                         :,
                         :,
-                        h : h + input_patch_size,
-                        w : w + input_patch_size,
-                        d : d + input_patch_size,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
                     ] += patch_pred
                     weight[
                         :,
                         :,
-                        h : h + input_patch_size,
-                        w : w + input_patch_size,
-                        d : d + input_patch_size,
+                        h : h + self.patch_size,
+                        w : w + self.patch_size,
+                        d : d + self.patch_size,
                     ] += 1
         return prediction / weight
 
@@ -644,18 +662,18 @@ class MambaVitAKD(AbstractModel):
         return self._sliding_window_predict(images, patch_fn)
 
     @staticmethod
-    def _window_starts(size: int) -> list[int]:
-        if size < input_patch_size:
+    def _window_starts(size: int, patch_size: int = input_patch_size) -> list[int]:
+        if size < patch_size:
             raise RuntimeError(
                 "Model prediction expects spatial dimensions to be at least "
-                f"{input_patch_size}, got {size}"
+                f"{patch_size}, got {size}"
             )
-        if size == input_patch_size:
+        if size == patch_size:
             return [0]
 
-        stride = input_patch_size // 2
-        starts = list(range(0, max(size - input_patch_size, 0), stride))
-        last_start = size - input_patch_size
+        stride = patch_size // 2
+        starts = list(range(0, max(size - patch_size, 0), stride))
+        last_start = size - patch_size
         if not starts or starts[-1] != last_start:
             starts.append(last_start)
         return starts

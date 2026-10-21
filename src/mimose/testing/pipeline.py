@@ -22,7 +22,7 @@ from rich.progress import (
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 
-from mimose.checkpoints import load_weights_only_checkpoint
+from mimose.checkpoints import assert_finite_weights, load_weights_only_checkpoint
 from mimose.datasets import DatasetType, IMFuseDataset
 from mimose.enums import Precision
 from mimose.models.abstract_model import AbstractModel
@@ -315,6 +315,7 @@ def run_testing(
             raise RuntimeError(f"{model_class.__name__} must inherit from AbstractModel")
         model = model.to(device)
         load_weights_only_checkpoint(model, checkpoint_path, device=device)
+        assert_finite_weights(model, checkpoint_path)
         model.eval()
         if hasattr(model, "is_training"):
             model.is_training = False
@@ -604,6 +605,7 @@ def run_testing_fast(
             raise RuntimeError(f"{model_class.__name__} must inherit from AbstractModel")
         model = model.to(device)
         load_weights_only_checkpoint(model, checkpoint_path, device=device)
+        assert_finite_weights(model, checkpoint_path)
         model.eval()
         if hasattr(model, "is_training"):
             model.is_training = False

@@ -58,6 +58,9 @@ class UHVEDTrainer(BaseTrainer):
         self.transform_kind = TransformKind(trainer_kwargs.get("transform_kind", TransformKind.IMFUSE))
         self.train_masking_mode = MaskingMode(trainer_kwargs.get("train_masking_mode", MaskingMode.RANDOM))
         self.val_masking_mode = MaskingMode(trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION))
+        self.mask_sampling = str(trainer_kwargs.get("mask_sampling", "subset_uniform"))
+        # Upstream selects its model by early stopping on validation; export best.pth weights.
+        self.final_from_best = bool(trainer_kwargs.get("final_from_best", False))
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -210,6 +213,14 @@ class UHVEDTrainer(BaseTrainer):
             "etpp_hd95": etpp_hd95_sum / divisor,
         }
 
+    def save_final_checkpoint(self) -> Path:
+        best_path = self.checkpoint_dir / "best.pth"
+        if self.final_from_best and best_path.is_file():
+            model = self._model_for_state()
+            checkpoint = torch.load(best_path, map_location=self.device, weights_only=False)
+            model.load_state_dict(checkpoint["state_dict"])
+        return super().save_final_checkpoint()
+
     def build_datasets(self) -> tuple[Dataset, Dataset]:
         if self.train_split is None or self.val_split is None:
             raise RuntimeError("train_split and val_split must be loaded before building datasets")
@@ -226,6 +237,7 @@ class UHVEDTrainer(BaseTrainer):
             masking_mode=self.train_masking_mode,
             split=self.train_split,
             sample_transform=partial(transform_manager, mode="train"),
+            mask_sampling=self.mask_sampling,
         )
         val_set = IMFuseDataset(
             root=self.input_dir,

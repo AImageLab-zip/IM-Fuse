@@ -45,6 +45,8 @@ custom_model_kwargs:
   num_cls: 5
   cc_modalities: 4
   layers: 6
+  learnable_filler: false
+  logit_scale: 1.0
 
 custom_loss_kwargs:
   num_classes: null
@@ -75,6 +77,12 @@ custom_trainer_kwargs:
   class_contrast_weight: 0.01
   modal_contrast_weight: 0.01
   cc_modalities: 4
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
+  mask_sampling: count_uniform
+  mae_patch_masking: true
+  mae_mask_ratio: 0.875
+  mae_mdp: 3
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -96,7 +104,7 @@ plateau_patience: null
 lr: 0.0012
 num_epochs: 1100
 validation_every: 10
-batch_size: 8
+batch_size: 4
 weight_decay: 0.0001
 num_workers: 8
 precision: fp32

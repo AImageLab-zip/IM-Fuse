@@ -73,6 +73,8 @@ The easiest workflow is:
   - `srmnet`
   - `ims2trans`
   - `mstkdnet`
+  - `adamm`
+  - `napscaf`
   - `mifpn`
   - `rfl`
   - `lckd`
@@ -93,6 +95,8 @@ The easiest workflow is:
   - `mmmvit`
   - `ims2trans`
   - `mstkdnet`
+  - `adamm`
+  - `napscaf`
   - `mifpn`
   - `rfl`
   - `unetmfi`
@@ -110,6 +114,8 @@ The easiest workflow is:
   - `srmnet`
   - `ims2trans`
   - `mstkdnet`
+  - `adamm`
+  - `napscaf`
   - `mifpn`
   - `rfl`
   - `lckd`
@@ -186,6 +192,8 @@ The easiest workflow is:
   - `mmmvit`
   - `ims2trans`
   - `mstkdnet`
+  - `adamm`
+  - `napscaf`
   - `mifpn`
   - `rfl`
   - `unetmfi`
@@ -413,6 +421,10 @@ Common trainer-specific keys and types:
 - `anatomy_contrastive_method`: string
   - `cos_sim`
   - `ssim`
+- `slices_per_patch`: integer (`napscaf`: axial slices drawn from each 3D patch per step)
+- `slice_sampling`: string enum (`napscaf`)
+  - `tumor`
+  - `random`
 
 ## Nulls and Lists
 
@@ -471,6 +483,10 @@ Recommended examples:
 - `src/mimose/data/configs/ims2trans_23.yaml`
 - `src/mimose/data/configs/mstkdnet_18.yaml`
 - `src/mimose/data/configs/mstkdnet_23.yaml`
+- `src/mimose/data/configs/adamm_18.yaml`
+- `src/mimose/data/configs/adamm_23.yaml`
+- `src/mimose/data/configs/napscaf_18.yaml`
+- `src/mimose/data/configs/napscaf_23.yaml`
 - `src/mimose/data/configs/mifpn_18.yaml`
 - `src/mimose/data/configs/mifpn_23.yaml`
 - `src/mimose/data/configs/rfl_18.yaml`

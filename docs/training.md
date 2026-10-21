@@ -705,6 +705,124 @@ distillation-term weights (`unetr_weight: 0.2`, `evd_weight: 1e8`,
 `weight_gsm: 1e11`) are copied as-is from legacy and are highly
 scale-sensitive to the bottleneck's spatial/channel dimensions.
 
+### AdaMM-specific notes
+
+AdaMM (`trainer: adamm`, `model: adamm`, `loss: adamm`) is built on legacy
+MST-KDNet's code (both by the same authors, both "Modified from ACN") and
+keeps its teacher/student contract: a "full" teacher branch always sees the
+true 4-channel volume, a "missing" student branch sees the volume
+zero-filled per the modality mask, and **only the student is evaluated**.
+The backbone is the plain Myronenko 3D U-Net (no UNETR bottleneck). On top
+of it the student adds:
+- an **Adapter Bank**: residual 1x1x1 bottleneck adapters after three
+  encoder stages, the bottleneck, and three decoder stages, plus dedicated
+  bottleneck fusion convs, one set per non-full modality combination,
+  selected by the sample's mask (the full-modality key skips them);
+- **GARM** (legacy `AdaptiveGraphEnhanceModule`): soft-assigns the adapted
+  and shared bottleneck features to 8 learnable graph nodes each, mixes them
+  with a GCN and a unified cross-graph attention pass, and re-projects onto
+  the voxels (missing-modality path only);
+- **LPGM**: a lesion-presence head on the last decoder feature. During
+  training it scales each tumor class's Dice term by `|p - y| + 1` and adds
+  a BCE presence term for both branches; at inference the student's
+  tumor-class outputs are zeroed wherever the head predicts absence
+  (`lpgm_gating: true`).
+
+The loss is legacy's co-training objective: presence-weighted Dice for both
+branches (`weight_mispath: 0.6`), prediction-consistency MSE with the same
+sigmoid rampup as MST-KDNet, bottleneck content MSE (`weight_content: 0.2`),
+the 1e-4-weighted Gram style loss, both presence BCEs, and a "global style"
+term over the concatenated `[c3d, style, c4d]` feature weighted `10e1`
+(`weight_gsm: 100.0`).
+
+Port deviations:
+- **Targets.** Legacy predicts overlapping WT/TC/ET regions plus background
+  with sigmoid outputs; like the MST-KDNet port, this port trains on MiMoSe's
+  one-hot classes (Dice over all classes, argmax at evaluation). LPGM
+  therefore predicts the presence of each tumor *class* (NCR, ED, ET), and
+  gating leaves the background channel untouched.
+- **Style discriminator dropped**, for the same reasons as in the MST-KDNet
+  port (2e-4 weight, Adam optimizer rebuilt every iteration).
+- **Dead legacy code is not ported**: the teacher's adapters and GARM (the
+  teacher only ever runs the full-modality key), GARM's unused
+  `MutualModule1` and `region_conv1/2`, and the adjacency matrices its
+  attention layer receives but never reads. The adapter set for the
+  all-missing mask, which never occurs, is omitted too.
+- **Per-sample masks.** Legacy draws one mask per batch at batch size 1;
+  this port routes every sample through its own mask's adapters, so any
+  batch size works.
+- **Global style loss.** Legacy indexes the batched bottleneck feature per
+  sample and pairs sample `i` with `i - 1`; at its batch size of 1 that pairs
+  each sample with itself, which `per_sample_statistics: true` keeps for
+  larger batches.
+
+As with MST-KDNet, this port uses cubic `patch_size: 128` crops instead of
+legacy's `(160, 192, 128)` (`style_size_scale: 1.875` rescales the style
+normaliser accordingly). Training follows legacy's `configs/brats.yml`:
+`optimizer: adam`, `lr: 0.0001`, `weight_decay: 1e-5`, `batch_size: 1`,
+`num_epochs: 400`, an epoch-wise `poly` schedule (power 0.9), and
+validation every 10 epochs. The published legacy repo is incomplete
+(`models/build.py` imports `smunetr`, `AdaMMKD_old`, `AdaMMKD_wo_GARM` and
+`AdaMMKD_wo_LPGM`, and `losses.py` imports `models.evd`/`models.slkd`, none
+of which are included), but every module the AdaMM model itself uses is
+present.
+
+### NAP-SCAF-specific notes
+
+NAP-SCAF (`trainer: napscaf`, `model: napscaf`, `loss: napscaf`) is the only
+2D model in this project: legacy trains a 2D network on 256x256 axial PNG
+slices. Its four modalities each get their own small convolutional encoder,
+a channel-attention transformer fuses them at every scale, and the decoder
+calibrates each skip connection with two gates: **SWG** (similarity-weighted
+gating against a "prior" feature, after **CERA** contrast-enhancing the skip
+feature) applied before and again after each skip merge. The prior features
+come from the **NAP** path: a DenseNet121-encoder VAE reconstructs the input,
+and a small U-Net turns the reconstruction into multi-scale features.
+
+The port keeps the 2D network unchanged (58.3M parameters, matching the
+paper) and adapts only how it meets MiMoSe's 3D pipeline:
+- **Training on slices.** Each training step takes the usual 3D patch
+  (`patch_size: 128`) and draws `slices_per_patch: 16` axial slices from it,
+  trained as one batch of 2D images sharing the patch's modality mask
+  (`trainer: napscaf`). By default (`slice_sampling: tumor`) tumor-containing
+  slices are taken first, mirroring legacy's preprocessing, which keeps only
+  tumor slices (5 per case); `random` samples uniformly instead.
+- **Volume inference.** `predict()` runs the network on every axial slice of
+  the full volume (in chunks of `slice_chunk` slices), zero-padding the
+  in-plane size to a multiple of 32, and stacks the softmax maps back into a
+  3D prediction, so no sliding window is needed.
+- **Shared protocol.** Like every other model, NAP-SCAF uses the shared
+  subject z-score preprocessing (legacy clips each volume to its 1st-99th
+  percentiles and rescales to [0, 1] PNGs) and trains with random
+  missing-modality masks (legacy trains on full modalities only and
+  zero-fills missing ones at test time; zero-filling is what this port does
+  too).
+
+Two legacy behaviours are kept as-is because they define what the published
+model actually is:
+- **The NAP prior is never trained.** Legacy runs the VAE reconstruction
+  under `torch.no_grad()` and its forward pass returns plain logits, so the
+  reconstruction/KL terms in its `losses.py` never apply. The prior encoder
+  therefore stays at its ImageNet DenseNet121 weights (with a freshly
+  initialised 4-channel stem) and the prior decoder at its random
+  initialisation; only their BatchNorm running statistics change. The
+  reparameterisation noise is also sampled at inference, so predictions are
+  slightly stochastic. `pretrained_prior: true` loads the ImageNet weights
+  (downloaded once by torchvision).
+- **Unused merge convs.** The last decoder stage of both the prior U-Net and
+  the main decoder builds a merge conv that is never called; they are kept
+  so the parameter count matches the paper.
+
+Not ported: the three intermediate output heads legacy computes and then
+discards (only the last decoder stage's output is returned), the unused
+DenseNet121 classifier, and the `einops` dependency (replaced by reshapes).
+Training follows legacy's `train_brats.py`: `optimizer: adamw`, `lr: 1e-4`,
+`weight_decay: 1e-4`, `betas: [0.9, 0.99]`, a constant learning rate
+(`scheduler: step` with `step_gamma: 1.0`), mixed precision, and the
+`0.5 * CE + 0.5 * soft Dice` loss over softmax outputs (background
+included). Legacy's 150 epochs over ~5 fixed slices per case (~750 slices
+per case) become `num_epochs: 50` x 16 slices per patch (~800).
+
 ### MIFPN-specific notes
 
 MIFPN (`trainer: mifpn`, `model: mifpn`, `loss: mifpn`) needed its own new

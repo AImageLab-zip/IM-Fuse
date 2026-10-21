@@ -9,6 +9,17 @@ from torch.utils.data import Dataset
 
 from mimose.datasets.config import MaskingMode
 
+MASK_SAMPLING_MODES = ("subset_uniform", "count_uniform")
+
+
+def sample_count_uniform_mask(num_modalities: int) -> torch.Tensor:
+    """Number of present modalities ~ U{1..M}, then a uniform subset of that size (U-HVED/ShaSpec/M3AE/MCPL)."""
+    count = int(torch.randint(1, num_modalities + 1, size=(1,)).item())
+    present = torch.randperm(num_modalities)[:count]
+    mask = torch.zeros(num_modalities, dtype=torch.bool)
+    mask[present] = True
+    return mask
+
 
 class BaseDataset(Dataset, ABC):
     def __init__(
@@ -20,11 +31,15 @@ class BaseDataset(Dataset, ABC):
         sample_transform: Callable[[torch.Tensor, torch.Tensor], tuple[Any, Any]] | None = None,
         image_transforms: Callable[[torch.Tensor], Any] | None = None,
         target_transforms: Callable[[torch.Tensor], Any] | None = None,
+        mask_sampling: str = "subset_uniform",
     ) -> None:
         self.root = Path(root)
         if not self.root.is_dir():
             raise ValueError(f"Dataset directory not found: {self.root}")
+        if mask_sampling not in MASK_SAMPLING_MODES:
+            raise ValueError(f"mask_sampling must be one of {MASK_SAMPLING_MODES}, got {mask_sampling!r}")
 
+        self.mask_sampling = mask_sampling
         self.masking_mode = masking_mode
         self.mask_patterns = mask_patterns
         self.sample_transform = sample_transform
@@ -70,6 +85,8 @@ class BaseDataset(Dataset, ABC):
     def resolve_mask(self, raw_mask: Any) -> torch.Tensor:
         if raw_mask is None:
             if self.masking_mode is MaskingMode.RANDOM and self.mask_patterns is not None:
+                if self.mask_sampling == "count_uniform":
+                    return sample_count_uniform_mask(self.mask_patterns.shape[-1])
                 index = int(torch.randint(len(self.mask_patterns), size=(1,)).item())
                 return self.mask_patterns[index].clone()
 

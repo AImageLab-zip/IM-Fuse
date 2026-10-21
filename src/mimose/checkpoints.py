@@ -33,3 +33,17 @@ def load_weights_only_checkpoint(
         )
     load_model(model, str(path), strict=strict, device=str(device))
     return model
+
+
+def assert_finite_weights(model: torch.nn.Module, checkpoint_path: str | Path) -> None:
+    """Refuse checkpoints whose weights diverged: NaN logits silently argmax to background."""
+    bad = [
+        name
+        for name, tensor in model.state_dict().items()
+        if tensor.is_floating_point() and not bool(torch.isfinite(tensor).all())
+    ]
+    if bad:
+        raise ValueError(
+            f"Checkpoint {checkpoint_path} has non-finite weights in {len(bad)} tensors "
+            f"(e.g. {bad[0]}); training most likely diverged."
+        )

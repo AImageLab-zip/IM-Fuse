@@ -48,6 +48,8 @@ class TrainerKind(StrEnum):
     MCPL = "mcpl"
     MAMBAVITAKD = "mambavitakd"
     PARETO = "pareto"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class ModelKind(StrEnum):
@@ -79,11 +81,14 @@ class ModelKind(StrEnum):
     INOUTFUSION = "inoutfusion"
     MAMBAVITAKD = "mambavitakd"
     MCPL = "mcpl"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class TransformKind(StrEnum):
     IMFUSE = "imfuse"
     TINYMIMOSA = "tinymimosa"
+    SHASPEC = "shaspec"
 
 
 class OptimizerKind(StrEnum):
@@ -120,6 +125,8 @@ class LossKind(StrEnum):
     MAMBAVITAKD = "mambavitakd"
     MANYMIMOSASKD = "manymimosaskd"
     MCPL = "mcpl"
+    ADAMM = "adamm"
+    NAPSCAF = "napscaf"
 
 
 class MaskingMode(StrEnum):

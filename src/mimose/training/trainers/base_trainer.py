@@ -52,6 +52,8 @@ CONSOLE = Console()
 # would make the penalty (and therefore average HD95) inconsistent. Mirrors
 # mimose.testing.pipeline.BRATS_HD95_PENALTY.
 BRATS_FULL_VOLUME_SHAPE = (182, 218, 182)
+DEFAULT_GRAD_CLIP_NORM = 12.0
+MAX_CONSECUTIVE_NONFINITE_STEPS = 20
 BRATS_HD95_PENALTY = float(np.sqrt(sum(dim**2 for dim in BRATS_FULL_VOLUME_SHAPE)))
 
 
@@ -122,6 +124,12 @@ class BaseTrainer(AbstractTrainer):
         self.device = self._resolve_device()
         self.best_val_dice = getattr(self, "best_val_dice", float("-inf"))
         self._train_iterator = getattr(self, "_train_iterator", None)
+        shared_kwargs = self.custom_trainer_kwargs or {}
+        clip = shared_kwargs.get("grad_clip_norm", DEFAULT_GRAD_CLIP_NORM)
+        self.grad_clip_norm = None if clip is None else float(clip)
+        self.skip_nonfinite_loss = bool(shared_kwargs.get("skip_nonfinite_loss", False))
+        self.nonfinite_steps_skipped = 0
+        self._consecutive_nonfinite_steps = 0
         self.amp_enabled = self.precision != Precision.FP32 and self.device.type == "cuda"
         self.use_grad_scaler = self.precision == Precision.FP16 and self.device.type == "cuda"
         self.grad_scaler = GradScaler("cuda", enabled=self.use_grad_scaler)
@@ -621,6 +629,8 @@ class BaseTrainer(AbstractTrainer):
         current_lr = self._current_lr()
         if current_lr is not None:
             payload["lr"] = current_lr
+        if self.skip_nonfinite_loss:
+            payload["train/nonfinite_steps_skipped"] = self.nonfinite_steps_skipped
 
         self.wandb_run.log(payload)
 
@@ -965,17 +975,63 @@ class BaseTrainer(AbstractTrainer):
             raise RuntimeError("optimizer must be initialized before backward/step")
 
         self.optimizer.zero_grad()
+        if self.skip_nonfinite_loss and not bool(torch.isfinite(loss.detach()).all()):
+            self._record_nonfinite_step()
+            return
+
         if self.use_grad_scaler:
             self.grad_scaler.scale(loss).backward()
             self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=12.0)
+            self._clip_gradients()
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
+            self._consecutive_nonfinite_steps = 0
             return
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=12.0)
+        self._clip_gradients()
+        if self.skip_nonfinite_loss and not self._gradients_finite():
+            self.optimizer.zero_grad()
+            self._record_nonfinite_step()
+            return
         self.optimizer.step()
+        self._consecutive_nonfinite_steps = 0
+
+    def _clip_gradients(self) -> None:
+        if self.grad_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
+
+    def _gradients_finite(self) -> bool:
+        return all(
+            bool(torch.isfinite(p.grad).all())
+            for p in self.model.parameters()
+            if p.grad is not None
+        )
+
+    def _record_nonfinite_step(self) -> None:
+        self.nonfinite_steps_skipped += 1
+        self._consecutive_nonfinite_steps += 1
+        if self._consecutive_nonfinite_steps >= MAX_CONSECUTIVE_NONFINITE_STEPS:
+            raise RuntimeError(
+                f"{self._consecutive_nonfinite_steps} consecutive non-finite losses/gradients; aborting"
+            )
+
+    def _reset_param_group_lrs(self, lrs: list[float] | None = None) -> None:
+        """Restore each param group's lr (and initial_lr) before rebuilding a scheduler at a phase switch.
+
+        Chainable torch schedulers start from the current group['lr'], so rebuilding one after a
+        schedule decayed to 0 would otherwise keep training at lr 0.
+        """
+        if self.optimizer is None:
+            raise RuntimeError("optimizer must be initialized before resetting learning rates")
+        groups = self.optimizer.param_groups
+        if lrs is None:
+            lrs = [group.get("initial_lr", group["lr"]) for group in groups]
+        if len(lrs) != len(groups):
+            raise ValueError(f"expected {len(groups)} learning rates, got {len(lrs)}")
+        for group, lr in zip(groups, lrs):
+            group["lr"] = float(lr)
+            group["initial_lr"] = float(lr)
 
     def _load_pretrain(self) -> None:
         if self.pretrain is None:

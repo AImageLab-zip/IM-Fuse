@@ -56,6 +56,10 @@ REGIONS = brc.REGIONS  # ["WT", "TC", "ET"]
 REGION_LABELS = {"WT": "Whole Tumor", "TC": "Tumor Core", "ET": "Enhancing Tumor"}
 METRICS = ["Dice", "HD95"]
 EXPECTED_FOLDS = brc.EXPECTED_FOLDS  # ["fold1", "fold3", "fold5"]
+# This script's official BraTS groups require all five folds; the internal
+# MB-96 groups only ever ran folds 1/3/5 and keep EXPECTED_FOLDS. The sibling
+# scripts that import EXPECTED_FOLDS are unaffected.
+OFFICIAL_EXPECTED_FOLDS = brc.OFFICIAL_EXPECTED_FOLDS
 MODALITY_KEY_ORDER = brc.MODALITY_KEY_ORDER  # 15 combinations
 DATASET_LABELS = {"18": "BraTS 2018", "23": "BraTS 2025-pre", "25": "BraTS 2025"}
 # mimosa_[size] models (mimosa_base, mimosa_large, ...) are excluded here and
@@ -77,9 +81,6 @@ EXCLUDED_MODELS = {
     brc.normalize(n)
     for n in (
         "tinymimosaweighted",
-        "shaspec",
-        "mstkdnet",
-        "m3ae",
         "manymimosas",
         "tinymimosa",
         "olduhved",
@@ -164,6 +165,7 @@ def discover(results_dir):
             glob.glob(os.path.join(full, "results_internal_fold*.xlsx")),
             key=lambda p: int(re.search(r"fold(\d+)", p).group(1)),
         )
+        brc.drop_stale_v1(results_dir, model_raw, dsnum, fold_files, internal_fold_files)
         if not fold_files and not internal_fold_files:
             continue
 
@@ -228,7 +230,9 @@ def aggregate(folds: dict, expected: list[str] | None = None) -> dict:
     return out
 
 
-def aggregate_error(folds: dict, region: str, legacy_region_block: dict) -> float | None:
+def aggregate_error(
+    folds: dict, region: str, legacy_region_block: dict, expected: list[str] | None = None
+) -> float | None:
     """Average, over the 15 modality combinations, of (our mean-over-folds Dice
     - legacy Dice) at that combination. legacy_region_block is
     legacy[dataset][region] ({mkey: value}); combos with no legacy value are
@@ -241,7 +245,7 @@ def aggregate_error(folds: dict, region: str, legacy_region_block: dict) -> floa
         legacy_val = legacy_region_block.get(mkey)
         if legacy_val is None:
             continue
-        new_vals = [folds[fold][mkey][region] for fold in EXPECTED_FOLDS]
+        new_vals = [folds[fold][mkey][region] for fold in expected or EXPECTED_FOLDS]
         diffs.append(statistics.fmean(new_vals) - legacy_val)
     return statistics.fmean(diffs) if diffs else None
 
@@ -265,8 +269,9 @@ def build_class_rows(models: dict, internal_models: dict, display_names: dict, l
         for label, source, dsnum in GROUPS:
             source_dict = models if source == "official" else internal_models
             folds = source_dict.get(model_norm, {}).get(dsnum)
-            if folds and is_complete(folds):
-                stats = aggregate(folds)
+            expected = OFFICIAL_EXPECTED_FOLDS if source == "official" else EXPECTED_FOLDS
+            if folds and is_complete(folds, expected):
+                stats = aggregate(folds, expected)
                 if label in OFFICIAL_GROUP_LABELS:
                     dataset = brc.DATASETS.get(dsnum)
                     for region in REGIONS:
@@ -274,7 +279,7 @@ def build_class_rows(models: dict, internal_models: dict, display_names: dict, l
                             mkey: vals.get(model_norm)
                             for mkey, vals in legacy.get(dataset, {}).get(region, {}).items()
                         }
-                        stats[region]["Error"] = aggregate_error(folds, region, legacy_region_block)
+                        stats[region]["Error"] = aggregate_error(folds, region, legacy_region_block, expected)
                 group_stats[label] = stats
                 any_present = True
             else:
@@ -451,7 +456,7 @@ def main():
         caption = (
             f"{REGION_LABELS[region]} ({region}): mean $\\pm$ std Dice (\\%) and HD95 (mm) "
             "over all modality-presence combinations and folds, per dataset. BraTS18/BraTS25-pre "
-            "are the official test splits, averaged over our three folds; MB-96 - BraTS18 chp/"
+            "are the official test splits, averaged over our five folds; MB-96 - BraTS18 chp/"
             "MB-96 - BraTS25-pre chp are the internal cohort, scored with the BraTS18-trained and "
             "BraTS25-pre-trained checkpoints respectively, also averaged over the three fold "
             "checkpoints. BraTS18/BraTS25-pre additionally show Avg Error, the mean over all "

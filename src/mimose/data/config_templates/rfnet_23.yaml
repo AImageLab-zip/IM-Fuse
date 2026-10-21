@@ -50,6 +50,8 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -68,10 +70,10 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.004
+lr: 0.0002
 num_epochs: 300
 validation_every: 10
-batch_size: 4
+batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
 precision: fp32

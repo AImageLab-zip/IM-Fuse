@@ -1,11 +1,22 @@
 # Combined M3AE reference config for BraTS 2023.
-# This mirrors legacy M3AE fine-tuning defaults as closely as possible under
-# the current MiMoSe CLI/config API. Legacy M3AE also has a separate
-# masked-autoencoder pretraining stage and a cross-view consistency loss
-# during fine-tuning. The pretraining stage IS reproduced here (opt-in via
-# custom_trainer_kwargs.pretrain_fraction below); the cross-view consistency
-# loss and deep supervision are reproduced too, via a second masked view per
-# step (see custom_trainer_kwargs.deep_supervised / consistency_weight).
+# This mirrors legacy M3AE (legacy/m3ae, README commands) as closely as possible
+# under the MiMoSe API, keeping this framework's batch size and lr:
+# - pretraining (legacy pretrain.py, 600 epochs, wd 0): masked-autoencoder
+#   reconstruction with 87.5% of 16^3 tokens plus up to 3 whole modalities
+#   masked, `limage` template trained at limage_lr; its cosine schedule spans
+#   exactly the pretrain epochs (cosine_t_max). Here it is the first
+#   pretrain_fraction (600 of 900) epochs of a single run.
+# - fine-tuning (legacy train.py, 300 epochs, wd 1e-4): restarts the cosine
+#   schedule from the base lr, with deep supervision and a cross-view
+#   consistency MSE on the out4 logits (legacy weight_kl = 0.1).
+# - loss: legacy EDiceLoss (0.7 * squared-denominator region Dice + 0.3 * BCE
+#   over ET/TC/WT), computed on regions summed from the framework's 4-class
+#   softmax output (custom_loss_kwargs.formulation: legacy_region).
+# lr is upstream's 3e-4 @ batch 1 scaled linearly to batch 2.
+# Deviations: `limage` is a single 128^3 template, not a full-volume parameter
+# sliced at each crop location; the model outputs a 4-class softmax instead of
+# 3 sigmoid region channels; each dataset is pretrained on itself (legacy
+# reused its BraTS 2023 pretraining).
 #
 # Note: the current CLI still expects command-specific flat YAML files, so this
 # combined file is a reference/source-of-truth file rather than a single file
@@ -47,6 +58,7 @@ custom_model_kwargs:
 custom_loss_kwargs:
   num_classes: null
   log_clamp_min: 0.005
+  formulation: legacy_region
 
 custom_trainer_kwargs:
   iter_per_epoch: null
@@ -59,9 +71,10 @@ custom_trainer_kwargs:
   # the first pretrain_fraction of num_epochs reconstructs the (masked) input
   # and trains `limage` at limage_lr; the rest freezes `limage` and trains
   # segmentation as usual. Set to 0.0 to disable (single-stage, as before).
-  pretrain_fraction: 0.15
+  pretrain_fraction: 0.6667
   limage_lr: 0.005
   limage_reg_weight: 0.005
+  pretrain_weight_decay: 0.0
   # Deep supervision + cross-view consistency (legacy M3AE fine-tuning).
   # Each step forwards a second, independently-masked view of the same
   # crop; both views are deep-supervised and their coarse out4 logits are
@@ -69,7 +82,13 @@ custom_trainer_kwargs:
   # consistency_weight: 0.0 keeps deep supervision but drops the 2nd view;
   # deep_supervised: false falls back to plain single-output Dice+CE.
   deep_supervised: true
-  consistency_weight: 1.0
+  consistency_weight: 0.1
+  mask_sampling: count_uniform
+  mae_patch_masking: true
+  mae_mask_ratio: 0.875
+  mae_mdp: 3
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -78,7 +97,7 @@ momentum: 0.9
 scheduler: cosine
 poly_total_iters: null
 poly_power: null
-cosine_t_max: 300
+cosine_t_max: 600
 cosine_eta_min: 0.0
 step_step_size: null
 step_gamma: null
@@ -88,11 +107,11 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0024
-num_epochs: 300
+lr: 0.0006
+num_epochs: 900
 validation_every: 10
-batch_size: 8
-weight_decay: 0.00001
+batch_size: 2
+weight_decay: 0.0001
 num_workers: 8
 precision: fp32
 compile: false

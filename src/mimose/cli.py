@@ -1847,8 +1847,8 @@ def push(
         False,
         "--all-folds",
         help=(
-            "Push every cross-validation fold run for this config (folds 1, 3, 5, matching "
-            "allsbatcher18.sh/allsbatcher23.sh), then push fold 1's checkpoint a second "
+            "Push every cross-validation fold run for this config (folds 1-5), then push "
+            "fold 1's checkpoint a second "
             "time without a suffix so it's available as the default checkpoint for "
             "--online testing. Incompatible with --run-suffix and --checkpoint-path."
         ),

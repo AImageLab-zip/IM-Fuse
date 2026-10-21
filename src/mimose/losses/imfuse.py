@@ -20,12 +20,24 @@ def dice_loss(
     *,
     num_cls: int,
     eps: float = 1e-7,
+    per_sample: bool = False,
 ) -> torch.Tensor:
-    """Legacy IMFuse soft Dice loss over one-hot targets."""
+    """Legacy IMFuse soft Dice loss over one-hot targets.
+
+    The default pools the sums over the whole batch; ``per_sample=True`` computes Dice per
+    sample and averages, which matches originals trained at batch size 1.
+    """
     if output.ndim != 5 or target.ndim != 5:
         raise ValueError("dice_loss expects 5D tensors shaped [B, C, H, W, D]")
 
     target = target.float()
+    if per_sample:
+        dims = (2, 3, 4)
+        numerator = torch.sum(output[:, :num_cls] * target[:, :num_cls], dim=dims)
+        denominator = torch.sum(output[:, :num_cls], dim=dims) + torch.sum(target[:, :num_cls], dim=dims)
+        per_class = 2.0 * numerator / (denominator + eps)
+        return 1.0 - per_class.mean(dim=1).mean()
+
     dice = output.new_tensor(0.0)
     for class_index in range(num_cls):
         numerator = torch.sum(output[:, class_index] * target[:, class_index])

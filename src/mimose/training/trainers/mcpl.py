@@ -9,12 +9,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from mimose.datasets import IMFuseDataset, MaskingMode
+from mimose.datasets.base import sample_count_uniform_mask
 from mimose.datasets.imfuse import MASK_PATTERNS
 from mimose.enums import Precision, TransformKind
 from mimose.losses.config import LossConfig
 from mimose.losses.mcpl import class_contrastive_loss, mcpl_reconstruction_loss
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
+from mimose.training.masking import mae_patch_gate
 from mimose.training.trainers.base_trainer import BaseTrainer
 from mimose.training.transforms import build_transform_manager
 from mimose.training.transforms.base_transforms import TransformManager
@@ -67,6 +69,7 @@ class MCPLTrainer(BaseTrainer):
         self.transform_kind = TransformKind(trainer_kwargs.get("transform_kind", TransformKind.IMFUSE))
         self.train_masking_mode = MaskingMode(trainer_kwargs.get("train_masking_mode", MaskingMode.RANDOM))
         self.val_masking_mode = MaskingMode(trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION))
+        self.mask_sampling = str(trainer_kwargs.get("mask_sampling", "subset_uniform"))
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -90,6 +93,10 @@ class MCPLTrainer(BaseTrainer):
             raise ValueError("pretrain_fraction must be within [0, 1]")
         self.pretrain_epochs = round(self.pretrain_fraction * num_epochs)
         self.limage_lr = float(trainer_kwargs.get("limage_lr", 0.005))
+        # Upstream pretrain.py masks 87.5% of 16^3 tokens plus up to 3 whole modalities (mdp=3).
+        self.mae_patch_masking = bool(trainer_kwargs.get("mae_patch_masking", True))
+        self.mae_mask_ratio = float(trainer_kwargs.get("mae_mask_ratio", 0.875))
+        self.mae_mdp = int(trainer_kwargs.get("mae_mdp", 3))
         self._in_pretrain: bool | None = None
 
         effective_batch_size = 1 if batch_size is None else batch_size
@@ -161,10 +168,13 @@ class MCPLTrainer(BaseTrainer):
         entering_finetune = self._in_pretrain is True and not in_pretrain
         self._in_pretrain = in_pretrain
         model = self._model_for_state()
-        if model is not None:
+        if model is not None and getattr(model, "learnable_filler", True):
             model.limage.requires_grad_(in_pretrain)
 
         if entering_finetune and self.scheduler_config is not None:
+            # Upstream fine-tunes with a fresh optimizer/schedule (separate script); restart from the
+            # configured LRs, otherwise the rebuilt cosine inherits the lr=0 the pretrain schedule ended at.
+            self._reset_param_group_lrs([self.optimizer_config.lr, self.limage_lr])
             remaining_epochs = self.num_epochs - self.pretrain_epochs
             previous_t_max = self.scheduler_config.kwargs.get("T_max")
             self.scheduler_config.kwargs["T_max"] = remaining_epochs
@@ -310,6 +320,7 @@ class MCPLTrainer(BaseTrainer):
             masking_mode=self.train_masking_mode,
             split=self.train_split,
             sample_transform=partial(transform_manager, mode="train"),
+            mask_sampling=self.mask_sampling,
         )
         val_set = IMFuseDataset(
             root=self.input_dir,
@@ -406,6 +417,15 @@ class MCPLTrainer(BaseTrainer):
     def _pretrain_step(self, batch: dict[str, Any]) -> dict[str, float]:
         images = batch["images"].to(self.device, non_blocking=True)
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
+        if self.mae_patch_masking:
+            mask = mae_patch_gate(
+                images.shape[0],
+                num_modalities=images.shape[1],
+                patch_shape=self.patch_size,
+                mask_ratio=self.mae_mask_ratio,
+                mdp=self.mae_mdp,
+                device=self.device,
+            )
         with self._autocast_context():
             recon, cluster_centers = self.model(images, mask, mode="reconstruct")
             metrics = mcpl_reconstruction_loss(
@@ -431,6 +451,11 @@ class MCPLTrainer(BaseTrainer):
         uses (matches legacy MCPL train.py's duplicated-batch dual-view
         trick, adapted to MiMoSe's per-sample mask instead of a fixed
         per-batch modality-dropout count)."""
+        if self.mask_sampling == "count_uniform":
+            masks = torch.stack(
+                [sample_count_uniform_mask(reference_mask.shape[1]) for _ in range(reference_mask.shape[0])]
+            )
+            return masks.to(device=reference_mask.device, dtype=reference_mask.dtype)
         indices = torch.randint(len(MASK_PATTERNS), size=(reference_mask.shape[0],))
         return MASK_PATTERNS[indices].to(device=reference_mask.device, dtype=reference_mask.dtype)
 

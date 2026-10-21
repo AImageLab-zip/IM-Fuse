@@ -171,6 +171,6 @@ def test_packaged_mstkdnet_configs_use_mstkdnet_training_contract(config_name: s
     assert config["loss"] == "mstkdnet"
     assert config["custom_trainer_kwargs"]["patch_size"] == 128
     assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
-    assert config["scheduler"] == "poly"
+    assert config["scheduler"] == "warmuppoly"
     assert config["optimizer"] == "adam"
-    assert config["batch_size"] == 1
+    assert config["batch_size"] == 2

@@ -38,9 +38,10 @@ loss: uhved
 
 custom_model_kwargs:
   num_cls: 5
+  test_time_samples: 10
 
 custom_loss_kwargs:
-  eps: 0.001
+  eps: 1.0e-7
   log_clamp_min: 0.005
 
 custom_trainer_kwargs:
@@ -50,18 +51,22 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  mask_sampling: count_uniform
+  final_from_best: true
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
 momentum: 0.9
 
-scheduler: plateau
+scheduler: step
 poly_total_iters: null
 poly_power: null
 cosine_t_max: null
 cosine_eta_min: null
-step_step_size: null
-step_gamma: null
+step_step_size: 50
+step_gamma: 0.25
 multistep_milestones: null
 multistep_gamma: null
 plateau_mode: min

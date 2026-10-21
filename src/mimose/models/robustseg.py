@@ -52,7 +52,8 @@ class GeneralConv3d(nn.Module):
             padding_mode=pad_type,
             bias=True,
         )
-        self.drop = nn.Dropout3d(p=drop_rate) if drop_rate > 0 else None
+        # Elementwise dropout as in legacy F.dropout (Dropout3d would drop whole channels).
+        self.drop = nn.Dropout(p=drop_rate) if drop_rate > 0 else None
         self.norm = normalization(out_ch, norm) if norm is not None else None
         if act_type == "relu":
             self.activation: nn.Module | None = nn.ReLU(inplace=True)

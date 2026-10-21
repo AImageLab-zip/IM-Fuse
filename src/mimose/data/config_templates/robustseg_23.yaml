@@ -42,6 +42,7 @@ custom_model_kwargs:
 custom_loss_kwargs:
   num_classes: null
   log_clamp_min: 0.005
+  per_sample_dice: true
 
 custom_trainer_kwargs:
   iter_per_epoch: null
@@ -50,6 +51,8 @@ custom_trainer_kwargs:
   transform_kind: imfuse
   train_masking_mode: random
   val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
 
 optimizer: adam
 betas: [0.9, 0.999]
@@ -68,10 +71,10 @@ plateau_mode: null
 plateau_factor: null
 plateau_patience: null
 
-lr: 0.0012
+lr: 0.0002
 num_epochs: 300
 validation_every: 10
-batch_size: 8
+batch_size: 2
 weight_decay: 0.0001
 num_workers: 8
 precision: fp32

@@ -183,13 +183,14 @@ def test_packaged_mambavitakd_configs_use_mambavitakd_training_contract(
     assert config["trainer"] == "mambavitakd"
     assert config["model"] == "mambavitakd"
     assert config["loss"] == "mambavitakd"
-    assert config["precision"] == "fp16"
+    assert config["precision"] == "fp32"
     assert config["seed"] == 999
     assert config["crop_min_size"] == (128, 128, 128)
-    assert config["custom_trainer_kwargs"]["patch_size"] == 80
+    assert config["custom_trainer_kwargs"]["patch_size"] == 96
+    assert config["custom_model_kwargs"]["patch_size"] == 96
     assert config["custom_trainer_kwargs"]["transform_kind"] == "imfuse"
     assert config["custom_trainer_kwargs"]["teacher_pretrain_fraction"] == 0.2308
-    assert config["custom_trainer_kwargs"]["teacher_lr"] == 0.006
+    assert config["custom_trainer_kwargs"]["teacher_lr"] == 0.0002
     assert config["custom_loss_kwargs"]["kd_weight"] == 10.0
     assert config["custom_loss_kwargs"]["proto_weight"] == 0.1
     assert config["custom_loss_kwargs"]["attn_weight"] == 0.1

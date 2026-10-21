@@ -710,8 +710,8 @@ def run_export_from_merged(merged: dict[str, object]) -> Path:
     )
 
 
-# Cross-validation folds trained by allsbatcher18.sh / allsbatcher23.sh for every model.
-PUSH_ALL_FOLDS: tuple[int, ...] = (1, 3, 5)
+# All five cross-validation folds; folds 2/4 were trained separately from allsbatcher18.sh / allsbatcher23.sh.
+PUSH_ALL_FOLDS: tuple[int, ...] = (1, 2, 3, 4, 5)
 
 # Fold whose checkpoint is re-uploaded a second time under the run's unsuffixed name, so
 # testers (e.g. `mimose test --online` with no --run-suffix) can grab a default checkpoint.
@@ -789,6 +789,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         build_model_config,
     )
     from mimose.training.trainers import (
+        AdaMMTrainer,
         DCSegTrainer,
         IMFuseTrainer,
         IMS2TransTrainer,
@@ -801,6 +802,7 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         MCPLTrainer,
         MIFPNTrainer,
         MSTKDTrainer,
+        NAPSCAFTrainer,
         ParetoTrainer,
         RFLTrainer,
         RobustSegTrainer,
@@ -839,6 +841,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MCPL: MCPLTrainer,
         TrainerKind.MAMBAVITAKD: MambaVitAKDTrainer,
         TrainerKind.PARETO: ParetoTrainer,
+        TrainerKind.ADAMM: AdaMMTrainer,
+        TrainerKind.NAPSCAF: NAPSCAFTrainer,
     }
     try:
         trainer_class = trainer_map[trainer_kind]
@@ -866,6 +870,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MCPL: TrainingModelKind.MCPL,
         TrainerKind.MAMBAVITAKD: TrainingModelKind.MAMBAVITAKD,
         TrainerKind.PARETO: TrainingModelKind.ELASTICUNET,
+        TrainerKind.ADAMM: TrainingModelKind.ADAMM,
+        TrainerKind.NAPSCAF: TrainingModelKind.NAPSCAF,
     }
     default_loss_map = {
         TrainerKind.UHVED: "uhved",
@@ -884,6 +890,8 @@ def _build_trainer_instance_from_merged(merged: dict[str, object]):
         TrainerKind.MCPL: "mcpl",
         TrainerKind.MAMBAVITAKD: "mambavitakd",
         TrainerKind.PARETO: "tinymimosa",
+        TrainerKind.ADAMM: "adamm",
+        TrainerKind.NAPSCAF: "napscaf",
     }
     default_model = default_model_map.get(trainer_kind, TrainingModelKind.IMFUSE)
     default_loss = default_loss_map.get(trainer_kind, "imfuse")

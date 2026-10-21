@@ -61,16 +61,19 @@ class ShaSpecTrainer(BaseTrainer):
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
-        # Two-stage schedule matching legacy ShaSpec's two separate train_SS.py
-        # runs: a full-modality warmup (no missing-modality dropout), then a
-        # second run -- resumed from the warmup checkpoint with a fresh
-        # optimizer/scheduler -- trained with train_masking_mode for the rest
-        # of training. Disabled by default (warmup_fraction=0.0).
+        # Two-stage schedule matching legacy ShaSpec's two train_SS.py runs: a
+        # full-modality warmup (no missing-modality dropout), then a second run
+        # with train_masking_mode for the rest of training. Upstream's second run
+        # resumes the optimizer (momentum kept) and continues the same poly
+        # schedule; restart_schedule_at_warmup_end=True instead rebuilds the
+        # optimizer and restarts the schedule. Disabled by default (warmup_fraction=0.0).
         self.warmup_fraction = float(trainer_kwargs.get("warmup_fraction", 0.0))
         if not 0.0 <= self.warmup_fraction <= 1.0:
             raise ValueError("warmup_fraction must be within [0, 1]")
         self.warmup_epochs = round(self.warmup_fraction * num_epochs)
         self._in_warmup: bool | None = None
+        self.restart_schedule_at_warmup_end = bool(trainer_kwargs.get("restart_schedule_at_warmup_end", False))
+        self.mask_sampling = str(trainer_kwargs.get("mask_sampling", "subset_uniform"))
 
         effective_batch_size = 1 if batch_size is None else batch_size
         effective_num_workers = 0 if num_workers is None else num_workers
@@ -121,7 +124,7 @@ class ShaSpecTrainer(BaseTrainer):
         if self.train_set is not None:
             self.train_set.masking_mode = MaskingMode.FULL if in_warmup else self.train_masking_mode
 
-        if entering_main and self.scheduler_config is not None:
+        if entering_main and self.scheduler_config is not None and self.restart_schedule_at_warmup_end:
             remaining_epochs = self.num_epochs - self.warmup_epochs
             self._build_optimizer()
             previous_total_iters = self.scheduler_config.kwargs.get("total_iters")
@@ -262,6 +265,7 @@ class ShaSpecTrainer(BaseTrainer):
             masking_mode=self.train_masking_mode,
             split=self.train_split,
             sample_transform=partial(transform_manager, mode="train"),
+            mask_sampling=self.mask_sampling,
         )
         val_set = IMFuseDataset(
             root=self.input_dir,

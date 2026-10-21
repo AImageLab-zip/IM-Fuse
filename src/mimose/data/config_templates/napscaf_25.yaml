@@ -1,0 +1,116 @@
+# Combined NAP-SCAF reference config for BraTS 2025.
+# This mirrors legacy NAP-SCAF defaults (legacy/NAP-SCAF/scripts/train_brats.py
+# and README) as closely as possible under the current MiMoSe CLI/config API.
+#
+# Note: legacy NAP-SCAF is a 2D network trained on axial slices. This port
+# keeps the 2D network unchanged and trains it on axial slices drawn from the
+# usual 3D patches (slices_per_patch per patch, tumor slices first, like
+# legacy's tumor-slice preprocessing); validation/testing run it slice by
+# slice over the whole volume. Like every other model here it uses the shared
+# z-score preprocessing and random missing-modality masks during training
+# (legacy trains on full modalities only and zero-fills missing ones at test
+# time). See docs/training.md for the full rationale.
+
+# preprocess
+input_dir: /path/to/unpacked
+output_dir: /path/to/preprocessed/napscaf-preprocessed/
+dataset_type: brats25
+
+crop_mode: non_empty
+crop_size: null
+crop_min_size: [128, 128, 128]
+
+clamp_mode: none
+clamp_percentile: null
+clamp_min: null
+clamp_max: null
+
+norm_mode: subject_zscore
+norm_min_max_range: null
+norm_mean: null
+norm_std: null
+
+yes: false
+
+# training
+data_dir: /path/to/preprocessed/napscaf-preprocessed
+art_dir: /path/to/artifacts/napscaf25
+results_dir: /path/to/results/napscaf_25
+
+trainer: napscaf
+model: napscaf
+loss: napscaf
+
+custom_model_kwargs:
+  num_cls: 5
+  mid_channels: 16
+  stages: 4
+  gate_passes: 2
+  # ImageNet DenseNet121 weights for the (never-trained, as in legacy) prior encoder.
+  pretrained_prior: true
+  slice_chunk: 32
+
+custom_loss_kwargs:
+  ce_weight: 0.5
+  dice_weight: 0.5
+
+custom_trainer_kwargs:
+  iter_per_epoch: null
+  patch_size: 128
+  # One 128^3 patch per step -> 16 axial 128x128 slices, matching legacy's batch of 16 slices.
+  slices_per_patch: 16
+  slice_sampling: tumor
+  debug: false
+  transform_kind: imfuse
+  train_masking_mode: random
+  val_masking_mode: validation
+  grad_clip_norm: null
+  skip_nonfinite_loss: true
+
+# Legacy: AdamW(lr=1e-4, weight_decay=1e-4, betas=(0.9, 0.99)) with a constant learning rate.
+optimizer: adamw
+betas: [0.9, 0.99]
+momentum: 0.9
+
+# step with gamma 1.0 keeps the learning rate constant, as in legacy.
+scheduler: step
+poly_total_iters: null
+poly_power: null
+warmuppoly_warmup_iters: null
+cosine_t_max: null
+cosine_eta_min: null
+step_step_size: 50
+step_gamma: 1.0
+multistep_milestones: null
+multistep_gamma: null
+plateau_mode: null
+plateau_factor: null
+plateau_patience: null
+
+lr: 0.0001
+# Legacy trains 150 epochs over ~5 fixed tumor slices per case (~750 slices per case);
+# 50 epochs x 16 slices per patch gives a comparable ~800.
+num_epochs: 50
+validation_every: 5
+batch_size: 1
+weight_decay: 0.0001
+num_workers: 8
+# Legacy's README trains with --amp.
+precision: fp16
+compile: false
+
+resume: false
+pretrain: null
+seed: 0
+
+fold: 1
+wandb_project: MiMoSe
+wandb_entity: null
+wandb_mode: online
+wandb_run_name: napscaf25
+push_to_hf: false
+hf_repo: /path/to/huggingface/owner-repo
+
+# testing
+checkpoint_path: /path/to/artifacts/napscaf25/checkpoints/final_weights_only.safetensors
+output_path: /path/to/results/napscaf_25/results.txt

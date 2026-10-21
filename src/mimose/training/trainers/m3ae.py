@@ -9,12 +9,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from mimose.datasets import IMFuseDataset, MaskingMode
+from mimose.datasets.base import sample_count_uniform_mask
 from mimose.datasets.imfuse import MASK_PATTERNS
 from mimose.enums import Precision, TransformKind
 from mimose.losses.config import LossConfig
 from mimose.losses.m3ae import m3ae_reconstruction_loss
 from mimose.models.config import ModelConfig
 from mimose.training.config import OptimizerConfig, SchedulerConfig
+from mimose.training.masking import mae_patch_gate
 from mimose.training.trainers.base_trainer import BaseTrainer
 from mimose.training.transforms import build_transform_manager
 from mimose.training.transforms.base_transforms import TransformManager
@@ -61,6 +63,7 @@ class M3AETrainer(BaseTrainer):
         self.transform_kind = TransformKind(trainer_kwargs.get("transform_kind", TransformKind.IMFUSE))
         self.train_masking_mode = MaskingMode(trainer_kwargs.get("train_masking_mode", MaskingMode.RANDOM))
         self.val_masking_mode = MaskingMode(trainer_kwargs.get("val_masking_mode", MaskingMode.VALIDATION))
+        self.mask_sampling = str(trainer_kwargs.get("mask_sampling", "subset_uniform"))
         self.best_val_dice = float("-inf")
         self._train_iterator: Any | None = None
 
@@ -84,6 +87,14 @@ class M3AETrainer(BaseTrainer):
         self.pretrain_epochs = round(self.pretrain_fraction * num_epochs)
         self.limage_lr = float(trainer_kwargs.get("limage_lr", 0.005))
         self.limage_reg_weight = float(trainer_kwargs.get("limage_reg_weight", 0.005))
+        # Weight decay during pretraining only (legacy pretrain.py runs at wd=0, train.py at --wd);
+        # None keeps the optimizer's weight_decay for both stages.
+        pretrain_weight_decay = trainer_kwargs.get("pretrain_weight_decay")
+        self.pretrain_weight_decay = None if pretrain_weight_decay is None else float(pretrain_weight_decay)
+        # Upstream pretrain.py: 87.5% of 16^3 tokens masked plus up to 3 whole modalities (mdp=3).
+        self.mae_patch_masking = bool(trainer_kwargs.get("mae_patch_masking", True))
+        self.mae_mask_ratio = float(trainer_kwargs.get("mae_mask_ratio", 0.875))
+        self.mae_mdp = int(trainer_kwargs.get("mae_mdp", 3))
         self._in_pretrain: bool | None = None
 
         effective_batch_size = 1 if batch_size is None else batch_size
@@ -163,12 +174,17 @@ class M3AETrainer(BaseTrainer):
         model = self._model_for_state()
         if model is not None:
             model.limage.requires_grad_(in_pretrain)
+        if self.pretrain_weight_decay is not None and self.optimizer is not None:
+            weight_decay = self.pretrain_weight_decay if in_pretrain else self.optimizer_config.weight_decay
+            for group in self.optimizer.param_groups:
+                group["weight_decay"] = weight_decay
 
         if entering_finetune and self.scheduler_config is not None:
             # Legacy runs two independent CosineAnnealingLR schedules (one per
             # script/stage); reproduce that by restarting the anneal over the
-            # remaining epochs once fine-tuning begins, rather than letting a
-            # single schedule decay continuously across the stage boundary.
+            # remaining epochs once fine-tuning begins. The LRs must be reset first:
+            # chainable schedulers otherwise continue from the decayed value.
+            self._reset_param_group_lrs([self.optimizer_config.lr, self.limage_lr])
             remaining_epochs = self.num_epochs - self.pretrain_epochs
             previous_t_max = self.scheduler_config.kwargs.get("T_max")
             self.scheduler_config.kwargs["T_max"] = remaining_epochs
@@ -314,6 +330,7 @@ class M3AETrainer(BaseTrainer):
             masking_mode=self.train_masking_mode,
             split=self.train_split,
             sample_transform=partial(transform_manager, mode="train"),
+            mask_sampling=self.mask_sampling,
         )
         val_set = IMFuseDataset(
             root=self.input_dir,
@@ -403,6 +420,15 @@ class M3AETrainer(BaseTrainer):
     def _pretrain_step(self, batch: dict[str, Any]) -> dict[str, float]:
         images = batch["images"].to(self.device, non_blocking=True)
         mask = batch["mask"].to(self.device, non_blocking=True).bool()
+        if self.mae_patch_masking:
+            mask = mae_patch_gate(
+                images.shape[0],
+                num_modalities=images.shape[1],
+                patch_shape=self.patch_size,
+                mask_ratio=self.mae_mask_ratio,
+                mdp=self.mae_mdp,
+                device=self.device,
+            )
         with self._autocast_context():
             # Go through self.model(...) (not the DDP-unwrapped module) so
             # DistributedDataParallel's gradient-sync hooks stay attached for
@@ -421,7 +447,12 @@ class M3AETrainer(BaseTrainer):
 
     def _random_view_mask(self, reference_mask: torch.Tensor) -> torch.Tensor:
         """Sample a fresh per-sample missing-modality mask for the second view,
-        drawn from the same 15-pattern pool the RANDOM dataset masking uses."""
+        drawn from the same distribution the RANDOM dataset masking uses."""
+        if self.mask_sampling == "count_uniform":
+            masks = torch.stack(
+                [sample_count_uniform_mask(reference_mask.shape[1]) for _ in range(reference_mask.shape[0])]
+            )
+            return masks.to(device=reference_mask.device, dtype=reference_mask.dtype)
         indices = torch.randint(len(MASK_PATTERNS), size=(reference_mask.shape[0],))
         return MASK_PATTERNS[indices].to(device=reference_mask.device, dtype=reference_mask.dtype)
 
